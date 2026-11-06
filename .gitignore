@@ -40,3 +40,4 @@ coverage/
 
 # Neon CLI link (local only)
 .neon
+.vercel
