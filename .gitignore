@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+.pnp
+.pnp.*
+
+# Build output
+.next/
+out/
+dist/
+build/
+.turbo/
+
+# Databases / local data
+.pglite-data/
+uploads/
+*.db
+*.sqlite
+
+# Secrets - NEVER commit
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Deploy artefacts (contain real secrets / big zips)
+deploy/
+*.zip
+
+# Logs / OS
+*.log
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+coverage/
+.nyc_output/
+.neon
+
+# Neon CLI link (local only)
+.neon
