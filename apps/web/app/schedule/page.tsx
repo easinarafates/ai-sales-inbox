@@ -365,7 +365,7 @@ export default function SchedulePage() {
       {notice && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       {/* 7-day calendar */}
-      <div className="bg-white rounded-xl shadow p-4 mb-6">
+      <div className="card p-4 mb-6">
         <h2 className="font-bold mb-1">{t("calendar_title", "Next 7 days", "আগামী ৭ দিন")}</h2>
         <p className="text-sm text-slate-500 mb-3">
           {t("calendar_note", "Max 15 scheduled posts per day. Publishing a post frees its slot.", "প্রতিদিন সর্বোচ্চ ১৫টি পোস্ট শিডিউল করা যায়। পোস্ট প্রকাশ হলে স্লট খালি হয়।")}
@@ -412,7 +412,7 @@ export default function SchedulePage() {
       </div>
 
       {/* Create form */}
-      <form onSubmit={create} className="bg-white rounded-xl shadow p-4 mb-6 space-y-3">
+      <form onSubmit={create} className="card p-4 mb-6 space-y-3">
         <h2 className="font-bold">{t("create_title", "Schedule a new post", "নতুন পোস্ট শিডিউল করুন")}</h2>
 
         <div className="flex flex-wrap gap-2">
@@ -592,11 +592,14 @@ export default function SchedulePage() {
       </div>
 
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-3">
+          <div className="skeleton h-16" />
+          <div className="skeleton h-16" />
+        </div>
       ) : filteredPosts.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">
+        <div className="empty-state">
           {t("no_posts_day", "No posts on this day yet.", "এই দিনে এখনো কোনো পোস্ট নেই।")}
-        </p>
+        </div>
       ) : (
         <div className="space-y-3">
           {filteredPosts.map((p) => {
@@ -604,7 +607,7 @@ export default function SchedulePage() {
             const first = urls[0];
             const isVideo = postMediaType(p) === "video" || (first ? isVideoUrl(first) : false);
             return (
-              <div key={p.id} className="bg-white rounded-xl shadow p-4">
+              <div key={p.id} className="card p-4">
                 {editing?.id === p.id ? (
                   <form onSubmit={saveEdit} className="space-y-3">
                     <textarea value={editCaption} onChange={(e) => setEditCaption(e.target.value)} className="w-full border rounded-lg px-3 py-2" rows={3} />

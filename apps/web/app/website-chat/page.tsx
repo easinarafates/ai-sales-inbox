@@ -50,7 +50,7 @@ export default function WebsiteChatPage() {
         <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
       ) : (
         <>
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <h2 className="font-bold mb-2">{t("chatSnippetTitle", "Copy-paste snippet", "কপি-পেস্ট করার কোড")}</h2>
             <p className="text-sm text-slate-500 mb-3">{t("chatSnippetSub", "Paste this one line before the closing </body> tag of your website.", "আপনার ওয়েবসাইটের </body> ট্যাগের আগে এই এক লাইন বসান।")}</p>
             <pre className="bg-[#fff8f3] border rounded-lg p-3 text-sm break-all whitespace-pre-wrap">{snippet}</pre>
@@ -62,7 +62,7 @@ export default function WebsiteChatPage() {
             </p>
             <p className="text-xs text-slate-400 mt-1">{t("chatKeyLabel", "Public key:", "পাবলিক কী:")} {publicKey}</p>
           </div>
-          <div className="bg-white rounded-xl shadow p-4">
+          <div className="card p-4">
             <h2 className="font-bold mb-2">{t("chatHowTitle", "How it works", "এটা কীভাবে কাজ করে")}</h2>
             <ol className="list-decimal list-inside text-sm text-slate-600 grid gap-1">
               <li>{t("chatHow1", "A visitor opens the chat box on your website and writes a message.", "ভিজিটর আপনার ওয়েবসাইটে চ্যাট বাক্স খুলে মেসেজ লেখে।")}</li>

@@ -101,25 +101,25 @@ export default function AnalyticsPage() {
           <button
             key={r}
             onClick={() => setRange(r)}
-            className={`px-4 py-2 rounded-lg text-sm ${range === r ? "bg-brand text-white" : "bg-white shadow"}`}
+            className={`px-4 py-2 rounded-lg text-sm transition ${range === r ? "bg-brand text-white shadow-sm" : "bg-white shadow-sm hover:bg-orange-50"}`}
           >
             {t(RANGE_KEYS[r], RANGE_FALLBACK[r][0], RANGE_FALLBACK[r][1])}
           </button>
         ))}
       </div>
 
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : (
+      {loading ? (<div className="grid grid-cols-2 gap-3 md:grid-cols-5"><div className="skeleton h-20" /><div className="skeleton h-20" /><div className="skeleton h-20" /><div className="skeleton h-20" /><div className="skeleton h-20" /></div>) : (
         <>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
             {cards.map((c) => (
-              <div key={c.label} className="bg-white rounded-xl shadow p-4">
+              <div key={c.label} className="card card-hover p-4">
                 <p className="text-sm text-slate-500">{c.label}</p>
                 <p className="text-2xl font-bold">{c.value}</p>
               </div>
             ))}
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <h2 className="font-bold mb-3">{t("analytics.sourceTitle", "Where orders came from", "অর্ডার কোথা থেকে এসেছে")}</h2>
             {Object.keys(source).length === 0 ? (
               <p className="text-sm text-slate-500">{t("analytics.noData", "No information.", "কোনো তথ্য নেই।")}</p>
@@ -140,16 +140,16 @@ export default function AnalyticsPage() {
 
           <PostAttributionTable posts={posts} />
 
-          <div className="bg-white rounded-xl shadow p-4 overflow-x-auto">
+          <div className="card p-4 overflow-x-auto">
             <h2 className="font-bold mb-3">{t("analytics.lostTitle", "Reasons for lost sales (total", "বিক্রি হারানোর কারণ (মোট")} {fmtNum(lostTotal)})</h2>
             {lostSales.length === 0 ? (
               <p className="text-sm text-slate-500">{t("analytics.noData", "No information.", "কোনো তথ্য নেই।")}</p>
             ) : (
               <table className="w-full text-sm">
-                <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("analytics.thReason", "Reason", "কারণ")}</th><th className="p-3">{t("analytics.thCount", "Count", "সংখ্যা")}</th></tr></thead>
+                <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("analytics.thReason", "Reason", "কারণ")}</th><th className="p-3">{t("analytics.thCount", "Count", "সংখ্যা")}</th></tr></thead>
                 <tbody>
                   {lostSales.map((r, i) => (
-                    <tr key={i} className="border-b hover:bg-orange-50">
+                    <tr key={i} className="border-b transition-colors hover:bg-orange-50">
                       <td className="p-3">{r.reason}</td>
                       <td className="p-3">{fmtNum(r.count)}</td>
                     </tr>

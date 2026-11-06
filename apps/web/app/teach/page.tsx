@@ -159,11 +159,11 @@ export default function TeachPage() {
       {/* Unanswered questions */}
       <h2 className="text-xl font-bold mb-3">{t("teach.unansweredTitle", "Questions the AI could not answer", "AI যে প্রশ্নের উত্তর দিতে পারেনি")}</h2>
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : unanswered.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6 mb-6">{t("teach.noUnanswered", "No unanswered questions.", "কোনো উত্তর না দেওয়া প্রশ্ন নেই।")}</p>
+        <p className="text-slate-500 card p-6 mb-6">{t("teach.noUnanswered", "No unanswered questions.", "কোনো উত্তর না দেওয়া প্রশ্ন নেই।")}</p>
       ) : (
         <div className="space-y-3 mb-6">
           {unanswered.map((q) => (
-            <div key={q.id} className="bg-white rounded-xl shadow p-4">
+            <div key={q.id} className="card p-4">
               <p className="font-medium">{q.question}</p>
               <p className="text-xs text-slate-500 mt-1">
                 {q.count ? `${fmtNum(q.count)} ${t("teach.timesAsked", "times asked", "বার জিজ্ঞেস করা হয়েছে")}` : ""} • {fmtDate(q.createdAt || q.created_at)}
@@ -191,7 +191,7 @@ export default function TeachPage() {
 
       {/* Knowledge book */}
       <h2 className="text-xl font-bold mb-3">{t("teach.bookTitle", "Knowledge Book", "জ্ঞানের বই (Knowledge Book)")}</h2>
-      <form onSubmit={submitKnowledge} className="bg-white rounded-xl shadow p-4 mb-4 space-y-3">
+      <form onSubmit={submitKnowledge} className="card p-4 mb-4 space-y-3">
         <h3 className="font-bold">{editing ? t("teach.editInfo", "Edit information", "তথ্য এডিট করুন") : t("teach.addInfo", "Add new information", "নতুন তথ্য যোগ করুন")}</h3>
         <input value={kTitle} onChange={(e) => setKTitle(e.target.value)} placeholder={t("teach.titlePlaceholder", "Title (optional)", "শিরোনাম (ঐচ্ছিক)")} className="w-full border rounded-lg px-3 py-2" />
         <textarea required value={kBody} onChange={(e) => setKBody(e.target.value)} placeholder={t("teach.bodyPlaceholder", "Write the information / answer… *", "তথ্য / উত্তর লিখুন… *")} className="w-full border rounded-lg px-3 py-2" rows={3} />
@@ -206,11 +206,11 @@ export default function TeachPage() {
       </form>
 
       {knowledge.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6 mb-6">{t("teach.bookEmpty", "Nothing in the Knowledge Book yet.", "জ্ঞানের বইয়ে এখনো কিছু নেই।")}</p>
+        <p className="text-slate-500 card p-6 mb-6">{t("teach.bookEmpty", "Nothing in the Knowledge Book yet.", "জ্ঞানের বইয়ে এখনো কিছু নেই।")}</p>
       ) : (
         <div className="space-y-3 mb-6">
           {knowledge.map((k) => (
-            <div key={k.id} className="bg-white rounded-xl shadow p-4">
+            <div key={k.id} className="card p-4">
               {k.title && <p className="font-bold">{k.title}</p>}
               <p className="text-sm whitespace-pre-wrap">{k.body || "—"}</p>
               <div className="flex gap-2 mt-3">
@@ -226,7 +226,7 @@ export default function TeachPage() {
       )}
 
       {/* Plain-language change box */}
-      <div className="bg-white rounded-xl shadow p-4">
+      <div className="card p-4">
         <h2 className="font-bold mb-3">{t("teach.changeTitle", "Change it like this — give an instruction in simple words", "এভাবে বদলাও — সহজ ভাষায় নির্দেশ দিন")}</h2>
         <div className="space-y-3">
           <select value={changeItemId} onChange={(e) => { setChangeItemId(e.target.value); setPreview(""); }} className="w-full border rounded-lg px-3 py-2 bg-white">

@@ -86,7 +86,7 @@ export default function FeatureRequestsPage() {
       <h1 className="text-2xl font-bold mb-4">{t("featureRequests.title", "Feature Requests", "অনুরোধ")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      <form onSubmit={create} className="bg-white rounded-xl shadow p-4 mb-6 space-y-3">
+      <form onSubmit={create} className="card p-4 mb-6 space-y-3">
         <h2 className="font-bold">{t("featureRequests.createTitle", "Send a new feature request", "নতুন ফিচারের অনুরোধ পাঠান")}</h2>
         <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("featureRequests.titlePlaceholder", "What feature do you want? *", "কী ফিচার চান? *")} className="w-full border rounded-lg px-3 py-2" />
         <textarea value={details} onChange={(e) => setDetails(e.target.value)} placeholder={t("featureRequests.detailsPlaceholder", "Write the details (optional)", "বিস্তারিত লিখুন (ঐচ্ছিক)")} className="w-full border rounded-lg px-3 py-2" rows={3} />
@@ -96,11 +96,11 @@ export default function FeatureRequestsPage() {
       </form>
 
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : requests.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("featureRequests.empty", "No requests.", "কোনো অনুরোধ নেই।")}</p>
+        <div className="empty-state">{t("featureRequests.empty", "No requests.", "কোনো অনুরোধ নেই।")}</div>
       ) : (
         <div className="space-y-3">
           {requests.map((r) => (
-            <div key={r.id} className="bg-white rounded-xl shadow p-4">
+            <div key={r.id} className="card p-4">
               <div className="flex flex-wrap justify-between gap-2">
                 <h3 className="font-bold">{r.title}</h3>
                 <span className="text-xs text-slate-400">{fmtDate(r.createdAt || r.created_at)}</span>

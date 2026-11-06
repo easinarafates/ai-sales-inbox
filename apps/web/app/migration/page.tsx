@@ -89,7 +89,7 @@ export default function MigrationPage() {
       <h1 className="text-2xl font-bold mb-4">{t("migration.title", "Migration", "মাইগ্রেশন")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      <form onSubmit={doImport} className="bg-white rounded-xl shadow p-4 mb-6 space-y-3">
+      <form onSubmit={doImport} className="card p-4 mb-6 space-y-3">
         <h2 className="font-bold">{t("migration.importTitle", "Import CSV", "CSV ইমপোর্ট করুন")}</h2>
         <div className="flex flex-wrap gap-2 items-center">
           <label className="text-sm text-slate-500">{t("migration.whatToImport", "What to import?", "কী ইমপোর্ট করবেন?")}</label>
@@ -134,14 +134,14 @@ export default function MigrationPage() {
 
       <h2 className="text-xl font-bold mb-3">{t("migration.historyTitle", "Import history", "ইমপোর্টের ইতিহাস")}</h2>
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : imports.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("migration.empty", "No imports yet.", "এখনো কোনো ইমপোর্ট হয়নি।")}</p>
+        <div className="empty-state">{t("migration.empty", "No imports yet.", "এখনো কোনো ইমপোর্ট হয়নি।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("migration.thType", "Type", "ধরন")}</th><th className="p-3">{t("migration.thSuccess", "Successful", "সফল")}</th><th className="p-3">{t("migration.thFailed", "Failed", "ব্যর্থ")}</th><th className="p-3">{t("migration.thDate", "Date", "তারিখ")}</th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("migration.thType", "Type", "ধরন")}</th><th className="p-3">{t("migration.thSuccess", "Successful", "সফল")}</th><th className="p-3">{t("migration.thFailed", "Failed", "ব্যর্থ")}</th><th className="p-3">{t("migration.thDate", "Date", "তারিখ")}</th></tr></thead>
             <tbody>
               {imports.map((imp) => (
-                <tr key={imp.id} className="border-b hover:bg-orange-50">
+                <tr key={imp.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3">{typeLabel(imp.type as MigrationType)}</td>
                   <td className="p-3">{imp.imported != null ? fmtNum(imp.imported) : "—"}</td>
                   <td className="p-3">{imp.failed != null ? fmtNum(imp.failed) : "—"}</td>

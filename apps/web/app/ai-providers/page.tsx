@@ -136,7 +136,7 @@ export default function AiProvidersPage() {
             {data.providers.map((p) => {
               const isCurrent = data.current.provider === p.id;
               return (
-                <div key={p.id} className="bg-white rounded-xl shadow p-4">
+                <div key={p.id} className="card p-4">
                   <div className="flex justify-between gap-2 flex-wrap items-center">
                     <span className="font-bold text-lg">{p.name}</span>
                     {statusBadge(p, t)}
@@ -198,7 +198,7 @@ export default function AiProvidersPage() {
           {data.recentUsage.length === 0 ? (
             <p className="text-slate-500">{t("aiProvUsageEmpty", "No AI replies yet.", "এখনো কোনো AI উত্তর দেওয়া হয়নি।")}</p>
           ) : (
-            <div className="bg-white rounded-xl shadow overflow-x-auto">
+            <div className="card overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left border-b">

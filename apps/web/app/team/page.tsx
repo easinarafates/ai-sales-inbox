@@ -65,7 +65,7 @@ export default function TeamPage() {
       <p className="text-sm text-slate-500 mb-4">{t("teamSub", "Invite people to help in your shop. No email is sent — share the invite link yourself.", "দোকানে সাহায্যের জন্য লোকদের আমন্ত্রণ জানান। কোনো ইমেইল পাঠানো হয় না — আমন্ত্রণের লিংকটি নিজে শেয়ার করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      <form onSubmit={invite} className="bg-white rounded-xl shadow p-4 mb-6 grid gap-3">
+      <form onSubmit={invite} className="card p-4 mb-6 grid gap-3">
         <h2 className="font-bold">{t("teamInviteTitle", "Invite a team member", "টিমের সদস্যকে আমন্ত্রণ জানান")}</h2>
         <input required type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder={t("teamEmailPh", "Email address", "ইমেইল ঠিকানা")} className="border rounded-lg px-3 py-2" />
         <select value={role} onChange={(e) => setRole(e.target.value)} className="border rounded-lg px-3 py-2 bg-white">
@@ -86,7 +86,7 @@ export default function TeamPage() {
       ) : (
         <div className="grid gap-3 mb-6">
           {invites.map((inv) => (
-            <div key={inv.id} className="bg-white rounded-xl shadow p-4">
+            <div key={inv.id} className="card p-4">
               <div className="flex justify-between gap-2 flex-wrap">
                 <span className="font-bold">{inv.email}</span>
                 <span className="text-xs bg-[#ff6a4d]/10 text-[#ff6a4d] rounded-full px-2 py-1 h-fit">{inv.status} · {inv.role}</span>
@@ -121,7 +121,7 @@ export default function TeamPage() {
       ) : (
         <div className="grid gap-3">
           {members.map((m) => (
-            <div key={m.id} className="bg-white rounded-xl shadow p-4 flex justify-between gap-2 flex-wrap">
+            <div key={m.id} className="card p-4 flex justify-between gap-2 flex-wrap">
               <span className="font-bold">{m.name ?? m.email ?? m.user_id}</span>
               <span className="text-sm text-slate-500">{m.email} · {m.role}</span>
             </div>

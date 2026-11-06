@@ -95,7 +95,7 @@ export default function OwnerBankAccountsPage() {
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : (
         <>
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <h2 className="font-bold mb-3">{t("ownerBankAdd", "Add an account", "অ্যাকাউন্ট যোগ করুন")}</h2>
             <div className="grid gap-2 sm:grid-cols-2">
               <select value={type} onChange={(e) => setType(e.target.value)} className="border rounded-lg px-3 py-2 text-sm" aria-label={t("ownerBankType", "Type", "ধরন")}>
@@ -126,7 +126,7 @@ export default function OwnerBankAccountsPage() {
           ) : (
             <div className="grid gap-3">
               {accounts.map((a) => (
-                <div key={a.id} className="bg-white rounded-xl shadow p-4">
+                <div key={a.id} className="card p-4">
                   <div className="flex justify-between gap-2 flex-wrap items-center">
                     <span className="font-bold">{a.bankName} {a.isPrimary && <span className="text-xs font-bold bg-teal-600/10 text-teal-600 border border-teal-600/30 rounded-full px-2 py-0.5 ml-1">{t("ownerPrimary", "Primary", "প্রধান")}</span>}</span>
                     <span className="text-sm text-slate-500">{a.type === "bank" ? t("ownerBankTypeBank", "Bank", "ব্যাংক") : a.type}</span>

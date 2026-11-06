@@ -46,15 +46,15 @@ export default function CustomersPage() {
         <button onClick={() => load(q.trim())} className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700">{t("common.search", "Search", "খুঁজুন")}</button>
       </div>
 
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : customers.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("customers.empty", "No customers found.", "কোনো কাস্টমার পাওয়া যায়নি।")}</p>
+      {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : customers.length === 0 ? (
+        <div className="empty-state">{t("customers.empty", "No customers found.", "কোনো কাস্টমার পাওয়া যায়নি।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("customers.thName", "Name", "নাম")}</th><th className="p-3">{t("customers.thPhone", "Phone", "ফোন")}</th><th className="p-3">{t("customers.thAddress", "Address", "ঠিকানা")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("customers.thName", "Name", "নাম")}</th><th className="p-3">{t("customers.thPhone", "Phone", "ফোন")}</th><th className="p-3">{t("customers.thAddress", "Address", "ঠিকানা")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {customers.map((c) => (
-                <tr key={c.id} className="border-b hover:bg-orange-50">
+                <tr key={c.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3 font-medium">{c.name || t("common.unknown", "Unknown", "অজানা")}</td>
                   <td className="p-3">{c.phone || "—"}</td>
                   <td className="p-3">{c.address || "—"}</td>

@@ -192,7 +192,7 @@ export default function GuidePage() {
       <h1 className="text-2xl font-bold mb-1">{t("guideTitle", "Guide", "গাইড")}</h1>
       <p className="text-sm text-slate-500 mb-4">{t("guideSub", "Written step-by-step guides for every feature. These are written guides, not videos.", "প্রতিটি ফিচারের জন্য লেখা ধাপে ধাপে গাইড। এগুলো লেখা গাইড, ভিডিও নয়।")}</p>
 
-      <div className="bg-white rounded-xl shadow p-4 mb-6">
+      <div className="card p-4 mb-6">
         <h2 className="font-bold">{t("guidePhotoTitle", "Try photo search", "ছবি দিয়ে খুঁজে দেখুন")}</h2>
         <p className="text-sm text-slate-500 mb-3">{t("guidePhotoSub", "Paste a product photo link to find the matching product.", "মিলে যাওয়া প্রোডাক্ট খুঁজতে ছবির লিংক বসান।")}</p>
         <form onSubmit={searchPhoto} className="flex gap-2 flex-wrap">
@@ -227,7 +227,7 @@ export default function GuidePage() {
         {GUIDES.map((g) => {
           const isOpen = open === g.id;
           return (
-            <div key={g.id} className="bg-white rounded-xl shadow p-4">
+            <div key={g.id} className="card p-4">
               <button onClick={() => setOpen(isOpen ? null : g.id)} className="w-full text-left flex justify-between gap-2">
                 <span className="font-bold">{t(`guide_${g.id}`, g.en, g.bn)}</span>
                 <span className="text-[#ff6a4d]">{isOpen ? "−" : "+"}</span>

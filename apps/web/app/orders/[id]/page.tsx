@@ -74,7 +74,7 @@ export default function OrderDetailPage() {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
         {/* Bill view */}
-        <div className="bg-white rounded-xl shadow p-6">
+        <div className="card p-6">
           <h1 className="text-xl font-bold">{t("orders.bill", "Bill", "বিল")} — {order.orderNumber || order.order_number || order.id.slice(0, 8)}</h1>
           <p className="text-sm text-slate-500 mt-1">{t("orders.billDate", "Date:", "তারিখ:")} {fmtDate(order.createdAt || order.created_at)}</p>
           <p className="text-sm mt-1">{t("orders.customerLabel", "Customer:", "কাস্টমার:")} {order.customer?.name || "—"}{order.customer?.phone ? ` • ${order.customer.phone}` : ""}</p>
@@ -82,7 +82,7 @@ export default function OrderDetailPage() {
             <span className={`text-xs px-2 py-0.5 rounded ${pay === "paid" ? "bg-teal-100 text-teal-800" : "bg-red-100 text-red-800"}`}>{pay === "paid" ? t("orders.paymentPaid", "Paid", "পরিশোধিত") : t("orders.paymentUnpaid", "Unpaid", "অপরিশোধিত")}</span>
           </div>
           <table className="w-full text-sm mt-4">
-            <thead><tr className="border-b text-left text-slate-500"><th className="py-2">{t("orders.thItem", "Item", "আইটেম")}</th><th className="py-2 text-right">{t("orders.thQty", "Quantity", "পরিমাণ")}</th><th className="py-2 text-right">{t("orders.thPrice", "Price", "দাম")}</th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="py-2">{t("orders.thItem", "Item", "আইটেম")}</th><th className="py-2 text-right">{t("orders.thQty", "Quantity", "পরিমাণ")}</th><th className="py-2 text-right">{t("orders.thPrice", "Price", "দাম")}</th></tr></thead>
             <tbody>
               {items.length === 0 && <tr><td colSpan={3} className="py-3 text-slate-500">{t("orders.noItems", "No item details found.", "কোনো আইটেমের বিবরণ পাওয়া যায়নি।")}</td></tr>}
               {items.map((it, i) => (
@@ -98,7 +98,7 @@ export default function OrderDetailPage() {
         </div>
 
         {/* Actions */}
-        <div className="bg-white rounded-xl shadow p-6 h-fit">
+        <div className="card p-6 h-fit">
           <h2 className="font-bold mb-3">{t("orders.manage", "Manage order", "অর্ডার পরিচালনা")}</h2>
           <p className="text-sm text-slate-500 mb-3">{t("orders.currentStep", "Current step:", "বর্তমান ধাপ:")} <b>{orderStatusLabel(order.status, lang)}</b></p>
           <div className="flex flex-wrap gap-2">

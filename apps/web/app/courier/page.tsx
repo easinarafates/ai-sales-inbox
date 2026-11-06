@@ -145,7 +145,7 @@ export default function CourierPage() {
         </p>
       </div>
 
-      <form onSubmit={bookCourier} className="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-2 items-end">
+      <form onSubmit={bookCourier} className="card p-4 mb-6 flex flex-wrap gap-2 items-end">
         <div className="flex-1 min-w-64">
           <label className="block text-sm font-medium mb-1">{t("courier.pickOrder", "Pick an order", "অর্ডার বেছে নিন")}</label>
           <select
@@ -170,7 +170,7 @@ export default function CourierPage() {
         </p>
       </form>
 
-      <form onSubmit={lookupTracking} className="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-2 items-end">
+      <form onSubmit={lookupTracking} className="card p-4 mb-6 flex flex-wrap gap-2 items-end">
         <div className="flex-1 min-w-64">
           <label className="block text-sm font-medium mb-1">{t("courier.trackLabel", "Search by tracking number", "ট্র্যাকিং নম্বর দিয়ে খুঁজুন")}</label>
           <input
@@ -202,12 +202,12 @@ export default function CourierPage() {
 
       <h2 className="font-bold mb-2">{t("courier.shipmentsTitle", "Shipment list", "শিপমেন্টের তালিকা")}</h2>
       {shipments.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("courier.empty", "No shipments yet.", "এখনো কোনো শিপমেন্ট নেই।")}</p>
+        <div className="empty-state">{t("courier.empty", "No shipments yet.", "এখনো কোনো শিপমেন্ট নেই।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b text-left text-slate-500">
+              <tr className="table-head border-b text-left text-slate-500">
                 <th className="p-3">{t("courier.thOrder", "Order", "অর্ডার")}</th>
                 <th className="p-3">{t("courier.thCustomer", "Customer", "কাস্টমার")}</th>
                 <th className="p-3">{t("courier.thCourier", "Courier", "কুরিয়ার")}</th>

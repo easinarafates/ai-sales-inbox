@@ -29,7 +29,7 @@ export default function ProductDetailPage() {
   return (
     <div>
       <Link href="/products" className="text-brand-dark underline text-sm">{t("products.listLink", "← Product list", "← প্রোডাক্ট তালিকা")}</Link>
-      <div className="bg-white rounded-xl shadow p-6 mt-3 max-w-2xl">
+      <div className="card p-6 mt-3 max-w-2xl">
         <h1 className="text-2xl font-bold">{product.name}</h1>
         <p className="text-3xl font-bold text-brand-dark mt-2">{fmtTaka(productPricePaisa(product))}</p>
         <dl className="mt-4 space-y-2 text-sm">

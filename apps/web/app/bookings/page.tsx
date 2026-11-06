@@ -145,7 +145,7 @@ export default function BookingsPage() {
         )}
       </div>
 
-      <form onSubmit={create} className="bg-white rounded-xl shadow p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+      <form onSubmit={create} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
         <h2 className="font-bold md:col-span-2">{t("bookings.createTitle", "New booking", "নতুন বুকিং")}</h2>
         <input required value={customerId} onChange={(e) => setCustomerId(e.target.value)} placeholder={t("bookings.customerIdPlaceholder", "Customer ID *", "কাস্টমার ID *")} className="border rounded-lg px-3 py-2" />
         <input required value={service} onChange={(e) => setService(e.target.value)} placeholder={t("bookings.servicePlaceholder", "Service (e.g. henna / photoshoot) *", "সার্ভিস (যেমন: মেহেদি / ফটোশুট) *")} className="border rounded-lg px-3 py-2" />
@@ -170,14 +170,14 @@ export default function BookingsPage() {
       </div>
 
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : bookings.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("bookings.empty", "No bookings found.", "কোনো বুকিং পাওয়া যায়নি।")}</p>
+        <div className="empty-state">{t("bookings.empty", "No bookings found.", "কোনো বুকিং পাওয়া যায়নি।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("bookings.thCustomer", "Customer", "কাস্টমার")}</th><th className="p-3">{t("bookings.thService", "Service", "সার্ভিস")}</th><th className="p-3">{t("bookings.thDateTime", "Date & time", "তারিখ ও সময়")}</th><th className="p-3">{t("bookings.thAdvance", "Advance", "অগ্রিম")}</th><th className="p-3">{t("bookings.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("bookings.thCustomer", "Customer", "কাস্টমার")}</th><th className="p-3">{t("bookings.thService", "Service", "সার্ভিস")}</th><th className="p-3">{t("bookings.thDateTime", "Date & time", "তারিখ ও সময়")}</th><th className="p-3">{t("bookings.thAdvance", "Advance", "অগ্রিম")}</th><th className="p-3">{t("bookings.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {bookings.map((b) => (
-                <tr key={b.id} className="border-b hover:bg-orange-50">
+                <tr key={b.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3">{b.customer?.name || b.customerId || b.customer_id || "—"}</td>
                   <td className="p-3">{b.service || "—"}</td>
                   <td className="p-3">{b.date || ""} {b.time || ""}<br /><span className="text-xs text-slate-400">{fmtDate(b.createdAt || b.created_at)}</span></td>

@@ -71,7 +71,7 @@ export default function CommentsPage() {
           e.preventDefault();
           act(() => commentsApi.create({ body: newBody, platformPostId: newPostId || undefined }).then(() => { setNewBody(""); setNewPostId(""); }), "commentsCreateFail", "Could not add the comment.", "কমেন্ট যোগ করা যায়নি।");
         }}
-        className="bg-white rounded-xl shadow p-4 mb-6 grid gap-3"
+        className="card p-4 mb-6 grid gap-3"
       >
         <h2 className="font-bold">{t("cLogTitle", "Log a comment by hand", "হাতে একটি কমেন্ট লিখুন")}</h2>
         <input value={newPostId} onChange={(e) => setNewPostId(e.target.value)} placeholder={t("cPostIdPh", "Post ID (optional)", "পোস্ট আইডি (ঐচ্ছিক)")} className="border rounded-lg px-3 py-2" />
@@ -86,7 +86,7 @@ export default function CommentsPage() {
       ) : (
         <div className="grid gap-3">
           {comments.map((c) => (
-            <div key={c.id} className="bg-white rounded-xl shadow p-4">
+            <div key={c.id} className="card p-4">
               <div className="flex justify-between gap-2 flex-wrap">
                 <span className="text-xs bg-[#ff6a4d]/10 text-[#ff6a4d] rounded-full px-2 py-1 h-fit">{statusLabel(c.status)}</span>
                 <span className="text-xs text-slate-400">{fmtDate(c.created_at)}</span>

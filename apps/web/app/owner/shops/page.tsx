@@ -79,7 +79,7 @@ export default function OwnerShopsPage() {
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : (
         <>
-          <div className="bg-white rounded-xl shadow overflow-x-auto mb-6">
+          <div className="card overflow-x-auto mb-6">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left border-b">
@@ -127,7 +127,7 @@ export default function OwnerShopsPage() {
           {shops.length === 0 && <p className="text-slate-500">{t("ownerNoShops", "No shops yet.", "এখনো কোনো দোকান নেই।")}</p>}
 
           {detail && (
-            <div className="bg-white rounded-xl shadow p-4">
+            <div className="card p-4">
               <h2 className="font-bold text-lg mb-2">{detail.shop.name}</h2>
               <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 text-sm mb-4">
                 <p>{t("ownerColOwner", "Owner", "মালিক")}: <b>{detail.shop.ownerName ?? "—"}</b><br /><span className="text-slate-500">{detail.shop.ownerEmail ?? ""}</span></p>

@@ -60,24 +60,24 @@ export default function BillingPage() {
       {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-        <div className="bg-white rounded-xl shadow p-5">
+        <div className="card p-5">
           <p className="text-slate-500 text-sm">{t("billing.walletBalance", "Wallet balance", "ওয়ালেট ব্যালেন্স")}</p>
           <p className="text-3xl font-bold text-brand-dark">{fmtTaka(billing ? billingBalance(billing) : 0)}</p>
           <p className="text-xs text-slate-500 mt-2">{t("billing.freeCreditNote", "🎁 New accounts get free credit — no monthly fee, only the cost of each AI reply is deducted.", "🎁 নতুন অ্যাকাউন্টে ফ্রি ক্রেডিট দেওয়া হয় — কোনো মাসিক ফি নেই, শুধু প্রতি AI রিপ্লাইয়ের খরচ কাটা হয়।")}</p>
         </div>
-        <div className="bg-white rounded-xl shadow p-5">
+        <div className="card p-5">
           <p className="text-slate-500 text-sm">{t("billing.totalAiCost", "Total AI cost (ledger)", "মোট AI খরচ (লেজার)")}</p>
           <p className="text-3xl font-bold">{fmtTaka(totalCost)}</p>
           <p className="text-xs text-slate-500 mt-2">{fmtNum(usage.length)} {t("billing.repliesCount", "replies", "টি রিপ্লাই")}</p>
         </div>
-        <div className="bg-white rounded-xl shadow p-5">
+        <div className="card p-5">
           <p className="text-slate-500 text-sm">{t("billing.avgCost", "Average cost / reply", "গড় খরচ / রিপ্লাই")}</p>
           <p className="text-3xl font-bold">{fmtNum(Math.round(avgCost * 100) / 100)} {t("billing.avgCostUnit", "paisa", "পয়সা")}</p>
           <p className="text-xs text-slate-500 mt-2">{t("billing.avgCostTarget", "Target: under 20 paisa (Phase 1 gate)", "লক্ষ্য: ২০ পয়সার নিচে (ফেজ ১ গেট)")}</p>
         </div>
       </div>
 
-      <form onSubmit={topup} className="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-2 items-end">
+      <form onSubmit={topup} className="card p-4 mb-6 flex flex-wrap gap-2 items-end">
         <div className="flex-1 min-w-52">
           <label className="block text-sm font-medium mb-1">{t("billing.topupAmount", "Top-up amount (৳)", "টপ-আপের পরিমাণ (৳)")}</label>
           <input required type="number" min="1" step="0.01" value={topupTaka} onChange={(e) => setTopupTaka(e.target.value)} placeholder={t("billing.topupAmountPlaceholder", "e.g. 500", "যেমন: 500")} className="w-full border rounded-lg px-3 py-2" />
@@ -90,11 +90,11 @@ export default function BillingPage() {
 
       <h2 className="font-bold mb-2">{t("billing.ledgerTitle", "Cost of each AI reply — ledger (ai_usage_ledger)", "প্রতি AI রিপ্লাইয়ের খরচ — লেজার (ai_usage_ledger)")}</h2>
       {usage.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6 mb-6">{t("billing.ledgerEmpty", "No AI usage records yet.", "এখনো কোনো AI ব্যবহারের রেকর্ড নেই।")}</p>
+        <p className="text-slate-500 card p-6 mb-6">{t("billing.ledgerEmpty", "No AI usage records yet.", "এখনো কোনো AI ব্যবহারের রেকর্ড নেই।")}</p>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto mb-6">
+        <div className="card overflow-x-auto mb-6">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("billing.thDate", "Date", "তারিখ")}</th><th className="p-3">{t("billing.thModel", "Model", "মডেল")}</th><th className="p-3">{t("billing.thTokens", "Tokens", "টোকেন")}</th><th className="p-3 text-right">{t("billing.thCost", "Cost (paisa)", "খরচ (পয়সা)")}</th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("billing.thDate", "Date", "তারিখ")}</th><th className="p-3">{t("billing.thModel", "Model", "মডেল")}</th><th className="p-3">{t("billing.thTokens", "Tokens", "টোকেন")}</th><th className="p-3 text-right">{t("billing.thCost", "Cost (paisa)", "খরচ (পয়সা)")}</th></tr></thead>
             <tbody>
               {usage.map((u) => (
                 <tr key={u.id} className="border-b">
@@ -111,11 +111,11 @@ export default function BillingPage() {
 
       <h2 className="font-bold mb-2">{t("billing.txTitle", "Wallet transactions", "ওয়ালেট লেনদেন")}</h2>
       {transactions.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("billing.txEmpty", "No transactions.", "কোনো লেনদেন নেই।")}</p>
+        <div className="empty-state">{t("billing.txEmpty", "No transactions.", "কোনো লেনদেন নেই।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("billing.thDate", "Date", "তারিখ")}</th><th className="p-3">{t("billing.thType", "Type", "ধরন")}</th><th className="p-3">{t("billing.thDesc", "Description", "বিবরণ")}</th><th className="p-3 text-right">{t("billing.thAmount", "Amount", "পরিমাণ")}</th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("billing.thDate", "Date", "তারিখ")}</th><th className="p-3">{t("billing.thType", "Type", "ধরন")}</th><th className="p-3">{t("billing.thDesc", "Description", "বিবরণ")}</th><th className="p-3 text-right">{t("billing.thAmount", "Amount", "পরিমাণ")}</th></tr></thead>
             <tbody>
               {transactions.map((tx) => (
                 <tr key={tx.id} className="border-b">

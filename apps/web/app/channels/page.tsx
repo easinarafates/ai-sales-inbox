@@ -372,7 +372,7 @@ export default function ChannelsPage() {
           const card = OAUTH_CARDS[kind];
           const connected = connectedOf(kind);
           return (
-            <div key={kind} className="bg-white rounded-xl shadow p-4">
+            <div key={kind} className="card card-hover p-4">
               <h3 className="font-bold">
                 {t(card.title, kind === "facebook" ? "Connect Facebook Page" : kind === "instagram" ? "Connect Instagram" : "Connect WhatsApp", kind === "facebook" ? "Facebook পেজ যুক্ত করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : "WhatsApp যুক্ত করুন")}
               </h3>
@@ -388,7 +388,7 @@ export default function ChannelsPage() {
               <button
                 onClick={kind === "facebook" ? loginWithFacebook : () => loginWith(kind)}
                 disabled={oauthBusy !== ""}
-                className="text-white px-4 py-2 rounded-lg hover:opacity-90 disabled:opacity-50"
+                className="rounded-lg px-4 py-2 text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
                 style={{ backgroundColor: card.color }}
               >
                 {oauthBusy === kind
@@ -399,7 +399,7 @@ export default function ChannelsPage() {
           );
         })}
         {SOON_CARDS.map((card) => (
-          <div key={card.key} className="bg-white rounded-xl shadow p-4 opacity-80">
+          <div key={card.key} className="card p-4 opacity-80">
             <h3 className="font-bold">
               {t(card.title, card.key === "tiktok" ? "Connect TikTok" : "Connect YouTube", card.key === "tiktok" ? "TikTok যুক্ত করুন" : "YouTube যুক্ত করুন")}
             </h3>
@@ -414,7 +414,7 @@ export default function ChannelsPage() {
       </div>
 
       {picker && (
-        <div className="bg-white rounded-xl shadow p-4 mb-6">
+        <div className="card p-4 mb-6">
           <h2 className="font-bold">{pickerTitle}</h2>
           <p className="text-sm text-slate-600 mt-1 mb-1">{pickerHint}</p>
           {picker.account && (
@@ -498,7 +498,7 @@ export default function ChannelsPage() {
         </div>
       )}
 
-      <form onSubmit={connect} className="bg-white rounded-xl shadow p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+      <form onSubmit={connect} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
         <h2 className="font-bold md:col-span-2">{t("channels.addTitle", "Add a new channel", "নতুন চ্যানেল যুক্ত করুন")}</h2>
         <select value={platform} onChange={(e) => setPlatform(e.target.value)} className="border rounded-lg px-3 py-2 bg-white">
           {MANUAL_OPTIONS.map((opt) => (
@@ -519,14 +519,14 @@ export default function ChannelsPage() {
       </form>
 
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : channels.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("channels.empty", "No channels added yet. Add one from the form above.", "কোনো চ্যানেল যুক্ত নেই। উপরের ফর্ম থেকে যুক্ত করুন।")}</p>
+        <div className="empty-state">{t("channels.empty", "No channels added yet. Add one from the form above.", "কোনো চ্যানেল যুক্ত নেই। উপরের ফর্ম থেকে যুক্ত করুন।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("channels.thPlatform", "Platform", "প্ল্যাটফর্ম")}</th><th className="p-3">{t("channels.thName", "Name", "নাম")}</th><th className="p-3">{t("channels.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3">{t("channels.thAdded", "Added", "যুক্ত হয়েছে")}</th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("channels.thPlatform", "Platform", "প্ল্যাটফর্ম")}</th><th className="p-3">{t("channels.thName", "Name", "নাম")}</th><th className="p-3">{t("channels.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3">{t("channels.thAdded", "Added", "যুক্ত হয়েছে")}</th></tr></thead>
             <tbody>
               {channels.map((c) => (
-                <tr key={c.id} className="border-b hover:bg-orange-50">
+                <tr key={c.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3 font-medium">{platformLabel(channelPlatform(c))}</td>
                   <td className="p-3">{channelDisplayName(c)}</td>
                   <td className="p-3">

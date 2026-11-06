@@ -120,7 +120,7 @@ export default function CouponsPage() {
       <h1 className="text-2xl font-bold mb-4">{t("coupons.title", "Coupons", "কুপন")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      <form onSubmit={create} className="bg-white rounded-xl shadow p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+      <form onSubmit={create} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
         <h2 className="font-bold md:col-span-2">{t("coupons.createTitle", "Create a new coupon", "নতুন কুপন তৈরি করুন")}</h2>
         <input required value={code} onChange={(e) => setCode(e.target.value)} placeholder={t("coupons.codePlaceholder", "Coupon code (e.g. EID10) *", "কুপন কোড (যেমন: EID10) *")} className="border rounded-lg px-3 py-2" />
         <select value={type} onChange={(e) => setType(e.target.value as CouponType)} className="border rounded-lg px-3 py-2 bg-white">
@@ -136,7 +136,7 @@ export default function CouponsPage() {
       </form>
 
       {/* Validate tester */}
-      <form onSubmit={testValidate} className="bg-white rounded-xl shadow p-4 mb-6">
+      <form onSubmit={testValidate} className="card p-4 mb-6">
         <h2 className="font-bold mb-3">{t("coupons.testTitle", "Check a coupon", "কুপন যাচাই করে দেখুন")}</h2>
         <div className="flex flex-wrap gap-2">
           <input required value={testCode} onChange={(e) => setTestCode(e.target.value)} placeholder={t("coupons.testCodePlaceholder", "Coupon code", "কুপন কোড")} className="border rounded-lg px-3 py-2 flex-1 min-w-40" />
@@ -155,14 +155,14 @@ export default function CouponsPage() {
       </form>
 
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : coupons.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("coupons.empty", "No coupons yet. Create one from the form above.", "কোনো কুপন নেই। উপরের ফর্ম থেকে তৈরি করুন।")}</p>
+        <div className="empty-state">{t("coupons.empty", "No coupons yet. Create one from the form above.", "কোনো কুপন নেই। উপরের ফর্ম থেকে তৈরি করুন।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("coupons.thCode", "Code", "কোড")}</th><th className="p-3">{t("coupons.thType", "Type", "ধরন")}</th><th className="p-3">{t("coupons.thValue", "Value", "মান")}</th><th className="p-3">{t("coupons.thExpiry", "Expiry", "মেয়াদ")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("coupons.thCode", "Code", "কোড")}</th><th className="p-3">{t("coupons.thType", "Type", "ধরন")}</th><th className="p-3">{t("coupons.thValue", "Value", "মান")}</th><th className="p-3">{t("coupons.thExpiry", "Expiry", "মেয়াদ")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {coupons.map((c) => (
-                <tr key={c.id} className="border-b hover:bg-orange-50">
+                <tr key={c.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3 font-medium">{c.code}</td>
                   <td className="p-3">{typeLabel(c.type || "")}</td>
                   <td className="p-3">{c.type === "percent" ? `${c.value != null ? fmtNum(c.value) : "—"}%` : c.type === "free_delivery" ? t("common.freeDelivery", "Free delivery", "ফ্রি ডেলিভারি") : fmtTaka(c.value ?? 0)}</td>

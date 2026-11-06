@@ -34,12 +34,12 @@ export default function OwnerDashboardPage() {
     load();
   }, [load, router]);
 
-  const card = "bg-white rounded-xl shadow p-4";
+  const card = "card p-4";
   const cardTitle = "text-sm text-slate-500";
   const cardValue = "text-2xl font-bold mt-1";
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div>
       <h1 className="text-2xl font-bold mb-1">{t("ownerTitle", "Owner Panel", "ওনার প্যানেল")}</h1>
       <p className="text-sm text-slate-500 mb-4">
         {t(
@@ -50,9 +50,13 @@ export default function OwnerDashboardPage() {
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+          <div className="skeleton h-24" />
+          <div className="skeleton h-24" />
+          <div className="skeleton h-24" />
+        </div>
       ) : isOwner === false ? (
-        <div className="bg-white rounded-xl shadow p-6">
+        <div className="card p-6">
           <p className="font-bold text-lg">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
           <p className="text-sm text-slate-500 mt-1">
             {t(
@@ -113,21 +117,21 @@ export default function OwnerDashboardPage() {
           </div>
 
           <div className="flex gap-2 mb-4">
-            <Link href="/owner/shops" className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white text-sm rounded-lg px-3 py-2">{t("ownerShops", "Shops", "দোকান")}</Link>
-            <Link href="/owner/bank-accounts" className="border border-[#ff6a4d] text-[#e04e33] text-sm rounded-lg px-3 py-2">{t("ownerBankAccounts", "Bank accounts", "ব্যাংক অ্যাকাউন্ট")}</Link>
-            <Link href="/owner/expenses" className="border border-[#ff6a4d] text-[#e04e33] text-sm rounded-lg px-3 py-2">{t("ownerExpenses", "Expenses", "খরচ")}</Link>
-            <Link href="/owner/api-costs" className="border border-[#ff6a4d] text-[#e04e33] text-sm rounded-lg px-3 py-2">{t("ownerApiCosts", "API costs", "API খরচ")}</Link>
-            <Link href="/owner/wallet" className="border border-[#ff6a4d] text-[#e04e33] text-sm rounded-lg px-3 py-2">{t("ownerWallet", "Wallet", "ওয়ালেট")}</Link>
+            <Link href="/owner/shops" className="bg-brand hover:bg-brand-dark text-white text-sm rounded-lg px-3 py-2 shadow-sm transition">{t("ownerShops", "Shops", "দোকান")}</Link>
+            <Link href="/owner/bank-accounts" className="border border-brand bg-white text-brand-dark text-sm rounded-lg px-3 py-2 shadow-sm transition hover:bg-orange-50">{t("ownerBankAccounts", "Bank accounts", "ব্যাংক অ্যাকাউন্ট")}</Link>
+            <Link href="/owner/expenses" className="border border-brand bg-white text-brand-dark text-sm rounded-lg px-3 py-2 shadow-sm transition hover:bg-orange-50">{t("ownerExpenses", "Expenses", "খরচ")}</Link>
+            <Link href="/owner/api-costs" className="border border-brand bg-white text-brand-dark text-sm rounded-lg px-3 py-2 shadow-sm transition hover:bg-orange-50">{t("ownerApiCosts", "API costs", "API খরচ")}</Link>
+            <Link href="/owner/wallet" className="border border-brand bg-white text-brand-dark text-sm rounded-lg px-3 py-2 shadow-sm transition hover:bg-orange-50">{t("ownerWallet", "Wallet", "ওয়ালেট")}</Link>
           </div>
 
           <div className="flex gap-2 mb-3">
-            <button onClick={() => setDays(7)} className={`text-sm rounded-lg px-3 py-1 border ${days === 7 ? "bg-[#ff6a4d] text-white border-[#ff6a4d]" : "border-slate-300"}`}>7 {t("ownerDays", "days", "দিন")}</button>
-            <button onClick={() => setDays(30)} className={`text-sm rounded-lg px-3 py-1 border ${days === 30 ? "bg-[#ff6a4d] text-white border-[#ff6a4d]" : "border-slate-300"}`}>30 {t("ownerDays", "days", "দিন")}</button>
+            <button onClick={() => setDays(7)} className={`text-sm rounded-lg px-3 py-1 border transition ${days === 7 ? "bg-brand text-white border-brand" : "border-slate-300 bg-white hover:bg-orange-50"}`}>7 {t("ownerDays", "days", "দিন")}</button>
+            <button onClick={() => setDays(30)} className={`text-sm rounded-lg px-3 py-1 border transition ${days === 30 ? "bg-brand text-white border-brand" : "border-slate-300 bg-white hover:bg-orange-50"}`}>30 {t("ownerDays", "days", "দিন")}</button>
           </div>
-          <div className="bg-white rounded-xl shadow overflow-x-auto">
+          <div className="card overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-left border-b">
+                <tr className="table-head text-left border-b">
                   <th className="p-3">{t("ownerColDate", "Date", "তারিখ")}</th>
                   <th className="p-3">{t("ownerColRevenue", "Revenue", "আয়")}</th>
                   <th className="p-3">{t("ownerColApiCost", "AI cost", "AI খরচ")}</th>
@@ -136,7 +140,7 @@ export default function OwnerDashboardPage() {
               </thead>
               <tbody>
                 {data.trend.map((row) => (
-                  <tr key={row.date} className="border-b last:border-0">
+                  <tr key={row.date} className="border-b last:border-0 transition-colors hover:bg-orange-50">
                     <td className="p-3 whitespace-nowrap">{fmtDate(row.date)}</td>
                     <td className="p-3">{fmtTaka(row.revenuePaisa)}</td>
                     <td className="p-3">{fmtTaka(row.apiCostPaisa)}</td>

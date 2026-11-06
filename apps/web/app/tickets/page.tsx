@@ -76,7 +76,7 @@ export default function TicketsPage() {
       <h1 className="text-2xl font-bold mb-4">{t("tickets.title", "Support Tickets", "সাপোর্ট টিকেট")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      <form onSubmit={create} className="bg-white rounded-xl shadow p-4 mb-6 grid grid-cols-1 md:grid-cols-3 gap-3">
+      <form onSubmit={create} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-3 gap-3">
         <h2 className="font-bold md:col-span-3">{t("tickets.createTitle", "Create a new ticket", "নতুন টিকেট তৈরি করুন")}</h2>
         <input required value={conversationId} onChange={(e) => setConversationId(e.target.value)} placeholder={t("tickets.conversationPlaceholder", "Conversation ID *", "Conversation ID *")} className="border rounded-lg px-3 py-2" />
         <input required value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("tickets.reasonPlaceholder", "Reason (e.g. wants a refund) *", "কারণ (যেমন: রিফান্ড চান) *")} className="border rounded-lg px-3 py-2" />
@@ -84,14 +84,14 @@ export default function TicketsPage() {
       </form>
 
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : tickets.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("tickets.empty", "No tickets.", "কোনো টিকেট নেই।")}</p>
+        <div className="empty-state">{t("tickets.empty", "No tickets.", "কোনো টিকেট নেই।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("tickets.thId", "ID", "ID")}</th><th className="p-3">{t("tickets.thReason", "Reason", "কারণ")}</th><th className="p-3">{t("tickets.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3">{t("tickets.thDate", "Date", "তারিখ")}</th><th className="p-3">{t("tickets.thChange", "Change", "বদলান")}</th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("tickets.thId", "ID", "ID")}</th><th className="p-3">{t("tickets.thReason", "Reason", "কারণ")}</th><th className="p-3">{t("tickets.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3">{t("tickets.thDate", "Date", "তারিখ")}</th><th className="p-3">{t("tickets.thChange", "Change", "বদলান")}</th></tr></thead>
             <tbody>
               {tickets.map((tk) => (
-                <tr key={tk.id} className="border-b hover:bg-orange-50">
+                <tr key={tk.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3 font-mono text-xs">{tk.id.slice(0, 8)}</td>
                   <td className="p-3">{tk.reason || "—"}</td>
                   <td className="p-3">{ticketLabel(tk.status || "")}</td>

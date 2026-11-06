@@ -33,38 +33,41 @@ export default function SignupPage() {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
-      <form onSubmit={submit} className="w-full max-w-md bg-white rounded-xl shadow p-8 space-y-4">
+    <div className="flex min-h-screen items-center justify-center bg-background p-4">
+      <form onSubmit={submit} className="w-full max-w-md space-y-4 rounded-2xl border border-orange-100 bg-white p-8 shadow-lg">
         <div className="flex items-start justify-between gap-3">
-          <div>
-            <h1 className="text-2xl font-bold">{t("app.name", "AI Sales Inbox", "AI সেলস ইনবক্স")}</h1>
-            <p className="text-slate-500 text-sm">{t("auth.signupSubtitle", "Open a new account — start with free credit", "নতুন অ্যাকাউন্ট খুলুন — ফ্রি ক্রেডিট দিয়ে শুরু করুন")}</p>
+          <div className="flex items-start gap-3">
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-base font-bold text-white shadow-sm">AI</span>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("app.name", "AI Sales Inbox", "AI সেলস ইনবক্স")}</h1>
+              <p className="text-sm text-slate-500">{t("auth.signupSubtitle", "Open a new account — start with free credit", "নতুন অ্যাকাউন্ট খুলুন — ফ্রি ক্রেডিট দিয়ে শুরু করুন")}</p>
+            </div>
           </div>
           <LanguageToggle />
         </div>
-        {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg">{error}</p>}
+        {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
         <div>
-          <label className="block text-sm font-medium mb-1">{t("auth.yourName", "Your name", "আপনার নাম")}</label>
-          <input required value={name} onChange={(e) => setName(e.target.value)} className="w-full border rounded-lg px-3 py-2" />
+          <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.yourName", "Your name", "আপনার নাম")}</label>
+          <input required value={name} onChange={(e) => setName(e.target.value)} className="w-full" />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">{t("auth.businessName", "Business name", "ব্যবসার নাম")}</label>
-          <input required value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} className="w-full border rounded-lg px-3 py-2" placeholder={t("auth.businessNamePlaceholder", "e.g. My Shop", "যেমন: আমার শপ")} />
+          <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.businessName", "Business name", "ব্যবসার নাম")}</label>
+          <input required value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} className="w-full" placeholder={t("auth.businessNamePlaceholder", "e.g. My Shop", "যেমন: আমার শপ")} />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">{t("auth.email", "Email", "ইমেইল")}</label>
-          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full border rounded-lg px-3 py-2" placeholder="you@example.com" />
+          <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.email", "Email", "ইমেইল")}</label>
+          <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className="w-full" placeholder="you@example.com" />
         </div>
         <div>
-          <label className="block text-sm font-medium mb-1">{t("auth.password", "Password", "পাসওয়ার্ড")}</label>
-          <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full border rounded-lg px-3 py-2" placeholder={t("auth.passwordPlaceholder", "At least 6 characters", "কমপক্ষে ৬ অক্ষর")} />
+          <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.password", "Password", "পাসওয়ার্ড")}</label>
+          <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full" placeholder={t("auth.passwordPlaceholder", "At least 6 characters", "কমপক্ষে ৬ অক্ষর")} />
         </div>
-        <button disabled={loading} className="w-full bg-brand text-white py-2 rounded-lg hover:bg-brand-dark disabled:opacity-50">
+        <button disabled={loading} className="w-full rounded-lg bg-brand py-2.5 font-medium text-white shadow-sm transition hover:bg-brand-dark disabled:opacity-50">
           {loading ? t("auth.creatingAccount", "Creating account…", "অ্যাকাউন্ট তৈরি হচ্ছে…") : t("auth.signup", "Sign up", "সাইন আপ")}
         </button>
-        <p className="text-sm text-center text-slate-500">
+        <p className="text-center text-sm text-slate-500">
           {t("auth.hasAccount", "Already have an account?", "ইতিমধ্যে অ্যাকাউন্ট আছে?")}{" "}
-          <Link href="/login" className="text-brand-dark underline">{t("auth.loginLink", "Log in", "লগইন করুন")}</Link>
+          <Link href="/login" className="font-medium text-brand-dark underline hover:text-brand">{t("auth.loginLink", "Log in", "লগইন করুন")}</Link>
         </p>
       </form>
     </div>

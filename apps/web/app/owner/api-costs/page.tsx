@@ -69,7 +69,7 @@ export default function OwnerApiCostsPage() {
             ))}
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <p className="text-sm text-slate-500">{t("ownerApiTotal", "Total AI cost", "মোট AI খরচ")}</p>
             <p className="text-2xl font-bold">{fmtTaka(data.totalProviderCostPaisa)}</p>
             <p className="text-xs text-slate-400">{t("ownerApiSince", "Since", "থেকে")} {data.since.slice(0, 10)}</p>
@@ -81,7 +81,7 @@ export default function OwnerApiCostsPage() {
           ) : (
             <div className="grid gap-3 mb-6">
               {data.byProvider.map((p) => (
-                <div key={p.provider} className="bg-white rounded-xl shadow p-4">
+                <div key={p.provider} className="card p-4">
                   <div className="flex justify-between gap-2 flex-wrap">
                     <span className="font-bold">{providerName(p.provider)}</span>
                     <span className="font-bold">{fmtTaka(p.providerCostPaisa)}</span>
@@ -98,7 +98,7 @@ export default function OwnerApiCostsPage() {
           {data.byShop.length === 0 ? (
             <p className="text-slate-500">{t("ownerApiEmpty", "No AI replies in this period.", "এই সময়ে কোনো AI উত্তর দেওয়া হয়নি।")}</p>
           ) : (
-            <div className="bg-white rounded-xl shadow overflow-x-auto">
+            <div className="card overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left border-b">

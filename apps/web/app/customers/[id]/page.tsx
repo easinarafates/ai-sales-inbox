@@ -69,17 +69,17 @@ export default function CustomerDetailPage() {
       <h1 className="text-2xl font-bold my-4">{t("customers.detailTitle", "Customer profile", "কাস্টমার প্রোফাইল")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {notice && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
-      {!c && !loading && <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("customers.notFound", "Customer not found.", "কাস্টমার পাওয়া যায়নি।")}</p>}
+      {!c && !loading && <div className="empty-state">{t("customers.notFound", "Customer not found.", "কাস্টমার পাওয়া যায়নি।")}</div>}
       {c && (
         <div className="space-y-4">
-          <div className="bg-white rounded-xl shadow p-4">
+          <div className="card p-4">
             <h2 className="font-bold text-lg">{c.name || t("common.unknown", "Unknown", "অজানা")}</h2>
             <p className="text-sm"><span className="text-slate-500">{t("common.phone", "Phone", "ফোন")}:</span> {c.phone || "—"}</p>
             <p className="text-sm"><span className="text-slate-500">{t("common.address", "Address", "ঠিকানা")}:</span> {c.address || "—"}</p>
             <p className="text-sm"><span className="text-slate-500">{t("common.id", "ID", "ID")}:</span> {c.id}</p>
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4">
+          <div className="card p-4">
             <h3 className="font-bold mb-2">{t("customers.identities", "Identity on all channels", "সব চ্যানেলের পরিচয়")}</h3>
             {(!detail?.identities || detail.identities.length === 0) ? (
               <p className="text-sm text-slate-500">{t("customers.noIdentities", "No channel identity found.", "কোনো চ্যানেল পরিচয় পাওয়া যায়নি।")}</p>
@@ -94,7 +94,7 @@ export default function CustomerDetailPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4">
+          <div className="card p-4">
             <h3 className="font-bold mb-2">{t("customers.chats", "Chats", "চ্যাট")}</h3>
             {(!detail?.conversations || detail.conversations.length === 0) ? (
               <p className="text-sm text-slate-500">{t("customers.noChats", "No chats.", "কোনো চ্যাট নেই।")}</p>
@@ -110,7 +110,7 @@ export default function CustomerDetailPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4">
+          <div className="card p-4">
             <h3 className="font-bold mb-2">{t("customers.orders", "Orders", "অর্ডার")}</h3>
             {(!detail?.orders || detail.orders.length === 0) ? (
               <p className="text-sm text-slate-500">{t("customers.noOrders", "No orders.", "কোনো অর্ডার নেই।")}</p>
@@ -126,7 +126,7 @@ export default function CustomerDetailPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4">
+          <div className="card p-4">
             <h3 className="font-bold mb-2">{t("customers.notes", "Notes", "নোট")}</h3>
             {(!detail?.notes || detail.notes.length === 0) ? (
               <p className="text-sm text-slate-500">{t("customers.noNotes", "No notes.", "কোনো নোট নেই।")}</p>
@@ -141,7 +141,7 @@ export default function CustomerDetailPage() {
             )}
           </div>
 
-          <form onSubmit={merge} className="bg-white rounded-xl shadow p-4">
+          <form onSubmit={merge} className="card p-4">
             <h3 className="font-bold mb-2">{t("customers.mergeTitle", "Merge duplicate customers", "ডুপ্লিকেট কাস্টমার এক করুন (মার্জ)")}</h3>
             <p className="text-sm text-slate-500 mb-3">
               {t("customers.mergeHelp", "This profile will be kept; all information of the customer with the ID below will be added to it.", "এই প্রোফাইলটি রাখা হবে; নিচের ID-র কাস্টমারের সব তথ্য এতে যুক্ত হবে।")}

@@ -52,17 +52,17 @@ export default function OrdersPage() {
           <option value="paid">{t("orders.paymentPaid", "Paid", "পরিশোধিত")}</option>
         </select>
       </div>
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : filtered.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("orders.empty", "No orders yet.", "কোনো অর্ডার নেই।")}</p>
+      {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : filtered.length === 0 ? (
+        <div className="empty-state">{t("orders.empty", "No orders yet.", "কোনো অর্ডার নেই।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("orders.thOrder", "Order", "অর্ডার")}</th><th className="p-3">{t("orders.thCustomer", "Customer", "কাস্টমার")}</th><th className="p-3">{t("orders.thTotal", "Total", "মোট")}</th><th className="p-3">{t("orders.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3">{t("orders.thPayment", "Payment", "পেমেন্ট")}</th><th className="p-3">{t("orders.thDate", "Date", "তারিখ")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("orders.thOrder", "Order", "অর্ডার")}</th><th className="p-3">{t("orders.thCustomer", "Customer", "কাস্টমার")}</th><th className="p-3">{t("orders.thTotal", "Total", "মোট")}</th><th className="p-3">{t("orders.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3">{t("orders.thPayment", "Payment", "পেমেন্ট")}</th><th className="p-3">{t("orders.thDate", "Date", "তারিখ")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {filtered.map((o) => {
                 const pay = o.paymentStatus || o.payment_status;
                 return (
-                  <tr key={o.id} className="border-b hover:bg-orange-50">
+                  <tr key={o.id} className="border-b transition-colors hover:bg-orange-50">
                     <td className="p-3 font-medium">{o.orderNumber || o.order_number || o.id.slice(0, 8)}</td>
                     <td className="p-3">{o.customer?.name || "—"}</td>
                     <td className="p-3">{fmtTaka(orderTotalPaisa(o))}</td>

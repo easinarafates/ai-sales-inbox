@@ -92,7 +92,7 @@ export default function SetupPage() {
             {STEP_INFO.map((s, i) => {
               const isDone = done(s.step);
               return (
-                <div key={s.step} className="bg-white rounded-xl shadow p-4 flex items-center justify-between gap-3 flex-wrap">
+                <div key={s.step} className="card p-4 flex items-center justify-between gap-3 flex-wrap">
                   <div className="flex items-center gap-3">
                     <span className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-white ${isDone ? "bg-teal-600" : "bg-[#ff6a4d]"}`}>
                       {isDone ? "✓" : i + 1}
@@ -117,7 +117,7 @@ export default function SetupPage() {
           </div>
 
           {testCode && (
-            <div className="bg-white rounded-xl shadow p-4 mt-6">
+            <div className="card p-4 mt-6">
               <h2 className="font-bold">{t("setupTestTitle", "Your test code", "আপনার টেস্ট কোড")}</h2>
               <p className="text-3xl font-bold tracking-[0.5em] text-[#ff6a4d] my-3">{testCode}</p>
               <p className="text-sm text-slate-500 mb-3">{verifyMsg || t("setupEnterCode", "Enter the code below to verify.", "যাচাই করতে নিচে কোডটি লিখুন।")}</p>

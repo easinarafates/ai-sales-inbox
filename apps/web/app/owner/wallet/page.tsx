@@ -187,7 +187,7 @@ export default function OwnerWalletPage() {
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : wallet ? (
         <>
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <p className="text-sm text-slate-500">{t("ownerWalletBalance", "Owner wallet", "ওনার ওয়ালেট")}</p>
             <p className="text-3xl font-bold">{fmtTaka(wallet.balancePaisa)}</p>
             {wallet.lowBalance && (
@@ -216,7 +216,7 @@ export default function OwnerWalletPage() {
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <h2 className="font-bold mb-3">{t("ownerDepositTitle", "Deposit money", "টাকা জমা করুন")}</h2>
             <div className="grid gap-2 sm:grid-cols-2">
               <input value={depAmount} onChange={(e) => setDepAmount(e.target.value)} placeholder={t("ownerDepositAmountPh", "Amount in Taka (e.g. 5000)", "টাকার অঙ্ক (যেমন ৫০০০)")} className="border rounded-lg px-3 py-2 text-sm" inputMode="decimal" />
@@ -253,7 +253,7 @@ export default function OwnerWalletPage() {
             </p>
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <h2 className="font-bold mb-3">{t("ownerDepositsTitle", "Deposit requests", "জমার অনুরোধ")}</h2>
             {deposits.length === 0 ? (
               <p className="text-sm text-slate-500">{t("ownerDepositsEmpty", "No deposits yet.", "এখনো কোনো জমা নেই।")}</p>
@@ -292,7 +292,7 @@ export default function OwnerWalletPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <h2 className="font-bold mb-3">{t("ownerCardsTitle", "Cards on file", "সেভ করা কার্ড")}</h2>
             <p className="text-xs text-slate-500 mb-3">
               {t(
@@ -321,7 +321,7 @@ export default function OwnerWalletPage() {
             )}
           </div>
 
-          <div className="bg-white rounded-xl shadow p-4">
+          <div className="card p-4">
             <h2 className="font-bold mb-3">{t("ownerTxTitle", "Wallet history", "ওয়ালেটের হিসাব")}</h2>
             {wallet.transactions.length === 0 ? (
               <p className="text-sm text-slate-500">{t("ownerTxEmpty", "No wallet movements yet.", "এখনো ওয়ালেটে কোনো লেনদেন নেই।")}</p>

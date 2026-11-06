@@ -99,7 +99,7 @@ export default function OwnerExpensesPage() {
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : (
         <>
-          <div className="bg-white rounded-xl shadow p-4 mb-6">
+          <div className="card p-4 mb-6">
             <h2 className="font-bold mb-3">{t("ownerExpenseAdd", "Add a new expense", "নতুন খরচ লিখুন")}</h2>
             <div className="grid gap-2 sm:grid-cols-2">
               <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="border rounded-lg px-3 py-2 text-sm" aria-label={t("ownerColDate", "Date", "তারিখ")} />
@@ -127,7 +127,7 @@ export default function OwnerExpensesPage() {
           </div>
           <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mb-6">
             {CATEGORIES.map((c) => (
-              <div key={c} className="bg-white rounded-xl shadow p-3">
+              <div key={c} className="card p-3">
                 <p className="text-xs text-slate-500">{categoryLabel(c)}</p>
                 <p className="font-bold">{fmtTaka(totals[c] ?? 0)}</p>
               </div>
@@ -137,7 +137,7 @@ export default function OwnerExpensesPage() {
           {expenses.length === 0 ? (
             <p className="text-slate-500">{t("ownerExpEmpty", "No expenses this month.", "এই মাসে কোনো খরচ নেই।")}</p>
           ) : (
-            <div className="bg-white rounded-xl shadow overflow-x-auto">
+            <div className="card overflow-x-auto">
               <table className="w-full text-sm">
                 <thead>
                   <tr className="text-left border-b">

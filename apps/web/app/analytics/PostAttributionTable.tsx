@@ -17,7 +17,7 @@ import { useI18n } from "@/lib/i18n";
 export default function PostAttributionTable({ posts }: { posts: AnalyticsPost[] }) {
   const { t, fmtNum } = useI18n();
   return (
-    <div className="bg-white rounded-xl shadow p-4 mb-6 overflow-x-auto">
+    <div className="card p-4 mb-6 overflow-x-auto">
       <h2 className="font-bold mb-3">{t("analytics.postsTitle", "Sales per post", "প্রতি পোস্টের হিসাব")}</h2>
       {posts.length === 0 ? (
         <p className="text-sm text-slate-500">{t("analytics.postsEmpty", "No post information.", "কোনো পোস্টের তথ্য নেই।")}</p>
@@ -25,7 +25,7 @@ export default function PostAttributionTable({ posts }: { posts: AnalyticsPost[]
         <>
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b text-left text-slate-500">
+              <tr className="table-head border-b text-left text-slate-500">
                 <th className="p-3">{t("analytics.postsThPost", "Post", "পোস্ট")}</th>
                 <th className="p-3">{t("analytics.postsThPlatform", "Platform", "প্ল্যাটফর্ম")}</th>
                 <th className="p-3">{t("analytics.postsThComments", "Comments", "কমেন্ট")}</th>
@@ -35,7 +35,7 @@ export default function PostAttributionTable({ posts }: { posts: AnalyticsPost[]
             </thead>
             <tbody>
               {posts.map((p, i) => (
-                <tr key={p.postId || p.post_id || i} className="border-b hover:bg-orange-50">
+                <tr key={p.postId || p.post_id || i} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3">{p.caption || p.postId || p.post_id || "—"}</td>
                   <td className="p-3">{(p.platforms || []).join(", ") || "—"}</td>
                   <td className="p-3">{fmtNum(p.comments ?? 0)}</td>

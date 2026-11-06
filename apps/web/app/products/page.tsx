@@ -77,7 +77,7 @@ export default function ProductsPage() {
         <button onClick={search} className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700">{t("common.search", "Search", "খুঁজুন")}</button>
       </div>
 
-      <form onSubmit={addProduct} className="bg-white rounded-xl shadow p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+      <form onSubmit={addProduct} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
         <h2 className="font-bold md:col-span-2">{t("products.addTitle", "Add a new product", "নতুন প্রোডাক্ট যোগ করুন")}</h2>
         <input required value={name} onChange={(e) => setName(e.target.value)} placeholder={t("products.namePlaceholder", "Product name *", "প্রোডাক্টের নাম *")} className="border rounded-lg px-3 py-2" />
         <input required type="number" min="0" step="0.01" value={priceTaka} onChange={(e) => setPriceTaka(e.target.value)} placeholder={t("products.pricePlaceholder", "Price (৳) *", "দাম (৳) *")} className="border rounded-lg px-3 py-2" />
@@ -87,15 +87,15 @@ export default function ProductsPage() {
         <button disabled={saving} className="bg-brand text-white py-2 rounded-lg md:col-span-2 hover:bg-brand-dark disabled:opacity-50">{saving ? t("products.adding", "Adding…", "যোগ হচ্ছে…") : t("products.addButton", "Add product", "প্রোডাক্ট যোগ করুন")}</button>
       </form>
 
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : products.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("products.empty", "No products yet. Add one from the form above.", "কোনো প্রোডাক্ট নেই। উপরের ফর্ম থেকে যোগ করুন।")}</p>
+      {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : products.length === 0 ? (
+        <div className="empty-state">{t("products.empty", "No products yet. Add one from the form above.", "কোনো প্রোডাক্ট নেই। উপরের ফর্ম থেকে যোগ করুন।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("products.thName", "Name", "নাম")}</th><th className="p-3">{t("products.thPrice", "Price", "দাম")}</th><th className="p-3">{t("products.thSize", "Size", "সাইজ")}</th><th className="p-3">{t("products.thStock", "Stock", "স্টক")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("products.thName", "Name", "নাম")}</th><th className="p-3">{t("products.thPrice", "Price", "দাম")}</th><th className="p-3">{t("products.thSize", "Size", "সাইজ")}</th><th className="p-3">{t("products.thStock", "Stock", "স্টক")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {products.map((p) => (
-                <tr key={p.id} className="border-b hover:bg-orange-50">
+                <tr key={p.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3 font-medium">{p.name}</td>
                   <td className="p-3">{fmtTaka(productPricePaisa(p))}</td>
                   <td className="p-3">{p.size || "—"}</td>

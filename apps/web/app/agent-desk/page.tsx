@@ -92,7 +92,7 @@ export default function AgentDeskPage() {
         </div>
       )}
 
-      <form onSubmit={createDraft} className="bg-white rounded-xl shadow p-4 mb-6 grid gap-3">
+      <form onSubmit={createDraft} className="card p-4 mb-6 grid gap-3">
         <h2 className="font-bold">{t("deskNew", "Write new instructions (draft)", "নতুন নির্দেশনা লিখুন (খসড়া)")}</h2>
         <textarea required value={body} onChange={(e) => setBody(e.target.value)} rows={5} placeholder={t("deskBodyPh", "E.g. Always greet politely in Bengali. Never promise a delivery time we cannot keep. If the customer asks for a discount, offer at most 5%…", "যেমন: সবসময় বাংলায় ভদ্রভাবে সালাম দিন। যা দিতে পারবেন না, এমন ডেলিভারির সময়ের কথা বলবেন না। কাস্টমার ছাড় চাইলে সর্বোচ্চ ৫% দিন…")} className="border rounded-lg px-3 py-2" />
         <button disabled={saving} className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white rounded-lg px-4 py-2 w-fit disabled:opacity-50">
@@ -100,7 +100,7 @@ export default function AgentDeskPage() {
         </button>
       </form>
 
-      <form onSubmit={test} className="bg-white rounded-xl shadow p-4 mb-6 grid gap-3">
+      <form onSubmit={test} className="card p-4 mb-6 grid gap-3">
         <h2 className="font-bold">{t("deskTestTitle", "Test the draft", "খসড়া পরীক্ষা করুন")}</h2>
         <p className="text-sm text-slate-500">{t("deskTestSub", "Ask a question the way a customer would. The AI answers using the draft — nothing is published.", "কাস্টমারের মতো করে একটি প্রশ্ন করুন। AI খসড়া দিয়ে উত্তর দেবে — কিছু প্রকাশ হবে না।")}</p>
         <input required value={question} onChange={(e) => setQuestion(e.target.value)} placeholder={t("deskQPh", "Customer question, e.g. What is the delivery charge?", "কাস্টমারের প্রশ্ন, যেমন: ডেলিভারি চার্জ কত?")} className="border rounded-lg px-3 py-2" />
@@ -124,7 +124,7 @@ export default function AgentDeskPage() {
       ) : (
         <div className="grid gap-3">
           {versions.map((v) => (
-            <div key={v.id} className="bg-white rounded-xl shadow p-4">
+            <div key={v.id} className="card p-4">
               <div className="flex justify-between gap-2 flex-wrap">
                 <span className="font-bold">v{v.version} · {v.status === "published" ? t("deskPublished", "Published", "প্রকাশিত") : v.status === "draft" ? t("deskDraft", "Draft", "খসড়া") : t("deskArchived", "Archived", "আর্কাইভ")}</span>
                 <span className="text-xs text-slate-400">{fmtDate(v.created_at)}</span>

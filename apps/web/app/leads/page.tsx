@@ -160,7 +160,7 @@ export default function LeadsPage() {
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {runResult && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{runResult}</p>}
 
-      <form onSubmit={submitLead} className="bg-white rounded-xl shadow p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
+      <form onSubmit={submitLead} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
         <h2 className="font-bold md:col-span-2">{editing ? t("leads.editTitle", "Edit lead", "লিড এডিট করুন") : t("leads.addTitle", "Add a new lead", "নতুন লিড যোগ করুন")}</h2>
         <input required={!editing} value={customerId} onChange={(e) => setCustomerId(e.target.value)} placeholder={t("leads.customerIdPlaceholder", "Customer ID *", "কাস্টমার ID *")} className="border rounded-lg px-3 py-2" />
         <input value={need} onChange={(e) => setNeed(e.target.value)} placeholder={t("leads.needPlaceholder", "What they want (e.g. red sari, size M)", "কী চায় (যেমন: লাল শাড়ি, সাইজ M)")} className="border rounded-lg px-3 py-2" />
@@ -180,14 +180,14 @@ export default function LeadsPage() {
       </form>
 
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : leads.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6 mb-6">{t("leads.empty", "No leads.", "কোনো লিড নেই।")}</p>
+        <p className="text-slate-500 card p-6 mb-6">{t("leads.empty", "No leads.", "কোনো লিড নেই।")}</p>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto mb-6">
+        <div className="card overflow-x-auto mb-6">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("leads.thCustomer", "Customer", "কাস্টমার")}</th><th className="p-3">{t("leads.thNeed", "Need", "চাহিদা")}</th><th className="p-3">{t("leads.thFollowUp", "Follow-up", "ফলো-আপ")}</th><th className="p-3">{t("leads.thCall", "Call", "কল")}</th><th className="p-3">{t("leads.thOutcome", "Result", "ফলাফল")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("leads.thCustomer", "Customer", "কাস্টমার")}</th><th className="p-3">{t("leads.thNeed", "Need", "চাহিদা")}</th><th className="p-3">{t("leads.thFollowUp", "Follow-up", "ফলো-আপ")}</th><th className="p-3">{t("leads.thCall", "Call", "কল")}</th><th className="p-3">{t("leads.thOutcome", "Result", "ফলাফল")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {leads.map((l) => (
-                <tr key={l.id} className="border-b hover:bg-orange-50">
+                <tr key={l.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3">{l.customer?.name || l.customerId || l.customer_id || "—"}</td>
                   <td className="p-3">{l.need || "—"}</td>
                   <td className="p-3">{fmtDate(l.followUpAt || l.follow_up_at)}</td>
@@ -202,7 +202,7 @@ export default function LeadsPage() {
       )}
 
       <h2 className="text-xl font-bold mb-3">{t("leads.followupsTitle", "Follow-ups", "ফলো-আপ")}</h2>
-      <form onSubmit={submitFollowup} className="bg-white rounded-xl shadow p-4 mb-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+      <form onSubmit={submitFollowup} className="card p-4 mb-4 grid grid-cols-1 md:grid-cols-2 gap-3">
         <h3 className="font-bold md:col-span-2">{t("leads.newFollowupTitle", "Create a new follow-up", "নতুন ফলো-আপ তৈরি করুন")}</h3>
         <select value={fuLeadId} onChange={(e) => setFuLeadId(e.target.value)} className="border rounded-lg px-3 py-2 bg-white">
           <option value="">{t("leads.pickLead", "Pick a lead (optional)", "লিড বাছুন (ঐচ্ছিক)")}</option>
@@ -231,14 +231,14 @@ export default function LeadsPage() {
       </div>
 
       {followups.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("leads.emptyFollowups", "No follow-ups.", "কোনো ফলো-আপ নেই।")}</p>
+        <div className="empty-state">{t("leads.emptyFollowups", "No follow-ups.", "কোনো ফলো-আপ নেই।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="border-b text-left text-slate-500"><th className="p-3">{t("leads.thMessage", "Message", "মেসেজ")}</th><th className="p-3">{t("leads.thSendAt", "Send time", "পাঠানোর সময়")}</th><th className="p-3">{t("leads.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("leads.thMessage", "Message", "মেসেজ")}</th><th className="p-3">{t("leads.thSendAt", "Send time", "পাঠানোর সময়")}</th><th className="p-3">{t("leads.thStatus", "Status", "স্ট্যাটাস")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {followups.map((f) => (
-                <tr key={f.id} className="border-b hover:bg-orange-50">
+                <tr key={f.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3">{f.message || "—"}</td>
                   <td className="p-3">{fmtDate(f.sendAt || f.send_at)}</td>
                   <td className="p-3">{f.status || "—"}</td>

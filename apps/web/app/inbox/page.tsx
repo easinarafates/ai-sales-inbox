@@ -140,44 +140,55 @@ export default function InboxPage() {
 
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      <div className="flex gap-3 mb-4">
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:gap-3">
         <input
           value={q}
           onChange={(e) => setQ(e.target.value)}
           placeholder={t("inbox.searchPlaceholder", "Search — name, phone, order number, chat words…", "খুঁজুন — নাম, ফোন, অর্ডার নম্বর, চ্যাটের শব্দ…")}
-          className="flex-1 border rounded-lg px-3 py-2 bg-white"
+          className="flex-1"
         />
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="border rounded-lg px-3 py-2 bg-white">
+        <select value={status} onChange={(e) => setStatus(e.target.value)} className="sm:w-44">
           <option value="">{t("common.allStatus", "All statuses", "সব স্ট্যাটাস")}</option>
           <option value="open">{t("inbox.statusOpen", "Open", "খোলা")}</option>
           <option value="done">{t("inbox.statusDone", "Done", "সম্পন্ন")}</option>
           <option value="snoozed">{t("inbox.statusSnoozed", "Snoozed", "স্নুজ করা")}</option>
         </select>
-        <button onClick={loadList} className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700">{t("common.search", "Search", "খুঁজুন")}</button>
+        <button onClick={loadList} className="shrink-0 rounded-lg bg-teal-600 px-4 py-2 text-white shadow-sm transition hover:bg-teal-700">{t("common.search", "Search", "খুঁজুন")}</button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Conversation list */}
-        <div className="bg-white rounded-xl shadow divide-y">
-          {loading && <p className="p-4 text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>}
+        <div className="divide-y rounded-xl border border-orange-100/70 bg-white shadow">
+          {loading && (
+            <div className="space-y-3 p-4">
+              <div className="skeleton h-12" />
+              <div className="skeleton h-12" />
+              <div className="skeleton h-12" />
+            </div>
+          )}
           {!loading && conversations.length === 0 && (
-            <p className="p-4 text-slate-500">{t("inbox.noChats", "No chats found.", "কোনো চ্যাট পাওয়া যায়নি।")}</p>
+            <div className="empty-state m-4">{t("inbox.noChats", "No chats found.", "কোনো চ্যাট পাওয়া যায়নি।")}</div>
           )}
           {conversations.map((c) => (
             <button
               key={c.id}
               onClick={() => openThread(c.id)}
-              className={`w-full text-left p-4 hover:bg-orange-50 ${selectedId === c.id ? "bg-orange-50" : ""}`}
+              className={`flex w-full gap-3 p-4 text-left transition-colors hover:bg-orange-50 ${selectedId === c.id ? "bg-orange-50 ring-1 ring-inset ring-orange-200" : ""}`}
             >
-              <div className="flex justify-between gap-2">
-                <span className="font-medium">{convName(c, unknownLabel)}</span>
-                <span className="text-xs text-slate-400 shrink-0">{fmtDate(c.updatedAt || c.updated_at || c.lastMessageAt || c.last_message_at)}</span>
-              </div>
-              <p className="text-sm text-slate-500 truncate">{c.lastMessage || c.last_message || ""}</p>
-              <div className="flex gap-2 mt-1">
-                <span className="text-xs bg-slate-100 px-2 py-0.5 rounded">{convChannel(c)}</span>
-                {c.status && <span className="text-xs bg-blue-100 text-blue-800 px-2 py-0.5 rounded">{c.status}</span>}
-              </div>
+              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand/10 font-bold text-brand-dark">
+                {convName(c, unknownLabel).trim().charAt(0) || "?"}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="flex justify-between gap-2">
+                  <span className="truncate font-medium">{convName(c, unknownLabel)}</span>
+                  <span className="shrink-0 text-xs text-slate-400">{fmtDate(c.updatedAt || c.updated_at || c.lastMessageAt || c.last_message_at)}</span>
+                </span>
+                <span className="block truncate text-sm text-slate-500">{c.lastMessage || c.last_message || ""}</span>
+                <span className="mt-1 flex gap-2">
+                  <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{convChannel(c)}</span>
+                  {c.status && <span className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800">{c.status}</span>}
+                </span>
+              </span>
             </button>
           ))}
         </div>
@@ -185,13 +196,13 @@ export default function InboxPage() {
         {/* Thread + customer panel */}
         <div className="lg:col-span-2 space-y-4">
           {!selected && (
-            <div className="bg-white rounded-xl shadow p-8 text-center text-slate-500">
+            <div className="empty-state p-10">
               {t("inbox.pickChat", "Pick a chat from the left.", "বাম দিক থেকে একটি চ্যাট বেছে নিন।")}
             </div>
           )}
           {selected && (
             <>
-              <div className="bg-white rounded-xl shadow p-4">
+              <div className="card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
                   <div>
                     <h2 className="font-bold text-lg">{selected.customer?.name || convName(selected.conversation, unknownLabel)}</h2>
@@ -209,15 +220,15 @@ export default function InboxPage() {
                   </span>
                 </div>
 
-                <div className="py-4 space-y-3 max-h-[420px] overflow-y-auto">
-                  {selected.messages.length === 0 && <p className="text-slate-500 text-sm">{t("inbox.noMessages", "No messages yet.", "এখনো কোনো মেসেজ নেই।")}</p>}
+                <div className="space-y-3 overflow-y-auto py-4 max-h-[420px] scroll-smooth">
+                  {selected.messages.length === 0 && <p className="text-sm text-slate-500">{t("inbox.noMessages", "No messages yet.", "এখনো কোনো মেসেজ নেই।")}</p>}
                   {selected.messages.map((m) => {
                     const sender = msgSender(m).toLowerCase();
                     const isMe = sender.includes("agent") || sender.includes("business") || sender.includes("owner") || sender.includes("shop") || sender.includes("admin") || sender === "me";
                     const isAi = sender.includes("ai");
                     return (
                       <div key={m.id} className={`flex ${isMe || isAi ? "justify-end" : "justify-start"}`}>
-                        <div className={`max-w-[75%] px-3 py-2 rounded-xl text-sm ${isMe ? "bg-brand text-white" : isAi ? "bg-violet-100 text-violet-900" : "bg-slate-100"}`}>
+                        <div className={`max-w-[75%] rounded-xl px-3 py-2 text-sm shadow-sm ${isMe ? "bg-brand text-white" : isAi ? "bg-violet-100 text-violet-900" : "bg-slate-100"}`}>
                           <p>{msgText(m)}</p>
                           <p className={`text-[11px] mt-1 ${isMe ? "text-orange-100" : "text-slate-400"}`}>
                             {isAi ? t("inbox.ai", "AI", "AI") : isMe ? t("inbox.you", "You", "আপনি") : t("inbox.customer", "Customer", "কাস্টমার")} • {fmtDate(m.createdAt || m.created_at)}
@@ -255,12 +266,12 @@ export default function InboxPage() {
                       {t("inbox.assign", "Assign", "অ্যাসাইন")}
                     </button>
                   </div>
-                  <button onClick={() => doAction(() => inboxApi.done(selectedId!), t("inbox.markDoneFailed", "Marking done failed", "সম্পন্ন করা ব্যর্থ"))} className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm">
+                  <button onClick={() => doAction(() => inboxApi.done(selectedId!), t("inbox.markDoneFailed", "Marking done failed", "সম্পন্ন করা ব্যর্থ"))} className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white transition hover:bg-blue-700">
                     {t("inbox.markDone", "Done", "সম্পন্ন")}
                   </button>
                   <button
                     onClick={() => doAction(() => inboxApi.dot(selectedId!), t("inbox.dotFailed", "Dot (.) failed", "ডট (.) ব্যর্থ"))}
-                    className="bg-amber-500 text-white px-3 py-2 rounded-lg text-sm"
+                    className="rounded-lg bg-amber-500 px-3 py-2 text-sm text-white transition hover:bg-amber-600"
                     title={t("inbox.dotTitle", "When the owner sends '.', AI stops and a human takes over; sending '.' again returns to AI", "মালিক '.' পাঠালে AI থামবে ও মানুষ নেবে; আবার '.' পাঠালে AI-তে ফিরবে")}
                   >
                     {t("inbox.dot", "Dot (.)", "ডট (.)")} — {aiMode === false ? t("inbox.dotReturnToAi", "Back to AI", "AI-তে ফেরত") : t("inbox.dotHumanTakeover", "Human takes over", "মানুষ নেবে")}
@@ -269,7 +280,7 @@ export default function InboxPage() {
               </div>
 
               {/* Customer profile + open orders */}
-              <div className="bg-white rounded-xl shadow p-4">
+              <div className="card p-4">
                 <h3 className="font-bold mb-2">{t("inbox.profile", "Customer profile", "কাস্টমার প্রোফাইল")}</h3>
                 <p className="text-sm"><span className="text-slate-500">{t("common.name", "Name", "নাম")}:</span> {selected.customer?.name || "—"}</p>
                 <p className="text-sm"><span className="text-slate-500">{t("common.phone", "Phone", "ফোন")}:</span> {selected.customer?.phone || "—"}</p>

@@ -69,7 +69,7 @@ export default function SavedRepliesPage() {
       <p className="text-sm text-slate-500 mb-4">{t("savedSub", "Write answers once, then send them in the inbox with one tap.", "একবার উত্তর লিখুন, তারপর ইনবক্সে এক ক্লিকে পাঠান।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      <form onSubmit={save} className="bg-white rounded-xl shadow p-4 mb-6 grid gap-3">
+      <form onSubmit={save} className="card p-4 mb-6 grid gap-3">
         <h2 className="font-bold">{editingId ? t("savedEdit", "Edit saved reply", "সেভ করা উত্তর সম্পাদনা করুন") : t("savedNew", "New saved reply", "নতুন সেভ করা উত্তর")}</h2>
         <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("savedTitlePh", "Title, e.g. Delivery charge", "শিরোনাম, যেমন: ডেলিভারি চার্জ")} className="border rounded-lg px-3 py-2" />
         <textarea required value={body} onChange={(e) => setBody(e.target.value)} placeholder={t("savedBodyPh", "Reply text…", "উত্তরের লেখা…")} className="border rounded-lg px-3 py-2" rows={3} />
@@ -99,7 +99,7 @@ export default function SavedRepliesPage() {
       ) : (
         <div className="grid gap-3">
           {replies.map((r) => (
-            <div key={r.id} className="bg-white rounded-xl shadow p-4">
+            <div key={r.id} className="card p-4">
               <div className="flex justify-between gap-2">
                 <h3 className="font-bold">{r.title}</h3>
                 {r.channel && <span className="text-xs bg-teal-600/10 text-teal-600 rounded-full px-2 py-1 h-fit">{r.channel}</span>}

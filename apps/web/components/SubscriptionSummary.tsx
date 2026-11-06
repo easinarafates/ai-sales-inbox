@@ -51,7 +51,7 @@ export default function SubscriptionSummary() {
   const statusLabel = t(SUB_STATUS_KEYS[eff] || "", fb[0], fb[1]);
 
   return (
-    <div className="bg-white rounded-xl shadow p-5 mb-6 flex flex-wrap justify-between gap-3 items-center">
+    <div className="card p-5 mb-6 flex flex-wrap justify-between gap-3 items-center">
       <div>
         <p className="text-slate-500 text-sm">{t("billing.yourPlan", "Your plan", "আপনার প্ল্যান")}</p>
         <p className="text-xl font-bold">

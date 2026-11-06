@@ -92,7 +92,7 @@ export default function BroadcastsPage() {
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {sendResult && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{sendResult}</p>}
 
-      <form onSubmit={create} className="bg-white rounded-xl shadow p-4 mb-6 space-y-3">
+      <form onSubmit={create} className="card p-4 mb-6 space-y-3">
         <h2 className="font-bold">{t("broadcasts.createTitle", "Create a new broadcast", "নতুন ব্রডকাস্ট তৈরি করুন")}</h2>
         <input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder={t("broadcasts.titlePlaceholder", "Title *", "শিরোনাম *")} className="w-full border rounded-lg px-3 py-2" />
         <textarea required value={message} onChange={(e) => setMessage(e.target.value)} placeholder={t("broadcasts.messagePlaceholder", "Message *", "মেসেজ *")} className="w-full border rounded-lg px-3 py-2" rows={3} />
@@ -107,11 +107,11 @@ export default function BroadcastsPage() {
       </form>
 
       {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : broadcasts.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("broadcasts.empty", "No broadcasts.", "কোনো ব্রডকাস্ট নেই।")}</p>
+        <div className="empty-state">{t("broadcasts.empty", "No broadcasts.", "কোনো ব্রডকাস্ট নেই।")}</div>
       ) : (
         <div className="space-y-3">
           {broadcasts.map((b) => (
-            <div key={b.id} className="bg-white rounded-xl shadow p-4">
+            <div key={b.id} className="card p-4">
               <div className="flex justify-between gap-2">
                 <h3 className="font-bold">{b.title || t("broadcasts.titleFallback", "Broadcast", "ব্রডকাস্ট")}</h3>
                 <span className="text-xs text-slate-400 shrink-0">{fmtDate(b.createdAt || b.created_at)}</span>
@@ -135,7 +135,7 @@ export default function BroadcastsPage() {
       )}
 
       {detail && (
-        <div className="bg-white rounded-xl shadow p-4 mt-6">
+        <div className="card p-4 mt-6">
           <div className="flex justify-between">
             <h3 className="font-bold">{t("broadcasts.detailTitle", "Details —", "বিস্তারিত —")} {detail.broadcast.title || t("broadcasts.titleFallback", "Broadcast", "ব্রডকাস্ট")}</h3>
             <button onClick={() => setDetail(null)} className="text-sm text-slate-500 underline">{t("common.close", "Close", "বন্ধ করুন")}</button>

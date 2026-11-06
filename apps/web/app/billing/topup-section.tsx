@@ -129,7 +129,7 @@ export default function TopupSection() {
       {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <h2 className="font-bold mb-2">{t("topup.title", "Add money (top-up) — checked by hand", "টাকা জমা দিন (টপ-আপ) — হাতে যাচাই করে")}</h2>
-      <form onSubmit={submitRequest} className="bg-white rounded-xl shadow p-4 mb-6 flex flex-wrap gap-2 items-end">
+      <form onSubmit={submitRequest} className="card p-4 mb-6 flex flex-wrap gap-2 items-end">
         <div className="flex-1 min-w-40">
           <label className="block text-sm font-medium mb-1">{t("topup.amount", "Amount (৳)", "পরিমাণ (৳)")}</label>
           <input
@@ -173,12 +173,12 @@ export default function TopupSection() {
 
       <h2 className="font-bold mb-2">{t("topup.requestsTitle", "Top-up requests", "টপ-আপের অনুরোধ")}</h2>
       {requests.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("topup.empty", "No top-up requests yet.", "এখনো কোনো টপ-আপের অনুরোধ নেই।")}</p>
+        <div className="empty-state">{t("topup.empty", "No top-up requests yet.", "এখনো কোনো টপ-আপের অনুরোধ নেই।")}</div>
       ) : (
-        <div className="bg-white rounded-xl shadow overflow-x-auto">
+        <div className="card overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b text-left text-slate-500">
+              <tr className="table-head border-b text-left text-slate-500">
                 <th className="p-3">{t("topup.thDate", "Date", "তারিখ")}</th>
                 <th className="p-3">{t("topup.thMethod", "Method", "মাধ্যম")}</th>
                 <th className="p-3">{t("topup.thTrx", "Transaction ID", "লেনদেন আইডি")}</th>

@@ -104,7 +104,7 @@ export default function PlansPage() {
       {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       {current && currentSub && (
-        <div className="bg-white rounded-xl shadow p-5 mb-6">
+        <div className="card p-5 mb-6">
           <div className="flex flex-wrap justify-between gap-3 items-center">
             <div>
               <p className="text-slate-500 text-sm">{t("plans.currentPlan", "Current plan", "বর্তমান প্ল্যান")}</p>
@@ -148,7 +148,7 @@ export default function PlansPage() {
       )}
 
       {plans.length === 0 ? (
-        <p className="text-slate-500 bg-white rounded-xl shadow p-6">{t("plans.empty", "No plans found.", "কোনো প্ল্যান পাওয়া যায়নি।")}</p>
+        <div className="empty-state">{t("plans.empty", "No plans found.", "কোনো প্ল্যান পাওয়া যায়নি।")}</div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
           {plans.map((p) => {
@@ -171,7 +171,7 @@ export default function PlansPage() {
             return (
               <div
                 key={p.id}
-                className={`bg-white rounded-xl shadow p-5 flex flex-col ${isCurrent ? "ring-2 ring-brand" : ""}`}
+                className={`card p-5 flex flex-col ${isCurrent ? "ring-2 ring-brand" : ""}`}
               >
                 <div className="flex justify-between items-start">
                   <h2 className="text-xl font-bold">{planName(p)}</h2>
