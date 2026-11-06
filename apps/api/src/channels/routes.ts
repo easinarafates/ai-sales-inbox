@@ -101,7 +101,7 @@ channelsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
   const { rows } = await query(
     workspaceId,
-    'SELECT id, platform, external_id, display_name, status, created_at FROM channels WHERE workspace_id = $1 ORDER BY created_at DESC',
+    'SELECT id, platform, external_id, display_name, status, token_expires_at, picture_url, created_at FROM channels WHERE workspace_id = $1 ORDER BY created_at DESC',
     [workspaceId],
   );
   res.json({ channels: rows });

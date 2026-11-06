@@ -111,7 +111,21 @@ export const config = {
     appId: process.env.META_APP_ID ?? '',
     appSecret: process.env.META_APP_SECRET ?? '',
     verifyToken: optional('META_VERIFY_TOKEN', ''),
+    /**
+     * Facebook OAuth (Login with Facebook) — the redirect URI Meta calls
+     * back to after the user approves. Local dev default points at the
+     * local API; production MUST set META_OAUTH_REDIRECT_URI to the live
+     * API callback (https://ai-sales-inbox-api.vercel.app/api/channels/facebook/callback)
+     * and the same URI must be registered in the Meta app.
+     */
+    oauthRedirectUri: process.env.META_OAUTH_REDIRECT_URI ?? 'http://localhost:4000/api/channels/facebook/callback',
   },
+  /**
+   * Where the web app lives. OAuth callbacks redirect back here
+   * (…/channels?facebook=connected|pick|error). Production MUST set
+   * WEB_APP_URL to https://ai-sales-inbox-web.vercel.app.
+   */
+  webAppUrl: optional('WEB_APP_URL', 'http://localhost:3000'),
   webchatSecret: process.env.WEBCHAT_SECRET ?? '',
   seedDemo: process.env.SEED_DEMO === 'true',
   /**

@@ -477,6 +477,12 @@ export interface SalesChannel {
   status?: string;
   approvalRequired?: boolean;
   approval_required?: boolean;
+  /** Facebook Page picture URL (OAuth-connected pages). */
+  pictureUrl?: string;
+  picture_url?: string;
+  /** Approx. Page-token expiry (OAuth-connected pages). */
+  tokenExpiresAt?: string;
+  token_expires_at?: string;
   createdAt?: string;
   created_at?: string;
   [key: string]: unknown;
@@ -498,11 +504,27 @@ export function channelNeedsApproval(c: SalesChannel): boolean {
   );
 }
 
+/** One Facebook Page offered by the login picker (no tokens — see API). */
+export interface FacebookPage {
+  id: string;
+  name: string;
+  category?: string;
+  picture?: string;
+}
+
 export const salesChannelsApi = {
   list: () =>
     api.get<SalesChannel[] | { channels: SalesChannel[] }>("/api/channels"),
   create: (body: { platform: string; externalId: string; displayName?: string; token?: string }) =>
     api.post<{ channel: SalesChannel } | SalesChannel>("/api/channels", body),
+  /** "Login with Facebook" — returns the Meta dialog URL to redirect to. */
+  facebookLogin: () => api.get<{ url: string }>("/api/channels/facebook/login"),
+  /** Pages to pick from, for a ?facebook=pick&session=... redirect. */
+  facebookPages: (session: string) =>
+    api.get<{ pages: FacebookPage[] }>(`/api/channels/facebook/pages?session=${encodeURIComponent(session)}`),
+  /** Connect the Page the user picked. */
+  facebookConnect: (body: { session: string; pageId: string }) =>
+    api.post<{ channel: SalesChannel }>("/api/channels/facebook/connect", body),
 };
 
 export type CouponType = "percent" | "amount" | "free_delivery";

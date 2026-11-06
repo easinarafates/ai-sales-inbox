@@ -7,6 +7,7 @@ import { isPgliteMode } from './db/pglite';
 import { authRouter, workspacesRouter } from './auth/routes';
 import { billingRouter } from './billing/routes';
 import { channelsRouter } from './channels/routes';
+import { facebookOAuthRouter } from './channels/facebook-oauth';
 import { inboxRouter } from './inbox/routes';
 import { knowledgeRouter } from './knowledge/routes';
 import { ordersRouter } from './orders/routes';
@@ -106,6 +107,12 @@ app.use('/api/owner', ownerRouter); // /api/owner/* (Owner Panel — platform ow
 
 app.use('/api/auth', authRouter);
 app.use('/api/workspaces', workspacesRouter); // POST /api/workspaces/:id/go-live
+// Facebook OAuth MUST mount before the /api/channels router below: the
+// channels router applies requireAuth to every path, which would 401 the
+// public Meta callback (GET /api/channels/facebook/callback) before it
+// is reached. The facebook router only answers its own four paths and
+// lets everything else fall through to the channels router.
+app.use('/api/channels/facebook', facebookOAuthRouter); // /api/channels/facebook/{login,callback,pages,connect}
 app.use('/api/channels', channelsRouter);
 app.use('/api/inbox', inboxRouter);
 app.use('/api/products', productsRouter);

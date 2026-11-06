@@ -6,7 +6,7 @@ import { LanguageToggle, useI18n } from "@/lib/i18n";
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { t } = useI18n();
-  const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname === "/";
+  const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname === "/" || pathname === "/privacy";
   if (isAuthPage) {
     return <main className="min-h-screen">{children}</main>;
   }

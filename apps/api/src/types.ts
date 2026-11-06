@@ -13,4 +13,11 @@ export interface JwtPayload {
   workspaceId: string;
   /** Platform-owner flag (informational; requireOwner re-checks the DB). */
   isOwner?: boolean;
+  /**
+   * Short-lived, single-purpose tokens (Facebook OAuth state / page-pick
+   * session) carry a purpose. requireAuth rejects them — they must never
+   * work as API auth tokens, even though they are signed with the same
+   * JWT secret and carry a userId + workspaceId.
+   */
+  purpose?: string;
 }
