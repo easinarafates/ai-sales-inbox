@@ -22,6 +22,10 @@
  * subscribed_apps with the Page token (dummy token → Graph rejects →
  * logged, connect still 201); GET /api/webhooks/meta handshake with
  * the right META_VERIFY_TOKEN → 200 + challenge, wrong token → 403.
+ * Real send (Phase C): a stub Graph server answers /{node}/messages so
+ * the AI auto-reply + manual reply delivery can be tested offline —
+ * success (message_id), 24h-window 551, webchat-local, no-token 502 —
+ * plus the no-charge-on-failed-send rule via the billing ledger.
  *
  * Run from the repo root:  node scripts/verify-channels-oauth.mjs
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
@@ -29,6 +33,7 @@
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -73,13 +78,14 @@ function decodeJwtPayload(token) {
 }
 
 function makeApi(base) {
-  return async function api(path, { method = 'GET', body, auth = true, redirect = 'follow' } = {}) {
+  return async function api(path, { method = 'GET', body, auth = true, redirect = 'follow', headers = {} } = {}) {
     const res = await fetch(`${base}${path}`, {
       method,
       redirect,
       headers: {
         'Content-Type': 'application/json',
         ...(auth && token ? { Authorization: `Bearer ${token}` } : {}),
+        ...headers,
       },
       body: body ? JSON.stringify(body) : undefined,
     });
@@ -205,6 +211,33 @@ async function main() {
   check('i18n has instagram + whatsapp keys (EN + BN)', dictSrc.includes('"channels.instagramButton": "Connect Instagram"') && dictSrc.includes('"channels.instagramButton": "Instagram যুক্ত করুন"') && dictSrc.includes('"channels.whatsappButton": "Connect WhatsApp"') && dictSrc.includes('"channels.whatsappButton": "WhatsApp যুক্ত করুন"'));
   check('i18n has account-aware no_pages + ig_not_linked + no_waba messages', dictSrc.includes('facebookErrorNoPagesAccount') && dictSrc.includes('instagramErrorNoIg') && dictSrc.includes('whatsappErrorNoWaba'));
   check('no_pages message tells the user to use the owning account AND allow Page access', dictSrc.includes('allow access to your Pages') && dictSrc.includes('owns your Page'));
+
+  // ---- Real send (meta-send.ts + agent + inbox reply) ----
+  const sendSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/meta-send.ts'), 'utf8');
+  check('meta-send helper exists (sendMetaTextMessage + deliverOutgoingMessage)', sendSrc.includes('export async function sendMetaTextMessage') && sendSrc.includes('export async function deliverOutgoingMessage'));
+  check('send posts to /{nodeId}/messages with the Page token as Bearer', sendSrc.includes('/messages') && sendSrc.includes('Authorization: `Bearer ${input.pageToken}`'));
+  check('send sends recipient PSID/IG SID + text', sendSrc.includes('recipient: { id: input.recipientId }') && sendSrc.includes('message: { text: input.text }'));
+  check('send detects the 24h window (Graph 551 → windowExpired)', sendSrc.includes('code === 551') && sendSrc.includes('windowExpired'));
+  check('delivery marks sent/failed/local on the message row (platform_message_id + delivery_error)', sendSrc.includes('delivery_status = $1') && sendSrc.includes('platform_message_id') && sendSrc.includes('delivery_error'));
+  check('send never throws (all failures returned)', sendSrc.includes('catch (err)') && sendSrc.includes('ok: false'));
+  check('demo-mode replies are saved only, never live-sent', sendSrc.includes('liveSend === false') && sendSrc.includes("delivery: 'local'"));
+  check('webchat delivery is local (widget reads it from the DB)', sendSrc.includes("channel.platform === 'webchat'"));
+  check('unsupported platforms fail honestly (whatsapp/tiktok/comment)', sendSrc.includes('send_not_supported_for_'));
+  check('send uses Graph v21.0 (same base as meta-oauth)', sendSrc.includes("from './meta-oauth'") && sendSrc.includes('GRAPH_BASE'));
+  const mig15 = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/15-message-delivery.sql'), 'utf8');
+  check('migration 15 adds delivery_status + delivery_error (idempotent)', mig15.includes('delivery_status') && mig15.includes('delivery_error') && mig15.includes('IF NOT EXISTS'));
+  const agentSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/agent.ts'), 'utf8');
+  check('agent wires sendChannelMessage to the real deliver helper', agentSrc.includes('deliverOutgoingMessage') && agentSrc.includes('sendChannelMessage'));
+  check('agent does not charge when the send fails', agentSrc.includes('if (!sendResult.sent)') && agentSrc.includes("'send_failed_window_expired'"));
+  check('demo path never live-sends', agentSrc.includes('liveSend: false'));
+  check('no send stub comment remains in agent.ts', !agentSrc.includes('live Meta send is a stub') && !agentSrc.includes('STUB in Phase 1'));
+  const inboxSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/inbox/routes.ts'), 'utf8');
+  check('manual reply delivers via the shared helper', inboxSrc.includes('deliverOutgoingMessage'));
+  check('manual reply returns 502 (not a false 201) when delivery fails', inboxSrc.includes('status(502)') && inboxSrc.includes('windowExpired'));
+  check('inbox detail returns delivery_status + delivery_error', inboxSrc.includes('delivery_status') && inboxSrc.includes('delivery_error'));
+  check('no send stub comment remains in inbox routes', !inboxSrc.includes('Phase-1 stub'));
+  const toolsSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/tools.ts'), 'utf8');
+  check('send_product_cards is a data-only tool (returns card data; no fake send)', toolsSrc.includes('sendProductCards') && toolsSrc.includes('cards: rows.map') && !toolsSrc.includes('/messages'));
 
   // ================= Phase A: no Meta app =================
   const stampA = Date.now();
@@ -355,6 +388,167 @@ async function main() {
     check('facebook state JWT carries channel=facebook', fbState?.channel === 'facebook', JSON.stringify(fbState));
   } finally {
     runB.stop();
+    await sleep(2000);
+  }
+
+  // ================= Phase C: real send (stub Graph server) =================
+  // The stub stands in for graph.facebook.com so delivery can be tested
+  // offline: page-send-ok / ig-send-ok accept the message, page-send-551
+  // answers Graph 551 (24h window closed), anything else is a bad token.
+  const stubHits = [];
+  const graphStub = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      let parsed = null;
+      try { parsed = JSON.parse(body); } catch { parsed = null; }
+      stubHits.push({ method: req.method, path: req.url, auth: req.headers.authorization ?? '', body: parsed });
+      const send = (status, obj) => { res.writeHead(status, { 'Content-Type': 'application/json' }); res.end(JSON.stringify(obj)); };
+      if (req.method === 'POST' && req.url === '/v21.0/page-send-ok/messages') return send(200, { recipient_id: parsed?.recipient?.id, message_id: 'm_stub_ok_1' });
+      if (req.method === 'POST' && req.url === '/v21.0/page-send-551/messages') return send(400, { error: { message: "(#551) This person isn't available right now.", type: 'OAuthException', code: 551, error_subcode: 2018278 } });
+      if (req.method === 'POST' && req.url === '/v21.0/ig-send-ok/messages') return send(200, { recipient_id: parsed?.recipient?.id, message_id: 'm_stub_ig_1' });
+      return send(400, { error: { message: 'Invalid OAuth access token.', type: 'OAuthException', code: 190 } });
+    });
+  });
+  const stubPort = 4010;
+  await new Promise((resolve) => graphStub.listen(stubPort, resolve));
+  const stampC = Date.now();
+  const portC = 4008;
+  const apiC = makeApi(`http://localhost:${portC}`);
+  const runC = startApi(portC, '.pglite-data-ch-c', { META_APP_ID: 'dummy-app-id', META_APP_SECRET: 'dummy-secret', META_GRAPH_BASE_URL: `http://localhost:${stubPort}/v21.0` });
+  process.on('exit', runC.stop);
+  try {
+    const up = await waitForHealth(`http://localhost:${portC}`);
+    check('Phase C API starts (health)', up, up ? '' : runC.log().slice(-500));
+    if (!up) return;
+
+    async function addShopData(api) {
+      const p = await api('/api/products', { method: 'POST', body: { name: 'শাড়ি', pricePaisa: 150000, size: 'M', stock: 5, description: 'সুতির শাড়ি — লাল' } });
+      check('C product added (শাড়ি, ৳1500)', p.status === 201, `status=${p.status}`);
+      const k = await api('/api/knowledge', { method: 'POST', body: { title: 'ডেলিভারি', body: 'ঢাকার ভেতরে ডেলিভারি চার্জ ৬০ টাকা, সময় ২-৩ দিন।' } });
+      check('C knowledge added', k.status === 201, `status=${k.status}`);
+    }
+    async function waitForOut(api, convId, timeoutMs = 60000) {
+      const start = Date.now();
+      while (Date.now() - start < timeoutMs) {
+        const d = await api(`/api/inbox/${convId}`);
+        const out = (d.data?.messages ?? []).filter((m) => m.direction === 'out');
+        if (out.length > 0) return d.data;
+        await sleep(2000);
+      }
+      return null;
+    }
+    async function sendCustomerMessage(api, pageId, senderId, mid, text, object = 'page') {
+      return api('/api/webhooks/meta', {
+        method: 'POST', auth: false,
+        body: { object, entry: [{ id: pageId, messaging: [{ sender: { id: senderId }, recipient: { id: pageId }, message: { mid, text } }] }] },
+      });
+    }
+
+    // ---- C1: Messenger AI auto-reply delivers via the stub ----
+    await setupWorkspace(apiC, stampC);
+    const ch1 = await apiC('/api/channels', { method: 'POST', body: { platform: 'messenger', externalId: 'page-send-ok', displayName: 'Send OK Page', token: 'tok-stub-page' } });
+    check('C1 messenger channel (stub token) → 201', ch1.status === 201, `status=${ch1.status}`);
+    await addShopData(apiC);
+    const live1 = await apiC(`/api/workspaces/${workspaceId}/go-live`, { method: 'POST' });
+    check('C1 go-live (practice mode off)', live1.status === 200 && live1.data?.workspace?.practice_mode === false, `status=${live1.status}`);
+    const hook1 = await sendCustomerMessage(apiC, 'page-send-ok', 'psid-1', `c1-mid-${stampC}`, 'শাড়ির দাম কত?');
+    check('C1 webhook accepts the message', hook1.status === 200, `status=${hook1.status}`);
+    const conv1 = (await apiC('/api/inbox')).data?.conversations?.[0];
+    check('C1 conversation created', !!conv1?.id, `conv=${conv1?.id ?? ''}`);
+    const detail1 = conv1 ? await waitForOut(apiC, conv1.id) : null;
+    check('C1 AI reply arrives', !!detail1, 'no outgoing message within 60s');
+    if (detail1) {
+      const out1 = (detail1.messages ?? []).filter((m) => m.direction === 'out')[0];
+      check('C1 AI reply is a real (non-demo) reply', !(out1?.body ?? '').includes('[ডেমো AI'), (out1?.body ?? '').slice(0, 80));
+      check('C1 AI reply is marked sent with the stub message_id', out1?.delivery_status === 'sent' && out1?.platform_message_id === 'm_stub_ok_1', `delivery_status=${out1?.delivery_status}, platform_message_id=${out1?.platform_message_id}`);
+      const hit1 = stubHits.find((h) => h.path === '/v21.0/page-send-ok/messages' && h.body?.recipient?.id === 'psid-1');
+      check('C1 stub Graph got the send (right PSID + Page token as Bearer)', !!hit1 && hit1.auth === 'Bearer tok-stub-page' && hit1.body?.message?.text === out1?.body, JSON.stringify(hit1?.body ?? null));
+      const bill1 = await apiC('/api/billing');
+      check('C1 delivered reply is charged (ledger entry, 0 paisa Groq)', (bill1.data?.usage ?? []).length >= 1 && Number(bill1.data.usage[0]?.cost_paisa) === 0, `entries=${(bill1.data?.usage ?? []).length}, cost=${bill1.data?.usage?.[0]?.cost_paisa}`);
+      check('C1 wallet balance stays 5000 after the delivered reply', Number(bill1.data?.balancePaisa) === 5000, `balance=${bill1.data?.balancePaisa}`);
+      const manual1 = await apiC(`/api/inbox/${conv1.id}/reply`, { method: 'POST', body: { body: 'জি, শাড়িটি স্টকে আছে।' } });
+      check('C1 manual reply → 201 delivered', manual1.status === 201 && manual1.data?.delivered === true && manual1.data?.platformMessageId === 'm_stub_ok_1', `status=${manual1.status}, delivered=${manual1.data?.delivered}`);
+      check('C1 manual reply row is marked sent', manual1.data?.message?.delivery_status === 'sent', `delivery_status=${manual1.data?.message?.delivery_status}`);
+    }
+
+    // ---- C2: 24h window (551) — AI reply fails, NO charge; manual reply → 502 ----
+    await setupWorkspace(apiC, stampC + 1);
+    const ch2 = await apiC('/api/channels', { method: 'POST', body: { platform: 'messenger', externalId: 'page-send-551', displayName: 'Send 551 Page', token: 'tok-stub-page-551' } });
+    check('C2 messenger channel (551 page) → 201', ch2.status === 201, `status=${ch2.status}`);
+    await addShopData(apiC);
+    const live2 = await apiC(`/api/workspaces/${workspaceId}/go-live`, { method: 'POST' });
+    check('C2 go-live', live2.status === 200, `status=${live2.status}`);
+    const hook2 = await sendCustomerMessage(apiC, 'page-send-551', 'psid-2', `c2-mid-${stampC}`, 'শাড়ির দাম কত?');
+    check('C2 webhook accepts the message', hook2.status === 200, `status=${hook2.status}`);
+    const conv2 = (await apiC('/api/inbox')).data?.conversations?.[0];
+    const detail2 = conv2 ? await waitForOut(apiC, conv2.id) : null;
+    check('C2 AI reply row still appears (saved, not lost)', !!detail2, 'no outgoing message within 60s');
+    if (detail2) {
+      const out2 = (detail2.messages ?? []).filter((m) => m.direction === 'out')[0];
+      check('C2 AI reply is marked failed (Graph 551)', out2?.delivery_status === 'failed' && String(out2?.delivery_error ?? '').includes('551'), `delivery_status=${out2?.delivery_status}, error=${out2?.delivery_error ?? ''}`);
+      const bill2 = await apiC('/api/billing');
+      check('C2 NO ledger entry for the undelivered AI reply', (bill2.data?.usage ?? []).length === 0, `entries=${(bill2.data?.usage ?? []).length}`);
+      check('C2 wallet balance stays 5000 (no charge for undelivered reply)', Number(bill2.data?.balancePaisa) === 5000, `balance=${bill2.data?.balancePaisa}`);
+      const manual2 = await apiC(`/api/inbox/${conv2.id}/reply`, { method: 'POST', body: { body: 'দুঃখিত, পরে জানাচ্ছি।' } });
+      check('C2 manual reply → 502 with windowExpired', manual2.status === 502 && manual2.data?.windowExpired === true, `status=${manual2.status}, windowExpired=${manual2.data?.windowExpired}`);
+      check('C2 manual reply row is marked failed (not a false 201)', manual2.data?.message?.delivery_status === 'failed', `delivery_status=${manual2.data?.message?.delivery_status}`);
+    }
+
+    // ---- C3: webchat manual reply is local (widget reads it from the DB) ----
+    await setupWorkspace(apiC, stampC + 2);
+    const ch3 = await apiC('/api/channels', { method: 'POST', body: { platform: 'webchat', externalId: 'site-send-ok', displayName: 'Website Chat' } });
+    check('C3 webchat channel → 201', ch3.status === 201, `status=${ch3.status}`);
+    // The test API loads apps/api/.env, which sets WEBCHAT_SECRET — the
+    // webhook requires it as x-webchat-secret (403 without it).
+    const webchatSecret = envFileValue('WEBCHAT_SECRET');
+    const wc = await apiC('/api/webhooks/webchat', { method: 'POST', auth: false, headers: webchatSecret ? { 'x-webchat-secret': webchatSecret } : {}, body: { externalId: 'site-send-ok', senderId: 'web-1', name: 'Web Customer', text: 'হ্যালো' } });
+    check('C3 webchat incoming creates a conversation', wc.status === 200 && !!wc.data?.conversationId, `status=${wc.status}`);
+    if (wc.data?.conversationId) {
+      const manual3 = await apiC(`/api/inbox/${wc.data.conversationId}/reply`, { method: 'POST', body: { body: 'হ্যালো, কিভাবে সাহায্য করতে পারি?' } });
+      check('C3 webchat manual reply → 201 local delivery', manual3.status === 201 && manual3.data?.delivered === true && manual3.data?.message?.delivery_status === 'local', `status=${manual3.status}, delivery_status=${manual3.data?.message?.delivery_status}`);
+    }
+
+    // ---- C4: messenger channel without a token → manual reply 502 ----
+    await setupWorkspace(apiC, stampC + 3);
+    const ch4 = await apiC('/api/channels', { method: 'POST', body: { platform: 'messenger', externalId: 'page-no-token', displayName: 'No Token Page' } });
+    check('C4 messenger channel without token → 201', ch4.status === 201, `status=${ch4.status}`);
+    const hook4 = await sendCustomerMessage(apiC, 'page-no-token', 'psid-4', `c4-mid-${stampC}`, 'হ্যালো');
+    check('C4 webhook accepts the message', hook4.status === 200, `status=${hook4.status}`);
+    const conv4 = (await apiC('/api/inbox')).data?.conversations?.[0];
+    if (conv4) {
+      const manual4 = await apiC(`/api/inbox/${conv4.id}/reply`, { method: 'POST', body: { body: 'হ্যালো' } });
+      check('C4 manual reply without a Page token → 502', manual4.status === 502 && String(manual4.data?.reason ?? '').includes('no_page_token'), `status=${manual4.status}, reason=${manual4.data?.reason}`);
+      check('C4 reply row is marked failed', manual4.data?.message?.delivery_status === 'failed', `delivery_status=${manual4.data?.message?.delivery_status}`);
+    } else {
+      check('C4 conversation created', false, 'no conversation');
+    }
+
+    // ---- C5: Instagram manual reply via the stub ----
+    await setupWorkspace(apiC, stampC + 4);
+    const ch5 = await apiC('/api/channels', { method: 'POST', body: { platform: 'instagram', externalId: 'ig-send-ok', displayName: 'ig.shop', token: 'tok-stub-ig' } });
+    check('C5 instagram channel (stub token) → 201', ch5.status === 201, `status=${ch5.status}`);
+    const hook5 = await sendCustomerMessage(apiC, 'ig-send-ok', 'igsid-1', `c5-mid-${stampC}`, 'হ্যালো', 'instagram');
+    check('C5 IG webhook accepts the message', hook5.status === 200, `status=${hook5.status}`);
+    const conv5 = (await apiC('/api/inbox')).data?.conversations?.[0];
+    if (conv5) {
+      const manual5 = await apiC(`/api/inbox/${conv5.id}/reply`, { method: 'POST', body: { body: 'হ্যালো! ধন্যবাদ।' } });
+      check('C5 IG manual reply → 201 delivered', manual5.status === 201 && manual5.data?.delivered === true && manual5.data?.platformMessageId === 'm_stub_ig_1', `status=${manual5.status}, platformMessageId=${manual5.data?.platformMessageId}`);
+      const hit5 = stubHits.find((h) => h.path === '/v21.0/ig-send-ok/messages' && h.body?.recipient?.id === 'igsid-1');
+      check('C5 stub Graph got the IG send (right IG SID + Page token)', !!hit5 && hit5.auth === 'Bearer tok-stub-ig', JSON.stringify(hit5?.body ?? null));
+    } else {
+      check('C5 IG conversation created', false, 'no conversation');
+    }
+
+    // ---- C6: auth / 404 guards on the reply endpoint ----
+    const noAuth = await apiC(`/api/inbox/${conv1?.id ?? '00000000-0000-0000-0000-000000000000'}/reply`, { method: 'POST', auth: false, body: { body: 'x' } });
+    check('C6 reply without auth → 401', noAuth.status === 401, `status=${noAuth.status}`);
+    const notFound = await apiC('/api/inbox/00000000-0000-0000-0000-000000000000/reply', { method: 'POST', body: { body: 'x' } });
+    check('C6 reply to an unknown conversation → 404', notFound.status === 404, `status=${notFound.status}`);
+  } finally {
+    runC.stop();
+    try { graphStub.close(); } catch { /* already closed */ }
+    await sleep(2000);
   }
 }
 

@@ -186,6 +186,11 @@ async function main() {
     customerId = detail.customer?.id ?? '';
     const reply = (detail.messages ?? []).filter((m) => m.direction === 'out').map((m) => m.body ?? '').join('\n');
     check('AI reply arrives', true, `conv=${conversationId.slice(0, 8)}`);
+    const outMsg = (detail.messages ?? []).filter((m) => m.direction === 'out')[0];
+    // The verify channel has no Page token, so the reply cannot be
+    // delivered to Meta — the row must honestly say so (delivery
+    // 'failed'), not pretend it was sent.
+    check('undelivered AI reply is marked failed (no Page token)', outMsg?.delivery_status === 'failed', `delivery_status=${outMsg?.delivery_status}, error=${outMsg?.delivery_error ?? ''}`);
     if (PROVIDER === 'groq') {
       // Real Groq reply: must NOT be the labelled demo fallback.
       check('real Groq reply (no demo label)', !reply.includes('[ডেমো AI'), reply.slice(0, 120));
@@ -196,19 +201,14 @@ async function main() {
     check('AI reply mentions শাড়ি', reply.includes('শাড়ি'), reply.slice(0, 120));
   }
 
-  // 10. Billing: charge + balance + provider recorded.
-  // Groq (free tier): 0 paisa, provider 'groq', balance stays 5000.
-  // Gemini/demo fallback: 10 paisa, balance 4990.
+  // 10. Billing: NO charge for an undelivered reply.
+  // The verify channel has no Page token, so the AI reply cannot be
+  // delivered to Meta (delivery_status='failed' above) — the shop must
+  // not be charged for it: no ledger entry, balance stays 5000.
   const billing = await api('/api/billing');
   const usage = billing.data?.usage ?? [];
-  const expectedCost = PROVIDER === 'groq' ? 0 : 10;
-  const expectedBalance = 5000 - expectedCost;
-  check('billing ledger has the AI reply charge', usage.length >= 1 && Number(usage[0]?.cost_paisa) === expectedCost, `entries=${usage.length}, cost=${usage[0]?.cost_paisa}`);
-  check('billing ledger records the provider', usage.length >= 1 && typeof usage[0]?.provider === 'string' && usage[0].provider.length > 0, `provider=${usage[0]?.provider}`);
-  if (PROVIDER === 'groq') {
-    check("ledger provider is 'groq' (free tier)", usage[0]?.provider === 'groq', `provider=${usage[0]?.provider}`);
-  }
-  check(`wallet balance is ${expectedBalance} after one reply`, Number(billing.data?.balancePaisa) === expectedBalance, `balance=${billing.data?.balancePaisa}`);
+  check('no ledger entry for the undelivered AI reply', usage.length === 0, `entries=${usage.length}`);
+  check('wallet balance stays 5000 (no charge for undelivered reply)', Number(billing.data?.balancePaisa) === 5000, `balance=${billing.data?.balancePaisa}`);
 
   // 11. Order intent via Messenger → agent asks for name/phone/address
   // (the system prompt requires those BEFORE create_order), then the

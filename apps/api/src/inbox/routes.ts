@@ -2,6 +2,7 @@ import { Router, type Response } from 'express';
 import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
+import { deliverOutgoingMessage } from '../channels/meta-send';
 
 export const inboxRouter = Router();
 inboxRouter.use(requireAuth);
@@ -77,7 +78,7 @@ inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   }
   const { rows: messages } = await query(
     workspaceId,
-    `SELECT id, direction, type, body, platform_message_id, created_at FROM messages
+    `SELECT id, direction, type, body, platform_message_id, delivery_status, delivery_error, created_at FROM messages
      WHERE workspace_id = $1 AND conversation_id = $2 ORDER BY created_at ASC LIMIT 200`,
     [workspaceId, req.params.id],
   );
@@ -97,7 +98,11 @@ inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   res.json({ conversation, customer, messages, openOrders: orders });
 });
 
-/** POST /api/inbox/:id/reply {body} — team member sends an outgoing message. */
+/** POST /api/inbox/:id/reply {body} — team member sends an outgoing message.
+ * The reply is saved first and then delivered for real via the Meta Graph
+ * API (Messenger / Instagram). A failed delivery returns 502 with the
+ * reason — the saved row carries delivery_status='failed' and never
+ * pretends it was delivered. */
 inboxRouter.post('/:id/reply', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
   const { body } = (req.body ?? {}) as { body?: string };
@@ -114,16 +119,26 @@ inboxRouter.post('/:id/reply', async (req: AuthRequest, res: Response) => {
     res.status(404).json({ error: 'Conversation not found' });
     return;
   }
+  const delivery = await deliverOutgoingMessage(workspaceId, req.params.id, body.trim());
   const { rows } = await query(
     workspaceId,
-    `INSERT INTO messages (workspace_id, conversation_id, direction, type, body)
-     VALUES ($1, $2, 'out', 'text', $3) RETURNING id, direction, type, body, created_at`,
-    [workspaceId, req.params.id, body.trim()],
+    `SELECT id, direction, type, body, platform_message_id, delivery_status, delivery_error, created_at FROM messages
+     WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, delivery.messageId],
   );
-  // NOTE: live channel send (Meta Graph API) is a Phase-1 stub — see ai-agent.
-  // Team replies from the dashboard are saved here; delivery to Messenger/
-  // Instagram requires a live page token and is wired in the send step.
-  res.status(201).json({ message: rows[0] });
+  const message = rows[0] ?? null;
+  if (!delivery.sent) {
+    res.status(502).json({
+      error: delivery.windowExpired
+        ? 'Message could not be delivered: the 24-hour reply window has closed for this customer. They must message again before you can reply.'
+        : `Message could not be delivered: ${delivery.error ?? 'unknown error'}`,
+      reason: delivery.error ?? 'send_failed',
+      windowExpired: delivery.windowExpired ?? false,
+      message,
+    });
+    return;
+  }
+  res.status(201).json({ message, delivered: true, platformMessageId: delivery.platformMessageId });
 });
 
 /** POST /api/inbox/:id/assign {userId} */

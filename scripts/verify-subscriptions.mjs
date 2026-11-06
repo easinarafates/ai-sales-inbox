@@ -9,6 +9,12 @@
  *   ALLOW_SUBSCRIPTION_TEST_HOOKS=true ./scripts/run-local.sh
  * (Without the flag the hook calls answer 404 and the expiry/overage
  * steps fail — that is the gate working, not a bug.)
+ * NOTE 2: the test channels carry a stub Page token and this verifier
+ * starts a stub Meta Graph server on port 4012, because an undelivered
+ * AI reply is NOT charged (no-charge-on-failed-send) — without a
+ * deliverable channel the overage ledger checks would see no charge.
+ * Start the API with the stub Graph URL too, e.g.
+ *   ALLOW_SUBSCRIPTION_TEST_HOOKS=true META_GRAPH_BASE_URL=http://localhost:4012/v21.0 ./scripts/run-local.sh
  *
  * Fresh workspaces per run. Flow:
  *   A: signup → plans list → trial on signup → channel limit flag →
@@ -23,8 +29,13 @@
  * Plus: web app serves /plans.
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
  */
+import http from 'node:http';
+
 const API = process.env.API_URL ?? 'http://localhost:4000';
 const WEB = process.env.WEB_URL ?? 'http://localhost:3000';
+// Stub Meta Graph port (the API must be started with
+// META_GRAPH_BASE_URL=http://localhost:4012/v21.0 — see header).
+const STUB_GRAPH_PORT = 4012;
 const results = [];
 
 function check(name, ok, detail = '') {
@@ -92,7 +103,7 @@ async function setupChatWorkspace(tag) {
   // signup → channel → go-live → 1 product. Returns {token, workspaceId, conversationId?}.
   const s = await signup(tag);
   if (!s.token) return s;
-  await api('/api/channels', { method: 'POST', token: s.token, body: { platform: 'messenger', externalId: 'page-subs-1', displayName: 'Subs Page' } });
+  await api('/api/channels', { method: 'POST', token: s.token, body: { platform: 'messenger', externalId: 'page-subs-1', displayName: 'Subs Page', token: 'tok-stub-subs' } });
   await api(`/api/workspaces/${s.workspaceId}/go-live`, { method: 'POST', token: s.token });
   await api('/api/products', { method: 'POST', token: s.token, body: { name: 'শাড়ি', pricePaisa: 150000, size: 'M', stock: 5, description: 'সুতির শাড়ি' } });
   return s;
@@ -122,6 +133,22 @@ async function waitForConversationWithOut(token, minOut) {
 }
 
 async function main() {
+  // Stub Meta Graph server (offline stand-in for graph.facebook.com):
+  // every /{node}/messages POST is accepted with a fake message_id, so
+  // the test channel's AI replies count as delivered (and therefore
+  // charged — see the no-charge-on-failed-send rule). The API must be
+  // started with META_GRAPH_BASE_URL=http://localhost:4012/v21.0.
+  const graphStub = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ recipient_id: 'cust-subs-1', message_id: 'm_stub_subs' }));
+    });
+  });
+  await new Promise((resolve) => graphStub.listen(STUB_GRAPH_PORT, resolve));
+  process.on('exit', () => { try { graphStub.close(); } catch { /* already closed */ } });
+
   const health = await api('/api/health', { auth: false });
   check('API health', health.status === 200 && health.data?.status === 'ok', JSON.stringify(health.data));
 
@@ -206,6 +233,12 @@ async function main() {
   check('included AI reply arrives (not an upgrade notice)', !!conversationId && !firstReply.includes('প্ল্যানের মেয়াদ'), firstReply.slice(0, 100));
   if (conversationId) {
     check('included reply mentions শাড়ি + real price', firstReply.includes('শাড়ি') && (firstReply.includes('1,500') || firstReply.includes('১৫০০') || firstReply.includes('1500')), firstReply.slice(0, 120));
+    const firstOuts = await outMessages(tokenA, conversationId);
+    // 'sent' = real Groq reply delivered via the stub Graph; 'local' =
+    // the demo fallback (Groq was unavailable, reply saved only — by
+    // design it is never live-sent). Only 'failed' means the API was
+    // not started with META_GRAPH_BASE_URL=http://localhost:4012/v21.0.
+    check('included reply was delivered (not failed)', ['sent', 'local'].includes(firstOuts[0]?.delivery_status), `delivery_status=${firstOuts[0]?.delivery_status} — if 'failed', start the API with META_GRAPH_BASE_URL=http://localhost:4012/v21.0`);
   } else {
     check('included reply mentions শাড়ি + real price', false, 'no reply after 3 attempts');
   }
@@ -251,13 +284,19 @@ async function main() {
   const renew = await api('/api/subscriptions/renew', { method: 'POST', token: tokenA });
   check('renew → active again, balance 5400', renew.status === 201 && renew.data?.subscription?.status === 'active' && Number(renew.data?.balancePaisa) === 5400, `status=${renew.status}, balance=${renew.data?.balancePaisa}`);
 
-  // Overage: simulate 500 used replies → next AI reply costs 10 paisa
+  // Overage: simulate 500 used replies → next AI reply costs 10 paisa.
+  // (Same low-confidence handoff flakiness as the included reply above:
+  // retry the probe with a fresh message, up to 2 attempts, until a new
+  // outgoing row appears.)
   const sim = await api('/api/subscriptions/test/simulate-usage', { method: 'POST', token: tokenA, body: { count: 500 } });
   check('simulate 500 used replies', sim.status === 200 && sim.data?.usedReplies >= 500, `used=${sim.data?.usedReplies}`);
   conversationId = conversationId || (await findFirstConversation(tokenA));
   const outBefore = (await outMessages(tokenA, conversationId)).length;
-  await sendCustomerMessage(tokenA, `subs-mid-${stamp}-2`, 'শাড়ির দাম কত?');
-  const over = await waitForOut(tokenA, conversationId, outBefore + 1).catch(() => null);
+  let over = null;
+  for (let attempt = 1; attempt <= 2 && !over; attempt++) {
+    await sendCustomerMessage(tokenA, `subs-mid-${stamp}-2-${attempt}`, 'শাড়ির দাম কত?');
+    over = await waitForOut(tokenA, conversationId, outBefore + 1).catch(() => null);
+  }
   check('overage AI reply still arrives', !!over, `out before=${outBefore}`);
   const bill2 = await api('/api/billing', { token: tokenA });
   check('overage reply costs 10 paisa, balance 5390', Number(bill2.data?.balancePaisa) === 5390, `balance=${bill2.data?.balancePaisa}`);
@@ -333,6 +372,11 @@ async function main() {
   } catch (e) {
     check('web app serves /plans', false, e.message);
   }
+
+  // Close the stub Graph server so the process can exit: a listening
+  // server keeps the Node event loop alive, and main() returns without
+  // process.exit() on a full pass.
+  await new Promise((resolve) => graphStub.close(() => resolve()));
 
   const failed = results.filter((r) => !r.ok);
   console.log(`\n${results.length - failed.length}/${results.length} checks passed.`);

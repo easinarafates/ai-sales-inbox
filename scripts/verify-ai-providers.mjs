@@ -24,6 +24,7 @@
  */
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -116,7 +117,11 @@ async function setupWorkspace(api, stamp) {
   workspaceId = signup.data?.workspace?.id ?? '';
   const channel = await api('/api/channels', {
     method: 'POST',
-    body: { platform: 'messenger', externalId: `page-aiprov-${stamp}`, displayName: 'AIProv Page' },
+    // Stub token + stub Graph (META_GRAPH_BASE_URL, set by main) so the
+    // AI reply actually "delivers" — the no-charge-on-failed-send rule
+    // means an undelivered reply writes no ledger row, which would hide
+    // the provider-cost math this verifier is checking.
+    body: { platform: 'messenger', externalId: `page-aiprov-${stamp}`, displayName: 'AIProv Page', token: 'tok-stub-aiprov' },
   });
   check('connect messenger channel', channel.status === 201, `status=${channel.status}`);
   const live = await api(`/api/workspaces/${workspaceId}/go-live`, { method: 'POST' });
@@ -162,6 +167,23 @@ async function latestLedgerRow(api) {
 }
 
 async function main() {
+  // Stub Meta Graph server (offline stand-in for graph.facebook.com):
+  // every /{node}/messages POST is accepted with a fake message_id, so
+  // the test channel's AI replies count as delivered (and therefore
+  // charged / ledgered — see the no-charge-on-failed-send rule).
+  const stubPort = 4011;
+  const graphStub = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (c) => { body += c; });
+    req.on('end', () => {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ recipient_id: 'cust', message_id: 'm_stub_aiprov' }));
+    });
+  });
+  await new Promise((resolve) => graphStub.listen(stubPort, resolve));
+  const graphBase = `http://localhost:${stubPort}/v21.0`;
+  process.on('exit', () => { try { graphStub.close(); } catch { /* already closed */ } });
+
   // ---------- Static checks: settings page route exists ----------
   const pagePath = path.join(ROOT, 'apps/web/app/ai-providers/page.tsx');
   const pageSrc = fs.existsSync(pagePath) ? fs.readFileSync(pagePath, 'utf8') : '';
@@ -176,7 +198,7 @@ async function main() {
   const stampA = Date.now();
   const portA = 4002;
   const apiA = makeApi(`http://localhost:${portA}`);
-  const runA = startApi(portA, '.pglite-data-aiprov-a', { AI_MOCK_PROVIDERS: 'openai,claude' });
+  const runA = startApi(portA, '.pglite-data-aiprov-a', { AI_MOCK_PROVIDERS: 'openai,claude', META_GRAPH_BASE_URL: graphBase });
   process.on('exit', runA.stop);
   try {
     const up = await waitForHealth(`http://localhost:${portA}`);
@@ -208,6 +230,11 @@ async function main() {
     check('select openai (mock) → 200, current=openai/gpt-6-luna', selOpenai.status === 200 && selOpenai.data?.current?.provider === 'openai' && selOpenai.data?.current?.model === 'gpt-6-luna', `status=${selOpenai.status}, current=${JSON.stringify(selOpenai.data?.current)}`);
     const reply1 = await sendAndWaitReply(apiA, stampA, 1, 'শাড়ির দাম কত?');
     check('mock openai reply arrives', typeof reply1 === 'string' && reply1.length > 0, (reply1 ?? '').slice(0, 80));
+    const listA = await apiA('/api/inbox');
+    const convA = listA.data?.conversations?.[0];
+    const detailA = convA ? await apiA(`/api/inbox/${convA.id}`) : null;
+    const outA = (detailA?.data?.messages ?? []).filter((m) => m.direction === 'out')[0];
+    check('mock openai reply was actually delivered (stub Graph)', outA?.delivery_status === 'sent' && outA?.platform_message_id === 'm_stub_aiprov', `delivery_status=${outA?.delivery_status}, platform_message_id=${outA?.platform_message_id}`);
     const row1 = await latestLedgerRow(apiA);
     check('ledger: mock openai row provider=openai, model=gpt-6-luna', row1?.provider === 'openai' && row1?.model === 'gpt-6-luna', JSON.stringify(row1));
     check('ledger: mock openai provider cost is exactly 85 paisa (gpt-6-luna math)', Number(row1?.provider_cost_paisa) === 85, `provider_cost_paisa=${row1?.provider_cost_paisa}`);
@@ -240,7 +267,7 @@ async function main() {
   const stampB = Date.now();
   const portB = 4003;
   const apiB = makeApi(`http://localhost:${portB}`);
-  const runB = startApi(portB, '.pglite-data-aiprov-b', {});
+  const runB = startApi(portB, '.pglite-data-aiprov-b', { META_GRAPH_BASE_URL: graphBase });
   process.on('exit', runB.stop);
   try {
     const up = await waitForHealth(`http://localhost:${portB}`);

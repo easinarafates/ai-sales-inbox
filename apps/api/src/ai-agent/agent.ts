@@ -48,6 +48,7 @@ import {
   type WorkspaceAiChoice,
 } from './providers';
 import { computeAiCostPaisa } from './pricing';
+import { deliverOutgoingMessage, type DeliveryResult } from '../channels/meta-send';
 
 /** Flat MVP estimate per AI reply (paisa). Real per-token pricing plugs in here later. Must stay under the 20-paisa gate. */
 const AI_REPLY_COST_PAISA = 10;
@@ -144,26 +145,27 @@ async function recordUnanswered(workspaceId: string, question: string): Promise<
 }
 
 /**
- * Channel send — STUB in Phase 1.
- * A live send needs a real page token and the Meta Graph API
- * (POST /{page-id}/messages for Messenger, /{ig-user-id}/messages for
- * Instagram). That call is not made here: the reply is logged and saved as
- * an outgoing message so the inbox, billing and ledger all work end to end.
- * Wire the real send in this function when the Meta app is approved.
+ * Channel send — REAL Meta Graph API send (Messenger + Instagram) via
+ * deliverOutgoingMessage. The reply is saved first, then delivered; the
+ * returned result says honestly whether the customer received it.
+ * Demo-mode replies (liveSend: false) are saved only — a labelled
+ * "[ডেমো AI]" reply is never sent to a real customer. Webchat is
+ * delivered by saving (the website widget reads it from the DB).
+ * A failed send must not be charged — callers check result.sent first.
  */
 async function sendChannelMessage(
   workspaceId: string,
   conversationId: string,
   channelPlatform: string | null,
   reply: string,
-): Promise<void> {
+  opts: { liveSend?: boolean } = {},
+): Promise<DeliveryResult> {
   console.log(`[agent:send:${channelPlatform ?? 'unknown'}] seen ✓ typing… reply: ${reply.slice(0, 200)}`);
-  await query(
-    workspaceId,
-    `INSERT INTO messages (workspace_id, conversation_id, direction, type, body)
-     VALUES ($1, $2, 'out', 'text', $3)`,
-    [workspaceId, conversationId, reply],
-  );
+  const result = await deliverOutgoingMessage(workspaceId, conversationId, reply, opts);
+  if (!result.sent) {
+    console.error(`[agent:send] delivery failed for conv ${conversationId}: ${result.error ?? 'unknown'}`);
+  }
+  return result;
 }
 
 /** Deduct the reply cost; returns false if the balance ran out mid-flight.
@@ -350,7 +352,11 @@ async function runDemoReply(
     }
   }
 
-  await sendChannelMessage(workspaceId, conversationId, channelPlatform, reply);
+  // Demo-mode replies are labelled "[ডেমো AI]" — saved only, never sent
+  // to a real customer (see sendChannelMessage). The charge below is the
+  // pre-existing demo-mode behaviour (the reply is saved in the inbox and
+  // the owner is billed for the AI work as before).
+  await sendChannelMessage(workspaceId, conversationId, channelPlatform, reply, { liveSend: false });
   // Included in the plan → 0 paisa; over the limit → flat 10 paisa overage.
   const charged = await chargeForReply(
     workspaceId, conversationId, 0, 0, allowance.costPaisa, 'demo', allowance.mode === 'included',
@@ -576,8 +582,18 @@ export async function processBatch(
     return { replied: false, reason: 'low_confidence_ticket_created', confidence: parsed.confidence };
   }
 
-  // Send the reply (seen/typing log + saved outgoing message; live Meta send is a stub).
-  await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, parsed.reply);
+  // Send the reply for real (Meta Graph API). Only a delivered reply is
+  // charged — an undelivered reply costs the shop nothing, so a failed
+  // send returns here before chargeForReply runs.
+  const sendResult = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, parsed.reply);
+  if (!sendResult.sent) {
+    return {
+      replied: false,
+      reason: sendResult.windowExpired ? 'send_failed_window_expired' : 'send_failed',
+      confidence: parsed.confidence,
+      costPaisa: 0,
+    };
+  }
 
   // Charge for the reply; stop AI if the balance ran out.
   // Included replies are logged at 0 paisa with included_in_plan=true;
