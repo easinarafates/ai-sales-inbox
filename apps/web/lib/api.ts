@@ -512,6 +512,40 @@ export interface FacebookPage {
   picture?: string;
 }
 
+/** One Facebook Page offered by the Instagram picker, with its linked Instagram account (null = none linked). */
+export interface InstagramPage {
+  id: string;
+  name: string;
+  category?: string;
+  picture?: string;
+  instagram?: { id: string; username: string; picture?: string } | null;
+}
+
+/** One WhatsApp Business phone number offered by the WhatsApp picker. */
+export interface WhatsappNumber {
+  id: string;
+  displayNumber?: string;
+  display_phone_number?: string;
+  verifiedName?: string;
+  verified_name?: string;
+}
+
+export function whatsappNumberLabel(n: WhatsappNumber): string {
+  return n.displayNumber || n.display_phone_number || n.id;
+}
+
+/** One WhatsApp Business account with its phone numbers (no tokens — see API). */
+export interface WhatsappAccount {
+  id: string;
+  name: string;
+  phoneNumbers?: WhatsappNumber[];
+  phone_numbers?: WhatsappNumber[];
+}
+
+export function whatsappNumbersOf(w: WhatsappAccount): WhatsappNumber[] {
+  return w.phoneNumbers ?? w.phone_numbers ?? [];
+}
+
 export const salesChannelsApi = {
   list: () =>
     api.get<SalesChannel[] | { channels: SalesChannel[] }>("/api/channels"),
@@ -525,6 +559,22 @@ export const salesChannelsApi = {
   /** Connect the Page the user picked. */
   facebookConnect: (body: { session: string; pageId: string }) =>
     api.post<{ channel: SalesChannel }>("/api/channels/facebook/connect", body),
+  /** "Connect Instagram" — returns the Meta dialog URL to redirect to. */
+  instagramLogin: () => api.get<{ url: string }>("/api/channels/instagram/login"),
+  /** Pages (with linked Instagram account) to pick from, for a ?instagram=pick&session=... redirect. */
+  instagramPages: (session: string) =>
+    api.get<{ pages: InstagramPage[] }>(`/api/channels/instagram/pages?session=${encodeURIComponent(session)}`),
+  /** Connect the Instagram account linked to the Page the user picked. */
+  instagramConnect: (body: { session: string; pageId: string }) =>
+    api.post<{ channel: SalesChannel }>("/api/channels/instagram/connect", body),
+  /** "Connect WhatsApp" — returns the Meta dialog URL to redirect to. */
+  whatsappLogin: () => api.get<{ url: string }>("/api/channels/whatsapp/login"),
+  /** WhatsApp Business accounts + numbers to pick from, for a ?whatsapp=pick&session=... redirect. */
+  whatsappAccounts: (session: string) =>
+    api.get<{ wabas: WhatsappAccount[] }>(`/api/channels/whatsapp/accounts?session=${encodeURIComponent(session)}`),
+  /** Connect the WhatsApp number the user picked. */
+  whatsappConnect: (body: { session: string; wabaId: string; phoneNumberId: string }) =>
+    api.post<{ channel: SalesChannel }>("/api/channels/whatsapp/connect", body),
 };
 
 export type CouponType = "percent" | "amount" | "free_delivery";

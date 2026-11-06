@@ -137,10 +137,13 @@ async function main() {
 
   // ---------- Static checks ----------
   const oauthSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/facebook-oauth.ts'), 'utf8');
+  const metaSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/meta-oauth.ts'), 'utf8');
   check('facebook-oauth router exists', oauthSrc.length > 0);
   check('router has login/callback/pages/connect', ['/login', '/callback', '/pages', '/connect'].every((p) => oauthSrc.includes(`'${p}'`)));
-  check('router uses Graph v21.0 + required scopes', oauthSrc.includes("v21.0") && ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'].every((s) => oauthSrc.includes(s)));
-  check('router never puts a token in a URL (Bearer header / POST body only)', !oauthSrc.includes('access_token=${') && !oauthSrc.includes('fb_exchange_token=${'));
+  check('shared module uses Graph v21.0 + router has required scopes', metaSrc.includes("v21.0") && ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'].every((s) => oauthSrc.includes(s)));
+  check('shared module never puts a token in a URL (Bearer header / POST body only)', !metaSrc.includes('access_token=${') && !metaSrc.includes('fb_exchange_token=${'));
+  check('shared callback dispatches by state channel (instagram/whatsapp)', oauthSrc.includes('completeInstagramOAuth') && oauthSrc.includes('completeWhatsappOAuth'));
+  check('no_pages redirect carries the account name', oauthSrc.includes('fetchMeName') && oauthSrc.includes("reason: 'no_pages'") && oauthSrc.includes('account'));
   const indexSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/index.ts'), 'utf8');
   check('facebook router mounted before channels router', indexSrc.indexOf("facebookOAuthRouter") !== -1 && indexSrc.indexOf("facebookOAuthRouter") < indexSrc.indexOf("app.use('/api/channels', channelsRouter)"));
   const migSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/13-facebook-oauth.sql'), 'utf8');

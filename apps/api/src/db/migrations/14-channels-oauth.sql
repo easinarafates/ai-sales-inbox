@@ -1,0 +1,12 @@
+-- 14-channels-oauth.sql — Instagram + WhatsApp OAuth (Channels page).
+--
+-- The channel row needs to remember which parent object it came from:
+-- the Facebook Page ID for Instagram channels, the WhatsApp Business
+-- Account ID for WhatsApp channels. Filled in by the OAuth callbacks
+-- (apps/api/src/channels/instagram-oauth.ts, whatsapp-oauth.ts);
+-- older rows simply have NULL.
+-- Idempotent: safe to re-run on every start (same pattern as the other
+-- migrations). Loads on local PGlite (auto-run on boot) and on Neon
+-- Postgres with psql — load it into Neon BEFORE the next API deploy,
+-- the new code SELECTs this column in GET /api/channels.
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS source_id TEXT;
