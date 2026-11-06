@@ -1,0 +1,24 @@
+# Vercel has no always-on process, so the API's 60 s in-process sweep
+# never runs there. This free workflow calls the cron endpoint every
+# 5 minutes instead (Vercel Hobby cron only runs once per day, which is
+# not enough for timed posts / follow-ups / handovers).
+#
+# REQUIRED repo secret: CRON_SECRET — must match the CRON_SECRET env var
+# set on the Vercel API project (Settings → Secrets and variables → Actions → New repository secret). The endpoint returns 401 without it.
+name: Cron sweep
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  sweep:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call /api/cron/sweep
+        run: |
+          curl -sS -X POST "https://api.yearmedia.xyz/api/cron/sweep" \
+            -H "x-cron-secret: ${{ secrets.CRON_SECRET }}" \
+            -H "Content-Type: application/json" \
+            --max-time 120
