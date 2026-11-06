@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="bn">
+<head>
+  <meta charset="UTF-8">
+  <title>AI সেলস ইনবক্স</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <header>
+    <h1>🛍️ AI সেলস ইনবক্স</h1>
+    <p class="sub">দ্রুত উত্তর • প্রোডাক্ট খোঁজা • চ্যাট দেখা</p>
+  </header>
+
+  <section id="settings">
+    <h2>⚙️ সেটিংস</h2>
+    <label>API ঠিকানা
+      <input id="apiBase" type="text" placeholder="http://localhost:4000">
+    </label>
+    <label>লগইন টোকেন (ড্যাশবোর্ড থেকে নেওয়া)
+      <input id="token" type="password" placeholder="টোকেন বসান — দেখানো হবে না">
+    </label>
+    <p id="tokenStatus" class="hint">টোকেন সংরক্ষিত নেই।</p>
+    <label>ড্যাশবোর্ড ঠিকানা
+      <input id="dashboardUrl" type="text" placeholder="http://localhost:3000">
+    </label>
+    <div class="row">
+      <button id="saveSettings" class="primary">সংরক্ষণ করুন</button>
+      <button id="openDashboard" class="secondary">ড্যাশবোর্ড খুলুন</button>
+    </div>
+    <p class="hint">টোকেন পেতে: ড্যাশবোর্ডে লগইন করুন → F12 → Application → Local Storage → <code>token</code>-এর মান কপি করুন। পাসওয়ার্ড এখানে বসাবেন না।</p>
+  </section>
+
+  <section id="products">
+    <h2>🔍 প্রোডাক্ট খুঁজুন</h2>
+    <div class="row">
+      <input id="productQuery" type="text" placeholder="যেমন: শাড়ি">
+      <button id="searchProducts" class="primary">খুঁজুন</button>
+    </div>
+    <div id="productResults" class="list"></div>
+    <p class="hint">প্রোডাক্টে ক্লিক করলে দামসহ উত্তর তৈরি হবে — "কপি করুন" চাপলে চ্যাটে বসাতে পারবেন।</p>
+  </section>
+
+  <section id="quickReplies">
+    <h2>💬 দ্রুত উত্তর</h2>
+    <div id="quickReplyList" class="chips"></div>
+    <p id="replyPreview" class="preview" hidden></p>
+    <button id="copyReply" class="primary" hidden>📋 কপি করুন</button>
+  </section>
+
+  <section id="conversations">
+    <h2>📥 খোলা চ্যাট <button id="refreshInbox" class="mini">↻ রিফ্রেশ</button></h2>
+    <div id="conversationList" class="list"></div>
+    <p class="hint">AI/মানুষ বদলাতে চ্যাটের পাশের বোতাম চাপুন। AI নিজে উত্তর দেবে না যতক্ষণ "মানুষ নিয়েছে" থাকবে।</p>
+  </section>
+
+  <p id="status" class="status"></p>
+  <p class="foot">এই এক্সটেনশন নিজে মেসেজ পাঠায় না — লেখা কপি করে আপনিই চ্যাটে বসাবেন।</p>
+
+  <script src="popup.js"></script>
+</body>
+</html>

@@ -1,0 +1,310 @@
+/**
+ * AI tools — the ONLY way the AI agent touches data.
+ * The agent never writes to the DB directly; it calls these functions.
+ * Every tool filters by workspace_id. No tool ever invents a price, stock
+ * level, discount or delivery time — values come only from the tables.
+ */
+import { buildBillText } from '../orders/bill';
+import { decrementStockForOrderItems } from '../products/stock';
+import { matchProductByImage } from './tools-image-match';
+import { linkOrderToAttribution } from '../analytics/attribution';
+
+export interface ToolDb {
+  query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<{ rows: T[]; rowCount: number }>;
+}
+
+export type ToolArgs = Record<string, unknown>;
+
+export interface ToolResult {
+  [key: string]: unknown;
+}
+
+type ToolFn = (db: ToolDb, workspaceId: string, args: ToolArgs) => Promise<ToolResult>;
+
+function asString(v: unknown): string {
+  return typeof v === 'string' ? v : '';
+}
+
+/** 1. Search products by text (name/description). */
+const searchProducts: ToolFn = async (db, workspaceId, args) => {
+  const q = asString(args.q ?? args.query);
+  if (!q) return { error: 'search_products needs q' };
+  const { rows } = await db.query<{ id: string; name: string; price_paisa: number; stock: number }>(
+    `SELECT id, name, price_paisa, stock FROM products
+     WHERE workspace_id = $1 AND (name ILIKE $2 OR description ILIKE $2) LIMIT 10`,
+    [workspaceId, `%${q}%`],
+  );
+  return { products: rows };
+};
+
+/** 2. Build product cards (name/price/stock) for the agent to present. */
+const sendProductCards: ToolFn = async (db, workspaceId, args) => {
+  const ids = Array.isArray(args.productIds) ? (args.productIds as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+  if (ids.length === 0) return { error: 'send_product_cards needs productIds' };
+  const { rows } = await db.query<{ id: string; name: string; price_paisa: number; stock: number; description: string | null }>(
+    `SELECT id, name, price_paisa, stock, description FROM products
+     WHERE workspace_id = $1 AND id = ANY($2::uuid[])`,
+    [workspaceId, ids],
+  );
+  return {
+    cards: rows.map((p) => ({
+      productId: p.id,
+      name: p.name,
+      pricePaisa: Number(p.price_paisa),
+      stock: Number(p.stock),
+      description: p.description,
+    })),
+  };
+};
+
+/** 3. Create an order. Prices come ONLY from the products table. */
+const createOrder: ToolFn = async (db, workspaceId, args) => {
+  const customerId = asString(args.customerId);
+  const conversationId = asString(args.conversationId) || null;
+  const items = Array.isArray(args.items) ? args.items : [];
+  if (!customerId || items.length === 0) return { error: 'create_order needs customerId and items' };
+  let totalPaisa = 0;
+  const lines: { name: string; quantity: number; pricePaisa: number }[] = [];
+  const priced: { productId: string; quantity: number; pricePaisa: number }[] = [];
+  for (const raw of items) {
+    const item = raw as Record<string, unknown>;
+    const productId = asString(item.productId);
+    const quantity = Math.max(1, Math.floor(Number(item.quantity ?? 1)));
+    const { rows } = await db.query<{ id: string; name: string; price_paisa: number }>(
+      'SELECT id, name, price_paisa FROM products WHERE workspace_id = $1 AND id = $2',
+      [workspaceId, productId],
+    );
+    if (rows.length === 0) return { error: `Product not found: ${productId}` };
+    totalPaisa += Number(rows[0].price_paisa) * quantity;
+    lines.push({ name: rows[0].name, quantity, pricePaisa: Number(rows[0].price_paisa) });
+    priced.push({ productId: rows[0].id, quantity, pricePaisa: Number(rows[0].price_paisa) });
+  }
+  const { rows: orderRows } = await db.query<{ id: string }>(
+    `INSERT INTO orders (workspace_id, customer_id, conversation_id, source, status, payment_status, total_paisa)
+     VALUES ($1, $2, $3, 'ai', 'pending', 'unpaid', $4) RETURNING id`,
+    [workspaceId, customerId, conversationId, totalPaisa],
+  );
+  const orderId = orderRows[0].id;
+  // Post attribution (05-post-attribution.sql): if this conversation
+  // started as a comment on a scheduled post, stamp order_id onto that
+  // attribution row so per-post analytics counts the order. Best-effort
+  // — a failure must not fail the order (analytics also counts orders
+  // via orders.conversation_id).
+  try {
+    await linkOrderToAttribution(db, workspaceId, orderId, conversationId);
+  } catch (err) {
+    console.error('[tool:create_order] post attribution link failed:', (err as Error).message);
+  }
+  for (const item of priced) {
+    await db.query(
+      'INSERT INTO order_items (workspace_id, order_id, product_id, quantity, price_paisa) VALUES ($1, $2, $3, $4, $5)',
+      [workspaceId, orderId, item.productId, item.quantity, item.pricePaisa],
+    );
+  }
+  await db.query(
+    "INSERT INTO order_events (workspace_id, order_id, from_status, to_status, note) VALUES ($1, $2, NULL, 'pending', 'Order created by AI')",
+    [workspaceId, orderId],
+  );
+  // Phase 2: decrement stock for the ordered items. A stock failure must
+  // not fail the order itself — it is logged and the team is told.
+  let outOfStock: { id: string; name: string }[] = [];
+  try {
+    const hitZero = await decrementStockForOrderItems(db, workspaceId, orderId);
+    outOfStock = hitZero.map((p) => ({ id: p.id, name: p.name }));
+  } catch (err) {
+    console.error('[tool:create_order] stock decrement failed:', (err as Error).message);
+  }
+  return { orderId, totalPaisa, billText: buildBillText(orderId, lines, totalPaisa), outOfStock };
+};
+
+/**
+ * 4. Update an order — ONLY while it is pending or on_hold (before confirm).
+ * Later statuses must go to a human.
+ */
+const updateOrder: ToolFn = async (db, workspaceId, args) => {
+  const orderId = asString(args.orderId);
+  const { rows } = await db.query<{ id: string; status: string }>(
+    'SELECT id, status FROM orders WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, orderId],
+  );
+  if (rows.length === 0) return { error: 'Order not found' };
+  const status = rows[0].status;
+  if (status !== 'pending' && status !== 'on_hold') {
+    return {
+      error: `Order is already ${status} — it can no longer be changed by AI. Please ask a human to help.`,
+      needsHuman: true,
+    };
+  }
+  // Optional status move (pending <-> on_hold, or approve).
+  if (typeof args.status === 'string') {
+    const next = args.status as string;
+    const allowed: Record<string, string[]> = { pending: ['on_hold', 'approved'], on_hold: ['approved', 'pending'] };
+    if (!(allowed[status] ?? []).includes(next)) {
+      return { error: `Cannot move order from ${status} to ${next}` };
+    }
+    await db.query(
+      'UPDATE orders SET status = $1, updated_at = now() WHERE workspace_id = $2 AND id = $3',
+      [next, workspaceId, orderId],
+    );
+    await db.query(
+      'INSERT INTO order_events (workspace_id, order_id, from_status, to_status) VALUES ($1, $2, $3, $4)',
+      [workspaceId, orderId, status, next],
+    );
+    return { orderId, status: next };
+  }
+  // Optional item replacement (re-priced from the products table).
+  if (Array.isArray(args.items)) {
+    let totalPaisa = 0;
+    const priced: { productId: string; quantity: number; pricePaisa: number }[] = [];
+    for (const raw of args.items as Record<string, unknown>[]) {
+      const productId = asString(raw.productId);
+      const quantity = Math.max(1, Math.floor(Number(raw.quantity ?? 1)));
+      const { rows: pRows } = await db.query<{ id: string; price_paisa: number }>(
+        'SELECT id, price_paisa FROM products WHERE workspace_id = $1 AND id = $2',
+        [workspaceId, productId],
+      );
+      if (pRows.length === 0) return { error: `Product not found: ${productId}` };
+      totalPaisa += Number(pRows[0].price_paisa) * quantity;
+      priced.push({ productId: pRows[0].id, quantity, pricePaisa: Number(pRows[0].price_paisa) });
+    }
+    await db.query('DELETE FROM order_items WHERE workspace_id = $1 AND order_id = $2', [workspaceId, orderId]);
+    for (const item of priced) {
+      await db.query(
+        'INSERT INTO order_items (workspace_id, order_id, product_id, quantity, price_paisa) VALUES ($1, $2, $3, $4, $5)',
+        [workspaceId, orderId, item.productId, item.quantity, item.pricePaisa],
+      );
+    }
+    await db.query(
+      'UPDATE orders SET total_paisa = $1, updated_at = now() WHERE workspace_id = $2 AND id = $3',
+      [totalPaisa, workspaceId, orderId],
+    );
+    return { orderId, totalPaisa };
+  }
+  return { error: 'update_order needs status or items' };
+};
+
+/**
+ * 5. Coupons — Phase 2: validate a coupon row if one exists, otherwise say
+ * coupons are not available. NEVER invent a discount.
+ */
+const applyCoupon: ToolFn = async (db, workspaceId, args) => {
+  const code = asString(args.code).trim();
+  if (!code) return { error: 'apply_coupon needs code' };
+  const { rows } = await db.query<{ code: string; type: string; value: number; expires_at: string | null }>(
+    'SELECT code, type, value, expires_at FROM coupons WHERE workspace_id = $1 AND code = $2',
+    [workspaceId, code],
+  );
+  if (rows.length === 0) {
+    return { available: false, message: 'এই কুপনটি নেই। ডিসকাউন্টের জন্য মানুষের সাথে কথা বলুন।' };
+  }
+  const coupon = rows[0];
+  if (coupon.expires_at && new Date(coupon.expires_at).getTime() < Date.now()) {
+    return { available: false, message: 'কুপনের মেয়াদ শেষ হয়ে গেছে।' };
+  }
+  return { available: true, code: coupon.code, type: coupon.type, value: Number(coupon.value) };
+};
+
+/** 6. Stock check — price and stock from the products table only. */
+const checkStock: ToolFn = async (db, workspaceId, args) => {
+  const productId = asString(args.productId);
+  const q = asString(args.q ?? args.name);
+  const { rows } = await db.query<{ id: string; name: string; price_paisa: number; stock: number }>(
+    productId
+      ? 'SELECT id, name, price_paisa, stock FROM products WHERE workspace_id = $1 AND id = $2'
+      : 'SELECT id, name, price_paisa, stock FROM products WHERE workspace_id = $1 AND name ILIKE $2 LIMIT 5',
+    productId ? [workspaceId, productId] : [workspaceId, `%${q}%`],
+  );
+  if (rows.length === 0) return { error: 'Product not found' };
+  return { products: rows };
+};
+
+/**
+ * 7. Parcel tracking — Phase 1: reads the shipments table if a shipment
+ * exists; otherwise says tracking is not yet connected (courier booking is
+ * Phase 2 — see shipments/couriers stub note in agent.ts).
+ */
+const trackParcel: ToolFn = async (db, workspaceId, args) => {
+  const orderId = asString(args.orderId);
+  if (!orderId) return { error: 'track_parcel needs orderId' };
+  const { rows } = await db.query<{ courier: string | null; tracking_code: string | null; status: string | null }>(
+    'SELECT courier, tracking_code, status FROM shipments WHERE workspace_id = $1 AND order_id = $2 ORDER BY created_at DESC LIMIT 1',
+    [workspaceId, orderId],
+  );
+  if (rows.length === 0) {
+    return { connected: false, message: 'এই অর্ডারের ট্র্যাকিং এখনো সংযুক্ত হয়নি। কুরিয়ার সংযোগ ফেজ ২-তে আসবে।' };
+  }
+  return { connected: true, shipment: rows[0] };
+};
+
+/** 8. Create a support ticket + hand the chat to a human. */
+const createTicket: ToolFn = async (db, workspaceId, args) => {
+  const { rows } = await db.query<{ id: string }>(
+    `INSERT INTO tickets (workspace_id, conversation_id, customer_id, reason, status)
+     VALUES ($1, $2, $3, $4, 'open') RETURNING id`,
+    [
+      workspaceId,
+      asString(args.conversationId) || null,
+      asString(args.customerId) || null,
+      asString(args.reason) || 'AI could not answer',
+    ],
+  );
+  return { ticketId: rows[0].id };
+};
+
+/** 9. Create a lead for a potential customer. */
+const createLead: ToolFn = async (db, workspaceId, args) => {
+  const { rows } = await db.query<{ id: string }>(
+    `INSERT INTO leads (workspace_id, customer_id, need, follow_up_at)
+     VALUES ($1, $2, $3, $4) RETURNING id`,
+    [
+      workspaceId,
+      asString(args.customerId) || null,
+      asString(args.need) || null,
+      (args.followUpAt as string | undefined) ?? null,
+    ],
+  );
+  return { leadId: rows[0].id };
+};
+
+/** 10. Search the knowledge book. */
+const searchKnowledge: ToolFn = async (db, workspaceId, args) => {
+  const q = asString(args.q ?? args.query);
+  if (!q) return { error: 'search_knowledge needs q' };
+  const { rows } = await db.query<{ title: string | null; body: string }>(
+    `SELECT title, body FROM knowledge_items
+     WHERE workspace_id = $1 AND (title ILIKE $2 OR body ILIKE $2) LIMIT 5`,
+    [workspaceId, `%${q}%`],
+  );
+  return { items: rows };
+};
+
+export const tools: Record<string, ToolFn> = {
+  search_products: searchProducts,
+  send_product_cards: sendProductCards,
+  create_order: createOrder,
+  update_order: updateOrder,
+  apply_coupon: applyCoupon,
+  check_stock: checkStock,
+  track_parcel: trackParcel,
+  create_ticket: createTicket,
+  create_lead: createLead,
+  search_knowledge: searchKnowledge,
+  /** Phase 2: image product matching (stub embedding provider — never fakes a match). */
+  match_product_by_image: matchProductByImage,
+};
+
+export async function runTool(
+  db: ToolDb,
+  workspaceId: string,
+  name: string,
+  args: ToolArgs,
+): Promise<ToolResult> {
+  const fn = tools[name];
+  if (!fn) return { error: `Unknown tool: ${name}` };
+  try {
+    return await fn(db, workspaceId, args);
+  } catch (err) {
+    console.error(`[tool:${name}]`, err);
+    return { error: 'Tool failed — hand to a human' };
+  }
+}

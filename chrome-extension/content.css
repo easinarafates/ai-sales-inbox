@@ -1,0 +1,60 @@
+/* AI সেলস ইনবক্স — helper panel on Facebook / Messenger / Business Suite */
+#ai-inbox-helper-panel {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  width: 280px;
+  z-index: 2147483647;
+  background: #ffffff;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+  font-family: "Noto Sans Bengali", "Hind Siliguri", sans-serif;
+  font-size: 13px;
+  color: #1f2937;
+}
+#ai-inbox-helper-panel .ai-inbox-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 10px 12px;
+  background: #0d9488;
+  color: #fff;
+  border-radius: 12px 12px 0 0;
+  font-weight: bold;
+}
+#ai-inbox-helper-panel .ai-inbox-toggle {
+  background: transparent;
+  border: none;
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+  padding: 0 4px;
+}
+#ai-inbox-helper-panel .ai-inbox-body { padding: 10px 12px; }
+#ai-inbox-helper-panel a {
+  color: #0d9488;
+  font-weight: bold;
+  text-decoration: none;
+}
+#ai-inbox-helper-panel .ai-inbox-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+#ai-inbox-helper-panel .ai-inbox-chip {
+  border: 1px solid #d1d5db;
+  background: #f3f4f6;
+  border-radius: 999px;
+  padding: 5px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+#ai-inbox-helper-panel .ai-inbox-chip:hover { background: #ccfbf1; }
+#ai-inbox-helper-panel .ai-inbox-note {
+  font-size: 11px;
+  color: #6b7280;
+  margin: 8px 0 0;
+  line-height: 1.5;
+}

@@ -1,0 +1,56 @@
+# AI Sales Inbox — Phase 1 infrastructure (local dev only)
+# Start with: docker compose -f infra/docker-compose.yml up -d
+# The API and web app run locally via npm (not in compose) in Phase 1.
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: ai-inbox-postgres
+    environment:
+      POSTGRES_USER: ai_inbox
+      POSTGRES_PASSWORD: ai_inbox_dev
+      POSTGRES_DB: ai_inbox
+    ports:
+      - "5432:5432"
+    volumes:
+      - ai-inbox-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_inbox -d ai_inbox"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7
+    container_name: ai-inbox-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - ai-inbox-redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    container_name: ai-inbox-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin123
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ai-inbox-miniodata:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  ai-inbox-pgdata:
+  ai-inbox-redisdata:
+  ai-inbox-miniodata:
