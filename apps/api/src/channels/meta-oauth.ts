@@ -227,10 +227,59 @@ export type CreateResult =
   | { ok: false; reason: 'duplicate' | 'limit'; message: string };
 
 /**
+ * Fields the app receives for a subscribed Page. Must match the fields
+ * configured on the Meta app's Webhooks product (messages,
+ * messaging_postbacks, feed) — both layers have to include a field for
+ * Meta to deliver that event.
+ */
+export const SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,feed';
+
+/**
+ * Subscribe a Facebook Page to the app so Meta delivers the Page's
+ * Messenger / Instagram events to our webhook (POST /api/webhooks/meta).
+ * Without this call a Page can be connected and still never send us a
+ * message — Meta only pushes events for Pages subscribed to the app.
+ *
+ * Best-effort by design: a failure is logged and the caller still
+ * succeeds. The Page can be (re)subscribed later, and a slow or failing
+ * Graph call must never block a user from connecting.
+ * (WhatsApp is NOT subscribed here — its Cloud API webhook is separate
+ * and a WhatsApp channel token is a user token, not a Page token.)
+ */
+export async function subscribePageToApp(pageId: string, pageToken: string): Promise<boolean> {
+  try {
+    const res = await fetchWithTimeout(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/subscribed_apps`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${pageToken}`,
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ subscribed_fields: SUBSCRIBED_FIELDS }).toString(),
+    }, 10000);
+    const data = (await res.json().catch(() => null)) as {
+      success?: boolean;
+      error?: { message?: string };
+    } | null;
+    if (res.ok && data?.success === true) return true;
+    console.error(
+      '[meta-oauth] subscribe page to app failed for page',
+      pageId,
+      data?.error?.message ? `: ${data.error.message}` : ` (HTTP ${res.status})`,
+    );
+    return false;
+  } catch (err) {
+    console.error('[meta-oauth] subscribe page to app failed for page', pageId, ':', (err as Error).message);
+    return false;
+  }
+}
+
+/**
  * Shared by all three OAuth connects: duplicate check (same platform +
  * external_id in this workspace), subscription channel limit, then the
  * INSERT with the token encrypted. The token is stored encrypted and is
- * never returned by any list endpoint.
+ * never returned by any list endpoint. After a Messenger/Instagram
+ * channel is created, the Page is subscribed to the app (best-effort —
+ * a subscribe failure never fails the connect).
  */
 export async function createOAuthChannel(
   workspaceId: string,
@@ -275,6 +324,16 @@ export async function createOAuthChannel(
   );
   if (rows.length === 0) {
     return { ok: false, reason: 'duplicate', message: input.duplicateMessage };
+  }
+  // Subscribe the Page to the app so Meta delivers its events to our
+  // webhook. Messenger: the Page is externalId. Instagram: the Page is
+  // sourceId (externalId is the IG user ID). WhatsApp: no Page — skip.
+  // Best-effort: subscribePageToApp never throws; a failure only logs.
+  if (input.platform === 'messenger' || input.platform === 'instagram') {
+    const pageId = input.platform === 'messenger' ? input.externalId : (input.sourceId ?? '');
+    if (pageId) {
+      await subscribePageToApp(pageId, input.token);
+    }
   }
   return { ok: true, channel: rows[0] };
 }

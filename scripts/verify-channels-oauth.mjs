@@ -18,6 +18,10 @@
  * plan: 1 channel); WA accounts list strips the user token, connect
  * creates exactly one 'whatsapp' channel row (phone-number ID, display
  * number, source_id = WABA ID), duplicate → 409, unknown number → 400.
+ * Webhook subscription: the IG connect attempts POST /{page-id}/
+ * subscribed_apps with the Page token (dummy token → Graph rejects →
+ * logged, connect still 201); GET /api/webhooks/meta handshake with
+ * the right META_VERIFY_TOKEN → 200 + challenge, wrong token → 403.
  *
  * Run from the repo root:  node scripts/verify-channels-oauth.mjs
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
@@ -168,6 +172,17 @@ async function main() {
   check('facebook no_pages redirect carries the account name', fbSrc.includes('fetchMeName') && fbSrc.includes("reason: 'no_pages'") && fbSrc.includes('account'));
   check('facebook pick redirect carries the account name', fbSrc.includes("facebook: 'pick'") && fbSrc.includes('account'));
 
+  // ---- Webhook subscription (Meta only pushes events for subscribed Pages) ----
+  check('meta-oauth exports subscribePageToApp', metaSrc.includes('export async function subscribePageToApp'));
+  check('subscribe posts to /{page-id}/subscribed_apps with the Page token as Bearer', metaSrc.includes('/subscribed_apps') && metaSrc.includes("Authorization: `Bearer ${pageToken}`"));
+  check('subscribe sends subscribed_fields (messages, messaging_postbacks, feed)', metaSrc.includes('SUBSCRIBED_FIELDS') && metaSrc.includes('messages,messaging_postbacks,feed'));
+  check('subscribe failure is best-effort: logged, returns false, never throws', metaSrc.includes('subscribe page to app failed') && metaSrc.includes('return false') && metaSrc.includes('catch (err)'));
+  check('createOAuthChannel subscribes messenger + instagram Pages only (not WhatsApp)', metaSrc.includes("input.platform === 'messenger' || input.platform === 'instagram'") && !waSrc.includes('subscribePageToApp'));
+  check('instagram subscribe uses the Page id (sourceId), not the IG id', metaSrc.includes("input.platform === 'messenger' ? input.externalId : (input.sourceId ?? '')"));
+  const whSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/webhooks/routes.ts'), 'utf8');
+  check('webhook handshake checks hub.verify_token against META_VERIFY_TOKEN', whSrc.includes("token === config.meta.verifyToken") && whSrc.includes("mode === 'subscribe'"));
+  check('webhook handshake returns the challenge on match, 403 otherwise', whSrc.includes('String(challenge ??') && whSrc.includes('sendStatus(403)'));
+
   const mig14 = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/14-channels-oauth.sql'), 'utf8');
   check('migration 14 adds source_id (idempotent)', mig14.includes('source_id') && mig14.includes('IF NOT EXISTS'));
   const routesSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/routes.ts'), 'utf8');
@@ -237,7 +252,7 @@ async function main() {
   const stampB = Date.now();
   const portB = 4007;
   const apiB = makeApi(`http://localhost:${portB}`);
-  const runB = startApi(portB, '.pglite-data-ch-b', { META_APP_ID: 'dummy-app-id', META_APP_SECRET: 'dummy-secret' });
+  const runB = startApi(portB, '.pglite-data-ch-b', { META_APP_ID: 'dummy-app-id', META_APP_SECRET: 'dummy-secret', META_VERIFY_TOKEN: 'test-verify-token-123' });
   process.on('exit', runB.stop);
   try {
     const up = await waitForHealth(`http://localhost:${portB}`);
@@ -267,6 +282,16 @@ async function main() {
 
     const igConnect = await apiB('/api/channels/instagram/connect', { method: 'POST', body: { session: igSession, pageId: 'page-ig-1' } });
     check('connect linked page → 201 instagram channel', igConnect.status === 201 && igConnect.data?.channel?.platform === 'instagram' && igConnect.data?.channel?.external_id === 'ig-111', `status=${igConnect.status}, channel=${JSON.stringify(igConnect.data?.channel)}`);
+    // The dummy page token cannot really subscribe on Graph — the connect
+    // must still succeed (subscribe failure is best-effort, never fatal).
+    await sleep(500);
+    check('subscribe failure does not break the connect (dummy token, Graph rejects)', runB.log().includes('subscribe page to app failed for page page-ig-1'), runB.log().slice(-300));
+
+    // ---- Meta webhook handshake (uses the META_VERIFY_TOKEN above) ----
+    const hsOk = await apiB('/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=test-verify-token-123&hub.challenge=hello123', { auth: false });
+    check('webhook handshake with the right verify token → 200 + challenge', hsOk.status === 200 && hsOk.text === 'hello123', `status=${hsOk.status}, body=${hsOk.text}`);
+    const hsBad = await apiB('/api/webhooks/meta?hub.mode=subscribe&hub.verify_token=wrong-token&hub.challenge=hello123', { auth: false });
+    check('webhook handshake with a wrong verify token → 403', hsBad.status === 403, `status=${hsBad.status}`);
 
     const igListChannels = await apiB('/api/channels');
     const igRow = (igListChannels.data?.channels ?? []).find((c) => c.external_id === 'ig-111');
