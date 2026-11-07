@@ -113,6 +113,22 @@ function rangeStart(days: number): Date {
   return d;
 }
 
+/**
+ * DATE columns come back from the driver as JS Dates (local midnight), and
+ * String(date).slice(0, 10) gives "Sat Nov 07" — not a YYYY-MM-DD date.
+ * Format them properly so day keys match the YYYY-MM-DD keys the trend and
+ * by-day breakdowns build. Strings (already YYYY-MM-DD) pass through.
+ */
+function isoDate(v: unknown): string {
+  if (v instanceof Date) {
+    const y = v.getFullYear();
+    const m = String(v.getMonth() + 1).padStart(2, '0');
+    const d = String(v.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return String(v).slice(0, 10);
+}
+
 interface BankAccountRow {
   id: string;
   bank_name: string;
@@ -258,9 +274,9 @@ ownerRouter.get('/overview', async (req: AuthRequest, res: Response) => {
     [since.toISOString()],
   );
   const revMap = new Map<string, number>();
-  for (const r of revByDay.rows) revMap.set(String(r.day).slice(0, 10), Number(r.total));
+  for (const r of revByDay.rows) revMap.set(isoDate(r.day), Number(r.total));
   const costMap = new Map<string, number>();
-  for (const r of costByDay.rows) costMap.set(String(r.day).slice(0, 10), Number(r.total));
+  for (const r of costByDay.rows) costMap.set(isoDate(r.day), Number(r.total));
   const trend: { date: string; revenuePaisa: number; apiCostPaisa: number }[] = [];
   for (let i = days - 1; i >= 0; i--) {
     const d = new Date();
@@ -647,49 +663,102 @@ ownerRouter.delete('/expenses/:id', async (req: AuthRequest, res: Response) => {
 // 5. API cost tracking (read-only, from ai_usage_ledger)
 // ---------------------------------------------------------------------------
 
-/** GET /api/owner/api-costs?period=7d|30d|month — per-provider + per-shop costs. */
+/** GET /api/owner/api-costs?period=7d|30d|month — per-provider + per-shop costs
+ * plus per-request rows (newest first) and token totals.
+ * Costs come ONLY from ai_usage_ledger.provider_cost_paisa; token counts
+ * from input_tokens/output_tokens. Every ledger row is an AI reply, so the
+ * per-request purpose is honestly "customer_reply" — no other purpose is
+ * invented. Customer name comes from the ledger row's conversation
+ * (LEFT JOIN, so rows without a conversation show a blank customer). */
 ownerRouter.get('/api-costs', async (req: AuthRequest, res: Response) => {
   const { days, label } = parsePeriod(req.query.period);
   const since = rangeStart(days);
-  const byProvider = await pool.query<{ provider: string; replies: string; total: string; wallet: string }>(
+  const byProvider = await pool.query<{ provider: string; replies: string; total: string; wallet: string; in_tokens: string; out_tokens: string }>(
     `SELECT provider, COUNT(*) AS replies,
             COALESCE(SUM(provider_cost_paisa), 0) AS total,
-            COALESCE(SUM(cost_paisa), 0) AS wallet
+            COALESCE(SUM(cost_paisa), 0) AS wallet,
+            COALESCE(SUM(input_tokens), 0) AS in_tokens,
+            COALESCE(SUM(output_tokens), 0) AS out_tokens
      FROM ai_usage_ledger WHERE created_at >= $1 GROUP BY provider ORDER BY total DESC`,
     [since.toISOString()],
   );
-  const byDay = await pool.query<{ day: string; provider: string; total: string }>(
-    `SELECT DATE(created_at) AS day, provider, COALESCE(SUM(provider_cost_paisa), 0) AS total
+  const byDay = await pool.query<{ day: string; provider: string; total: string; in_tokens: string; out_tokens: string }>(
+    `SELECT DATE(created_at) AS day, provider, COALESCE(SUM(provider_cost_paisa), 0) AS total,
+            COALESCE(SUM(input_tokens), 0) AS in_tokens,
+            COALESCE(SUM(output_tokens), 0) AS out_tokens
      FROM ai_usage_ledger WHERE created_at >= $1 GROUP BY DATE(created_at), provider ORDER BY day`,
     [since.toISOString()],
   );
-  const byShop = await pool.query<{ workspace_id: string; name: string; replies: string; total: string }>(
-    `SELECT l.workspace_id, w.name, COUNT(*) AS replies, COALESCE(SUM(l.provider_cost_paisa), 0) AS total
+  const byShop = await pool.query<{ workspace_id: string; name: string; replies: string; total: string; in_tokens: string; out_tokens: string }>(
+    `SELECT l.workspace_id, w.name, COUNT(*) AS replies, COALESCE(SUM(l.provider_cost_paisa), 0) AS total,
+            COALESCE(SUM(l.input_tokens), 0) AS in_tokens,
+            COALESCE(SUM(l.output_tokens), 0) AS out_tokens
      FROM ai_usage_ledger l LEFT JOIN workspaces w ON w.id = l.workspace_id
      WHERE l.created_at >= $1 GROUP BY l.workspace_id, w.name ORDER BY total DESC`,
     [since.toISOString()],
   );
+  const rows = await pool.query<{
+    id: string; created_at: string; provider: string; model: string;
+    input_tokens: number; output_tokens: number; provider_cost_paisa: number;
+    shop_name: string | null; customer_name: string | null;
+  }>(
+    `SELECT l.id, l.created_at, l.provider, l.model, l.input_tokens, l.output_tokens,
+            l.provider_cost_paisa, w.name AS shop_name, cu.name AS customer_name
+     FROM ai_usage_ledger l
+     LEFT JOIN workspaces w ON w.id = l.workspace_id
+     LEFT JOIN conversations c ON c.id = l.conversation_id
+     LEFT JOIN customers cu ON cu.id = c.customer_id
+     WHERE l.created_at >= $1
+     ORDER BY l.created_at DESC, l.id DESC
+     LIMIT 100`,
+    [since.toISOString()],
+  );
   const total = byProvider.rows.reduce((sum, r) => sum + Number(r.total), 0);
+  const totalInputTokens = byProvider.rows.reduce((sum, r) => sum + Number(r.in_tokens), 0);
+  const totalOutputTokens = byProvider.rows.reduce((sum, r) => sum + Number(r.out_tokens), 0);
+  const totalReplies = byProvider.rows.reduce((sum, r) => sum + Number(r.replies), 0);
   res.json({
     period: label,
     since: since.toISOString(),
     totalProviderCostPaisa: total,
+    totalInputTokens,
+    totalOutputTokens,
+    totalReplies,
+    avgCostPaisa: totalReplies > 0 ? total / totalReplies : 0,
     byProvider: byProvider.rows.map((r) => ({
       provider: r.provider,
       replies: Number(r.replies),
       providerCostPaisa: Number(r.total),
       walletChargePaisa: Number(r.wallet),
+      inputTokens: Number(r.in_tokens),
+      outputTokens: Number(r.out_tokens),
     })),
     byDay: byDay.rows.map((r) => ({
-      date: String(r.day).slice(0, 10),
+      date: isoDate(r.day),
       provider: r.provider,
       providerCostPaisa: Number(r.total),
+      inputTokens: Number(r.in_tokens),
+      outputTokens: Number(r.out_tokens),
     })),
     byShop: byShop.rows.map((r) => ({
       workspaceId: r.workspace_id,
       shopName: r.name ?? '—',
       replies: Number(r.replies),
       providerCostPaisa: Number(r.total),
+      inputTokens: Number(r.in_tokens),
+      outputTokens: Number(r.out_tokens),
+    })),
+    rows: rows.rows.map((r) => ({
+      id: r.id,
+      createdAt: r.created_at,
+      purpose: 'customer_reply',
+      shopName: r.shop_name ?? '—',
+      customerName: r.customer_name,
+      provider: r.provider,
+      model: r.model,
+      inputTokens: Number(r.input_tokens),
+      outputTokens: Number(r.output_tokens),
+      providerCostPaisa: Number(r.provider_cost_paisa),
     })),
     note: 'Costs come only from ai_usage_ledger.provider_cost_paisa — what the AI providers really charged. Groq is always ৳0.',
   });
@@ -1059,13 +1128,14 @@ ownerRouter.post('/_test/seed-ledger', async (req: AuthRequest, res: Response) =
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  const { workspaceId, provider, providerCostPaisa, inputTokens, outputTokens, model } = (req.body ?? {}) as {
+  const { workspaceId, provider, providerCostPaisa, inputTokens, outputTokens, model, customerName } = (req.body ?? {}) as {
     workspaceId?: string;
     provider?: string;
     providerCostPaisa?: number;
     inputTokens?: number;
     outputTokens?: number;
     model?: string;
+    customerName?: string;
   };
   if (!workspaceId || typeof workspaceId !== 'string') {
     res.status(400).json({ error: 'workspaceId is required' });
@@ -1079,12 +1149,29 @@ ownerRouter.post('/_test/seed-ledger', async (req: AuthRequest, res: Response) =
     res.status(400).json({ error: 'providerCostPaisa must be a non-negative integer (paisa)' });
     return;
   }
+  // Optional customer: create a customer + conversation and link the ledger
+  // row to it, so the verifier can prove the per-request table resolves the
+  // customer name through the conversation join. Rows without a customer
+  // keep conversation_id NULL (customer shows blank, never invented).
+  let conversationId: string | null = null;
+  if (typeof customerName === 'string' && customerName.trim()) {
+    const cust = await pool.query<{ id: string }>(
+      'INSERT INTO customers (workspace_id, name) VALUES ($1, $2) RETURNING id',
+      [workspaceId, customerName.trim()],
+    );
+    const conv = await pool.query<{ id: string }>(
+      'INSERT INTO conversations (workspace_id, customer_id) VALUES ($1, $2) RETURNING id',
+      [workspaceId, cust.rows[0].id],
+    );
+    conversationId = conv.rows[0].id;
+  }
   const { rows } = await pool.query(
-    `INSERT INTO ai_usage_ledger (workspace_id, input_tokens, output_tokens, cost_paisa, provider, model, provider_cost_paisa, owner_deducted)
-     VALUES ($1, $2, $3, 0, $4, $5, $6, FALSE)
-     RETURNING id, workspace_id, provider, model, input_tokens, output_tokens, cost_paisa, provider_cost_paisa, owner_deducted, created_at`,
+    `INSERT INTO ai_usage_ledger (workspace_id, conversation_id, input_tokens, output_tokens, cost_paisa, provider, model, provider_cost_paisa, owner_deducted)
+     VALUES ($1, $2, $3, $4, 0, $5, $6, $7, FALSE)
+     RETURNING id, workspace_id, conversation_id, provider, model, input_tokens, output_tokens, cost_paisa, provider_cost_paisa, owner_deducted, created_at`,
     [
       workspaceId,
+      conversationId,
       typeof inputTokens === 'number' ? inputTokens : 100,
       typeof outputTokens === 'number' ? outputTokens : 50,
       provider,

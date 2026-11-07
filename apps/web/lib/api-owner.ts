@@ -77,13 +77,31 @@ export interface OwnerExpense {
   createdAt: string;
 }
 
+export interface ApiCostRow {
+  id: string;
+  createdAt: string;
+  purpose: string;
+  shopName: string;
+  customerName: string | null;
+  provider: string;
+  model: string;
+  inputTokens: number;
+  outputTokens: number;
+  providerCostPaisa: number;
+}
+
 export interface ApiCosts {
   period: string;
   since: string;
   totalProviderCostPaisa: number;
-  byProvider: { provider: string; replies: number; providerCostPaisa: number; walletChargePaisa: number }[];
-  byDay: { date: string; provider: string; providerCostPaisa: number }[];
-  byShop: { workspaceId: string; shopName: string; replies: number; providerCostPaisa: number }[];
+  totalInputTokens: number;
+  totalOutputTokens: number;
+  totalReplies: number;
+  avgCostPaisa: number;
+  byProvider: { provider: string; replies: number; providerCostPaisa: number; walletChargePaisa: number; inputTokens: number; outputTokens: number }[];
+  byDay: { date: string; provider: string; providerCostPaisa: number; inputTokens: number; outputTokens: number }[];
+  byShop: { workspaceId: string; shopName: string; replies: number; providerCostPaisa: number; inputTokens: number; outputTokens: number }[];
+  rows: ApiCostRow[];
   note: string;
 }
 
