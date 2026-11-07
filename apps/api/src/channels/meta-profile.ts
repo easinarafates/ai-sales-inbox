@@ -35,12 +35,40 @@
  *   both Page tokens, v21.0 + v27.0): 400 GraphMethodException #100/33
  *   on every attempt — the same object-access block as the direct PSID
  *   read. It adds nothing beyond the paths above, so it is NOT wired in
- *   as a fallback; do not re-probe it for this sender.
- * - The pipeline below already stores a photo whenever Graph returns
- *   one, so other (e.g. email-registered) customers' photos WILL show
- *   automatically when Meta returns them — no code change needed for
- *   that. The Inbox initials avatar uses a per-customer colour so
- *   customers stay recognisable even without a photo.
+ *   as a fallback for the PAGE token; do not re-probe it for this sender.
+ *   (It IS tried with the USER token below — a different credential.)
+ * - GET /{psid}/ids_for_apps was ALSO probed live (2026-11-07, both
+ *   Page tokens, v21.0): 400 GraphMethodException #100/33 on every
+ *   attempt. The PSID object cannot be loaded at all with a Page token,
+ *   so the sender cannot be matched to the Facebook user who connected
+ *   the Page this way. NOT wired in; do not re-probe it.
+ *
+ * USER TOKEN (migration 20) — the remaining automatic route. The
+ * Facebook OAuth connect flow now stores the connecting Page admin's
+ * long-lived USER token (encrypted) + app-scoped user ID on the channel
+ * row. When the Page-token paths above yield no photo, the same three
+ * routes are retried with the user token (direct read, conversations
+ * participants, /{psid}/picture) — a different credential may return
+ * what the Page token cannot. No user token is stored for channels
+ * connected before this change; they get one only on the next reconnect.
+ * LIVE STATUS (2026-11-07): no user token exists yet for any channel,
+ * so the user-token routes have NOT been tried live — they are wired
+ * and covered by the verifier's stub, and the first real attempt will
+ * happen on the first message after a Page is reconnected. If Meta
+ * blocks the PSID for the user token too, the photo stays NULL.
+ *
+ * OWNER PHOTO — when the sender IS the Page owner (the workspace's
+ * marked owner_psid), GET /me/picture?redirect=false with the stored
+ * user token returns the owner's own Facebook photo directly, without
+ * ever needing the PSID to load. That is the route that can give the
+ * test sender (the owner himself) his original photo. It only runs
+ * for the marked owner, never for other customers.
+ *
+ * The pipeline below already stores a photo whenever Graph returns
+ * one, so other (e.g. email-registered) customers' photos WILL show
+ * automatically when Meta returns them — no code change needed for
+ * that. The Inbox initials avatar uses a per-customer colour so
+ * customers stay recognisable even without a photo.
  * Instagram: GET /{ig-user-id}?fields=name,username,profile_picture_url
  * (Both are Graph v21.0 — GRAPH_BASE is imported from meta-oauth.ts so
  * the version stays in one place. META_GRAPH_BASE_URL overrides the
@@ -114,19 +142,20 @@ function pictureFromGraphPic(pic: unknown): string | null {
 /**
  * Messenger direct read: GET /{psid}?fields=first_name,last_name,profile_pic.
  * Returns null on any failure (Meta blocks this read for many apps).
+ * `label` ('page' | 'user') only marks which token was used, for logs.
  */
-async function fetchMessengerDirect(senderId: string, pageToken: string): Promise<MetaProfile | null> {
+async function fetchMessengerDirect(senderId: string, token: string, label: string): Promise<MetaProfile | null> {
   const url = `${profileGraphBase()}/${encodeURIComponent(senderId)}?fields=${encodeURIComponent('first_name,last_name,profile_pic')}`;
   let res: Awaited<ReturnType<typeof fetchWithTimeout>>;
   try {
-    res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${pageToken}` } }, 8000);
+    res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } }, 8000);
   } catch (err) {
-    console.warn(`[meta-profile] direct read failed for ${senderId}: ${(err as Error).message}`);
+    console.warn(`[meta-profile] direct read (${label} token) failed for ${senderId}: ${(err as Error).message}`);
     return null;
   }
   if (!res.ok) {
     const data = await readJson(res);
-    console.warn(`[meta-profile] direct read failed for ${senderId}: HTTP ${res.status} ${graphErrorDetail(data)}`);
+    console.warn(`[meta-profile] direct read (${label} token) failed for ${senderId}: HTTP ${res.status} ${graphErrorDetail(data)}`);
     return null;
   }
   const data = await readJson(res);
@@ -152,19 +181,20 @@ async function fetchMessengerDirect(senderId: string, pageToken: string): Promis
 async function fetchMessengerViaConversations(
   senderId: string,
   pageId: string,
-  pageToken: string,
+  token: string,
+  label: string,
 ): Promise<MetaProfile | null> {
   const url = `${profileGraphBase()}/${encodeURIComponent(pageId)}/conversations?user_id=${encodeURIComponent(senderId)}&fields=${encodeURIComponent('participants{name,picture{url}}')}`;
   let res: Awaited<ReturnType<typeof fetchWithTimeout>>;
   try {
-    res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${pageToken}` } }, 8000);
+    res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } }, 8000);
   } catch (err) {
-    console.warn(`[meta-profile] conversations fallback failed for ${senderId}: ${(err as Error).message}`);
+    console.warn(`[meta-profile] conversations fallback (${label} token) failed for ${senderId}: ${(err as Error).message}`);
     return null;
   }
   if (!res.ok) {
     const data = await readJson(res);
-    console.warn(`[meta-profile] conversations fallback failed for ${senderId}: HTTP ${res.status} ${graphErrorDetail(data)}`);
+    console.warn(`[meta-profile] conversations fallback (${label} token) failed for ${senderId}: HTTP ${res.status} ${graphErrorDetail(data)}`);
     return null;
   }
   const data = await readJson(res);
@@ -191,6 +221,59 @@ async function fetchMessengerViaConversations(
 }
 
 /**
+ * GET /{psid}/picture?redirect=false — returns the photo URL, or null.
+ * A silhouette (is_silhouette=true) is Meta's placeholder, not a real
+ * photo, so it is ignored. NOTE: with the PAGE token this endpoint is
+ * 400 #100/33 for the test sender (live probe 2026-11-07) — it is only
+ * called here with the USER token, where it may behave differently.
+ */
+async function fetchMessengerPicture(senderId: string, token: string, label: string): Promise<string | null> {
+  const url = `${profileGraphBase()}/${encodeURIComponent(senderId)}/picture?redirect=false`;
+  let res: Awaited<ReturnType<typeof fetchWithTimeout>>;
+  try {
+    res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${token}` } }, 8000);
+  } catch (err) {
+    console.warn(`[meta-profile] picture read (${label} token) failed for ${senderId}: ${(err as Error).message}`);
+    return null;
+  }
+  if (!res.ok) {
+    const data = await readJson(res);
+    console.warn(`[meta-profile] picture read (${label} token) failed for ${senderId}: HTTP ${res.status} ${graphErrorDetail(data)}`);
+    return null;
+  }
+  const data = await readJson(res);
+  const pic = (data?.data ?? null) as { url?: unknown; is_silhouette?: unknown } | null;
+  if (pic?.is_silhouette === true) return null;
+  return asNonEmptyString(pic?.url);
+}
+
+/**
+ * The Page owner's own photo: GET /me/picture?redirect=false with the
+ * stored USER token. Needs no PSID at all, so it works even when Meta
+ * refuses to load the sender's PSID object. Only ever called for the
+ * workspace's marked owner (owner_psid). A silhouette is ignored.
+ */
+async function fetchOwnerPicture(userToken: string): Promise<string | null> {
+  const url = `${profileGraphBase()}/me/picture?redirect=false`;
+  let res: Awaited<ReturnType<typeof fetchWithTimeout>>;
+  try {
+    res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${userToken}` } }, 8000);
+  } catch (err) {
+    console.warn(`[meta-profile] owner picture read failed: ${(err as Error).message}`);
+    return null;
+  }
+  if (!res.ok) {
+    const data = await readJson(res);
+    console.warn(`[meta-profile] owner picture read failed: HTTP ${res.status} ${graphErrorDetail(data)}`);
+    return null;
+  }
+  const data = await readJson(res);
+  const pic = (data?.data ?? null) as { url?: unknown; is_silhouette?: unknown } | null;
+  if (pic?.is_silhouette === true) return null;
+  return asNonEmptyString(pic?.url);
+}
+
+/**
  * Fetch one sender's profile from Graph. Never throws — every failure
  * is returned as null (the caller falls back to "Unknown") and logged.
  */
@@ -198,54 +281,100 @@ export async function fetchMetaProfile(input: {
   platform: 'messenger' | 'instagram';
   /** Messenger: customer PSID. Instagram: IG-scoped user ID. */
   senderId: string;
-  /** Page access token (Bearer). */
-  pageToken: string;
+  /** Page access token (Bearer). Null when the channel has none. */
+  pageToken: string | null;
   /**
    * Messenger: the Page ID (channel external_id) — needed for the
    * conversations-endpoint fallback when the direct PSID read is
    * blocked. Instagram: the Page ID (channel source_id); unused today.
    */
   pageId?: string | null;
+  /**
+   * The connecting Facebook user's long-lived token (migration 20).
+   * When the Page-token routes yield no photo, the same routes are
+   * retried with this token — a different credential may return what
+   * the Page token cannot. Null for channels connected before the
+   * token was stored (until the next reconnect).
+   */
+  userToken?: string | null;
 }): Promise<MetaProfile | null> {
+  // Results are MERGED across attempts, not short-circuited: a
+  // name-only hit (e.g. the Page-token conversations fallback, which
+  // returns a name but strips the picture) must not stop the
+  // user-token attempts that could still provide the photo. Stops
+  // early only once both a name and a picture are known.
+  let best: MetaProfile | null = null;
+  const consider = (p: MetaProfile | null): void => {
+    if (!p) return;
+    best = { name: best?.name ?? p.name, pictureUrl: best?.pictureUrl ?? p.pictureUrl };
+  };
+  const needMore = (): boolean => !best || !best.name || !best.pictureUrl;
   if (input.platform === 'messenger') {
-    const direct = await fetchMessengerDirect(input.senderId, input.pageToken);
-    if (direct) return direct;
-    if (input.pageId) {
-      const viaConversations = await fetchMessengerViaConversations(input.senderId, input.pageId, input.pageToken);
-      if (viaConversations) return viaConversations;
+    if (input.pageToken) {
+      consider(await fetchMessengerDirect(input.senderId, input.pageToken, 'page'));
+      if (input.pageId && needMore()) {
+        consider(await fetchMessengerViaConversations(input.senderId, input.pageId, input.pageToken, 'page'));
+      }
     }
-    return null;
+    // USER-token retry (migration 20): the Page token cannot load some
+    // senders at all (400 #100/33 on every PSID route). The admin's own
+    // token is worth one attempt on the same three routes.
+    if (input.userToken && input.userToken !== input.pageToken) {
+      if (needMore()) consider(await fetchMessengerDirect(input.senderId, input.userToken, 'user'));
+      if (input.pageId && needMore()) {
+        consider(await fetchMessengerViaConversations(input.senderId, input.pageId, input.userToken, 'user'));
+      }
+      if (needMore()) {
+        const uPic = await fetchMessengerPicture(input.senderId, input.userToken, 'user');
+        if (uPic) consider({ name: null, pictureUrl: uPic });
+      }
+    }
+    return best;
   }
   const fields = 'name,username,profile_picture_url';
-  const url = `${profileGraphBase()}/${encodeURIComponent(input.senderId)}?fields=${encodeURIComponent(fields)}`;
-  try {
-    const res = await fetchWithTimeout(
-      url,
-      { headers: { Authorization: `Bearer ${input.pageToken}` } },
-      8000,
-    );
-    if (!res.ok) {
+  // Page token first, then the user token when it differs (and when
+  // there is no Page token at all, the user token alone).
+  const attempts = [input.pageToken, input.userToken].filter(
+    (t, i, arr): t is string => !!t && arr.indexOf(t) === i,
+  );
+  for (const token of attempts) {
+    const url = `${profileGraphBase()}/${encodeURIComponent(input.senderId)}?fields=${encodeURIComponent(fields)}`;
+    try {
+      const res = await fetchWithTimeout(
+        url,
+        { headers: { Authorization: `Bearer ${token}` } },
+        8000,
+      );
+      if (!res.ok) {
+        const data = await readJson(res);
+        console.warn(`[meta-profile] IG read failed for ${input.senderId}: HTTP ${res.status} ${graphErrorDetail(data)}`);
+        continue;
+      }
       const data = await readJson(res);
-      console.warn(`[meta-profile] IG read failed for ${input.senderId}: HTTP ${res.status} ${graphErrorDetail(data)}`);
-      return null;
+      if (!data) continue;
+      const name = asNonEmptyString(data.name) ?? asNonEmptyString(data.username);
+      const pictureUrl = asNonEmptyString(data.profile_picture_url);
+      if (!name && !pictureUrl) continue;
+      consider({ name, pictureUrl });
+      if (!needMore()) break;
+    } catch (err) {
+      console.warn(`[meta-profile] IG read failed for ${input.senderId}: ${(err as Error).message}`);
     }
-    const data = await readJson(res);
-    if (!data) return null;
-    const name = asNonEmptyString(data.name) ?? asNonEmptyString(data.username);
-    const pictureUrl = asNonEmptyString(data.profile_picture_url);
-    if (!name && !pictureUrl) return null;
-    return { name, pictureUrl };
-  } catch (err) {
-    console.warn(`[meta-profile] IG read failed for ${input.senderId}: ${(err as Error).message}`);
-    return null;
   }
+  return best;
 }
 
 /**
  * Fill in a customer's missing name/picture from Graph, best-effort.
  * Skips the fetch entirely when the customer already has both, or when
- * there is no Page token. Never throws — a failure is logged by the
+ * there is no token at all. Never throws — a failure is logged by the
  * caller and the message flow continues.
+ *
+ * Order of attempts (Messenger): Page-token direct read → Page-token
+ * conversations fallback → user-token direct read → user-token
+ * conversations fallback → user-token /{psid}/picture → (owner only)
+ * /me/picture with the user token. The first route that returns a
+ * picture wins; a name is filled from whichever route returns one.
  *
  * Manual-photo protection: when picture_source is 'manual' the stored
  * picture is the shop owner's upload — the refresh never touches it
@@ -263,10 +392,14 @@ export async function enrichCustomerProfileIfNeeded(input: {
   /** 'manual' = shop-owner upload (never overwritten); 'meta' = from Graph; null = no photo yet. */
   customerPictureSource?: string | null;
   pageToken: string | null;
+  /** The connecting user's long-lived token (migration 20) — null until the Page is reconnected. */
+  userToken?: string | null;
+  /** The workspace's marked owner PSID (workspaces.owner_psid) — null when nobody is marked. */
+  ownerPsid?: string | null;
   /** Messenger: the Page ID — enables the conversations-endpoint fallback. */
   pageId?: string | null;
 }): Promise<void> {
-  if (!input.pageToken) return;
+  if (!input.pageToken && !input.userToken) return;
   const pictureIsManual = input.customerPictureSource === 'manual';
   const needName = !input.customerName;
   const needPicture = !input.customerPictureUrl && !pictureIsManual;
@@ -276,15 +409,28 @@ export async function enrichCustomerProfileIfNeeded(input: {
     senderId: input.senderId,
     pageToken: input.pageToken,
     pageId: input.pageId ?? null,
+    userToken: input.userToken ?? null,
   });
-  if (!profile) return;
-  const name = input.customerName ?? profile.name;
-  const pictureUrl = pictureIsManual
+  let name = input.customerName ?? profile?.name ?? null;
+  let pictureUrl = pictureIsManual
     ? input.customerPictureUrl
-    : (input.customerPictureUrl ?? profile.pictureUrl);
+    : (input.customerPictureUrl ?? profile?.pictureUrl ?? null);
+  // Owner route: when the sender IS the Page owner, /me/picture with
+  // the user token is the owner's own Facebook photo — no PSID lookup
+  // needed, so it works even when Meta refuses to load the PSID.
+  if (
+    needPicture &&
+    !pictureUrl &&
+    input.userToken &&
+    input.ownerPsid &&
+    input.senderId === input.ownerPsid
+  ) {
+    const ownerPic = await fetchOwnerPicture(input.userToken);
+    if (ownerPic) pictureUrl = ownerPic;
+  }
   const pictureSource = pictureIsManual
     ? 'manual'
-    : !input.customerPictureUrl && profile.pictureUrl
+    : !input.customerPictureUrl && pictureUrl
       ? 'meta'
       : (input.customerPictureSource ?? null);
   if (name === input.customerName && pictureUrl === input.customerPictureUrl && pictureSource === (input.customerPictureSource ?? null)) return;

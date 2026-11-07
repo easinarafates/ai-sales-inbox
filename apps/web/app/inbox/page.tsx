@@ -1,9 +1,8 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   asArray,
-  customersApi,
   getToken,
   inboxApi,
   orderTotalPaisa,
@@ -119,68 +118,6 @@ export default function InboxPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
-  // Manual customer photo (shop-owner upload from the Inbox — the
-  // workaround for Meta not returning a photo for some senders).
-  const [photoFile, setPhotoFile] = useState<File | null>(null);
-  const [photoPreview, setPhotoPreview] = useState("");
-  const [photoSaving, setPhotoSaving] = useState(false);
-  const photoInputRef = useRef<HTMLInputElement | null>(null);
-
-  const clearPhotoPick = useCallback(() => {
-    if (photoPreview) URL.revokeObjectURL(photoPreview);
-    setPhotoFile(null);
-    setPhotoPreview("");
-    if (photoInputRef.current) photoInputRef.current.value = "";
-  }, [photoPreview]);
-
-  const onPhotoFileChange = (file: File | undefined) => {
-    setError("");
-    if (!file) return;
-    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
-    if (!allowed.includes(file.type)) {
-      setError(t("inbox.invalidPhotoType", "Only jpg, png, gif or webp photos are allowed.", "শুধু jpg, png, gif বা webp ছবি দেওয়া যায়।"));
-      return;
-    }
-    if (file.size > 25 * 1024 * 1024) {
-      setError(t("inbox.photoTooLarge", "Photo must be 25 MB or smaller.", "ছবি ২৫ MB-এর বেশি হতে পারবে না।"));
-      return;
-    }
-    if (photoPreview) URL.revokeObjectURL(photoPreview);
-    setPhotoFile(file);
-    setPhotoPreview(URL.createObjectURL(file));
-  };
-
-  const savePhoto = async () => {
-    const customerId = selected?.customer?.id;
-    if (!customerId || !photoFile) return;
-    setPhotoSaving(true);
-    setError("");
-    try {
-      await customersApi.uploadPhoto(customerId, photoFile);
-      clearPhotoPick();
-      await refreshThread();
-      await loadList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("inbox.photoUploadFailed", "Could not upload the photo.", "ছবি আপলোড করা যায়নি।"));
-    } finally {
-      setPhotoSaving(false);
-    }
-  };
-
-  const removePhoto = async () => {
-    const customerId = selected?.customer?.id;
-    if (!customerId) return;
-    if (!window.confirm(t("inbox.removePhotoConfirm", "Remove this customer's photo?", "এই কাস্টমারের ছবি সরিয়ে দেবো?"))) return;
-    setError("");
-    try {
-      await customersApi.deletePhoto(customerId);
-      await refreshThread();
-      await loadList();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("inbox.photoRemoveFailed", "Could not remove the photo.", "ছবি সরানো যায়নি।"));
-    }
-  };
-
   const loadList = useCallback(async () => {
     try {
       const data = await inboxApi.list({ q: q || undefined, status: status || undefined });
@@ -203,7 +140,6 @@ export default function InboxPage() {
   const openThread = async (id: string) => {
     setSelectedId(id);
     setError("");
-    clearPhotoPick();
     try {
       const detail = await inboxApi.get(id);
       setSelected(detail);
@@ -369,24 +305,13 @@ export default function InboxPage() {
               <div className="card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
                   <div className="flex items-center gap-3">
-                    <span className="relative shrink-0">
-                      <CustomerAvatar
-                        name={selected.customer?.name || convName(selected.conversation, unknownLabel)}
-                        pictureUrl={
-                          selected.customer?.picture_url || selected.customer?.pictureUrl || convPicture(selected.conversation)
-                        }
-                        sizeClass="h-12 w-12"
-                      />
-                      <button
-                        type="button"
-                        onClick={() => photoInputRef.current?.click()}
-                        title={t("inbox.changePhoto", "Change photo", "ছবি বদলান")}
-                        aria-label={t("inbox.changePhoto", "Change photo", "ছবি বদলান")}
-                        className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-white text-xs shadow ring-1 ring-orange-200 transition hover:bg-orange-50"
-                      >
-                        📷
-                      </button>
-                    </span>
+                    <CustomerAvatar
+                      name={selected.customer?.name || convName(selected.conversation, unknownLabel)}
+                      pictureUrl={
+                        selected.customer?.picture_url || selected.customer?.pictureUrl || convPicture(selected.conversation)
+                      }
+                      sizeClass="h-12 w-12"
+                    />
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
                         <h2 className="font-bold text-lg">{selected.customer?.name || convName(selected.conversation, unknownLabel)}</h2>
@@ -506,58 +431,6 @@ export default function InboxPage() {
                   />
                   <p className="font-medium">{selected.customer?.name || "—"}</p>
                 </div>
-                {/* Manual photo: Meta does not return a photo for some
-                    senders, so the shop owner can upload one here. The
-                    uploaded photo is marked manual and is never
-                    overwritten by a later Meta refresh. */}
-                <input
-                  ref={photoInputRef}
-                  type="file"
-                  accept="image/jpeg,image/png,image/gif,image/webp"
-                  className="hidden"
-                  onChange={(e) => onPhotoFileChange(e.target.files?.[0])}
-                />
-                {photoPreview ? (
-                  <div className="mb-2 rounded-lg border border-orange-100 bg-orange-50/50 p-3">
-                    <p className="mb-2 text-xs text-slate-500">{t("inbox.photoPreview", "New photo preview", "নতুন ছবির প্রিভিউ")}</p>
-                    <img src={photoPreview} alt={t("inbox.photoPreview", "New photo preview", "নতুন ছবির প্রিভিউ")} className="h-20 w-20 rounded-full object-cover" />
-                    <div className="mt-2 flex gap-2">
-                      <button
-                        onClick={savePhoto}
-                        disabled={photoSaving}
-                        className="rounded-lg bg-teal-600 px-3 py-2 text-sm text-white transition hover:bg-teal-700 disabled:opacity-50"
-                      >
-                        {photoSaving ? t("inbox.savingPhoto", "Saving photo…", "ছবি সংরক্ষণ হচ্ছে…") : t("inbox.savePhoto", "Save photo", "ছবি সংরক্ষণ করুন")}
-                      </button>
-                      <button
-                        onClick={clearPhotoPick}
-                        disabled={photoSaving}
-                        className="rounded-lg bg-slate-100 px-3 py-2 text-sm transition hover:bg-slate-200 disabled:opacity-50"
-                      >
-                        {t("common.cancel", "Cancel", "বাতিল")}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <div className="mb-2 flex flex-wrap gap-2">
-                    <button
-                      onClick={() => photoInputRef.current?.click()}
-                      className="rounded-lg bg-orange-100 px-3 py-2 text-sm text-orange-800 transition hover:bg-orange-200"
-                    >
-                      📷 {selected.customer?.picture_url || selected.customer?.pictureUrl
-                        ? t("inbox.changePhoto", "Change photo", "ছবি বদলান")
-                        : t("inbox.addPhoto", "Add photo", "ছবি যোগ করুন")}
-                    </button>
-                    {(selected.customer?.picture_url || selected.customer?.pictureUrl) && (
-                      <button
-                        onClick={removePhoto}
-                        className="rounded-lg bg-slate-100 px-3 py-2 text-sm transition hover:bg-slate-200"
-                      >
-                        {t("inbox.removePhoto", "Remove photo", "ছবি সরান")}
-                      </button>
-                    )}
-                  </div>
-                )}
                 <p className="text-sm"><span className="text-slate-500">{t("common.name", "Name", "নাম")}:</span> {selected.customer?.name || "—"}</p>
                 <p className="text-sm"><span className="text-slate-500">{t("common.phone", "Phone", "ফোন")}:</span> {selected.customer?.phone || "—"}</p>
                 <p className="text-sm"><span className="text-slate-500">{t("common.address", "Address", "ঠিকানা")}:</span> {selected.customer?.address || "—"}</p>

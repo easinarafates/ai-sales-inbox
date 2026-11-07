@@ -6,6 +6,7 @@ import {
   createOAuthChannel,
   exchangeCodeForToken,
   exchangeForLongLived,
+  fetchMeId,
   fetchMeName,
   fetchPages,
   loginUrl,
@@ -58,7 +59,12 @@ export const facebookOAuthRouter = Router();
 // pages_manage_engagement: replying to Page-post comments as the Page
 // (POST /{comment-id}/comments). Needs App Review for public shops —
 // the app admin can grant it in dev/Live mode for his own Pages.
-const SCOPES = ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_engagement'];
+// NOTE (2026-11-07): pages_manage_engagement was requested here overnight
+// for comment replies, but the Facebook Login dialog then fails with
+// "Feature Unavailable". Reverted to the 4 scopes that worked when Halal Chic
+// connected (2026-11-07 01:38). Re-add pages_manage_engagement only after
+// Meta grants Advanced Access / App Review for it.
+const SCOPES = ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'];
 
 /** Complete the Facebook flow after the code exchange. */
 export async function completeFacebookOAuth(
@@ -69,6 +75,13 @@ export async function completeFacebookOAuth(
   const shortToken = await exchangeCodeForToken(code);
   const longToken = await exchangeForLongLived(shortToken);
   const account = await fetchMeName(longToken);
+  // The connecting user's long-lived token + app-scoped ID are stored
+  // on the channel row (migration 20) so the profile fetch can retry
+  // with the USER token when the Page token cannot load a sender.
+  // The token is never logged and never leaves the server except to
+  // Meta; the pick-session JWT carries it for 10 minutes, like the
+  // Page tokens it already carries.
+  const connectedByUserId = await fetchMeId(longToken);
   const pages = await fetchPages(longToken);
   if (pages.length === 0) {
     return webRedirect(res, 'facebook', {
@@ -84,6 +97,8 @@ export async function completeFacebookOAuth(
       displayName: pages[0].name,
       token: pages[0].token,
       pictureUrl: pages[0].picture,
+      userToken: longToken,
+      connectedByUserId: connectedByUserId || null,
       duplicateMessage: 'This Facebook Page is already connected to this workspace.',
     });
     if (!result.ok) {
@@ -95,7 +110,12 @@ export async function completeFacebookOAuth(
     }
     return webRedirect(res, 'facebook', { facebook: 'connected', name: pages[0].name });
   }
-  const session = signSession('facebook_pages', { workspaceId: verified.workspaceId, pages });
+  const session = signSession('facebook_pages', {
+    workspaceId: verified.workspaceId,
+    pages,
+    userToken: longToken,
+    connectedByUserId: connectedByUserId || null,
+  });
   return webRedirect(res, 'facebook', {
     facebook: 'pick',
     session,
@@ -103,13 +123,23 @@ export async function completeFacebookOAuth(
   });
 }
 
-function verifyFbSession(token: string): { workspaceId: string; pages: FbPickPage[] } | null {
+function verifyFbSession(token: string): {
+  workspaceId: string;
+  pages: FbPickPage[];
+  userToken: string | null;
+  connectedByUserId: string | null;
+} | null {
   const p = verifySession(token, 'facebook_pages');
   if (!p || typeof p.workspaceId !== 'string' || !Array.isArray(p.pages)) return null;
   if (!p.pages.every((pg) => typeof (pg as FbPickPage)?.id === 'string' && typeof (pg as FbPickPage)?.token === 'string')) {
     return null;
   }
-  return p as unknown as { workspaceId: string; pages: FbPickPage[] };
+  return {
+    workspaceId: p.workspaceId as string,
+    pages: p.pages as unknown as FbPickPage[],
+    userToken: typeof p.userToken === 'string' ? (p.userToken as string) : null,
+    connectedByUserId: typeof p.connectedByUserId === 'string' ? (p.connectedByUserId as string) : null,
+  };
 }
 
 /**
@@ -187,6 +217,8 @@ facebookOAuthRouter.post('/connect', requireAuth, async (req: AuthRequest, res: 
     displayName: page.name,
     token: page.token,
     pictureUrl: page.picture,
+    userToken: verified.userToken,
+    connectedByUserId: verified.connectedByUserId,
     duplicateMessage: 'This Facebook Page is already connected to this workspace.',
   });
   if (!result.ok) {

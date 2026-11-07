@@ -137,8 +137,8 @@ async function main() {
   check('helper fetches IG name/username/profile_picture_url', profileSrc.includes('name,username,profile_picture_url'));
   check('helper uses Graph v21.0 (same base as meta-oauth)', profileSrc.includes("from './meta-oauth'") && profileSrc.includes('GRAPH_BASE'));
   check('helper never throws (fetch + enrich return null / swallow)', (profileSrc.includes('catch {') || profileSrc.includes('catch (err)')) && profileSrc.includes('return null'));
-  check('helper sends the Page token as Bearer (never in a URL)', profileSrc.includes('Authorization: `Bearer ${input.pageToken}`') && !profileSrc.includes('access_token=${'));
-  check('helper only fills missing name/picture (never overwrites)', profileSrc.includes('input.customerName ?? profile.name') && profileSrc.includes('input.customerPictureUrl ?? profile.pictureUrl'));
+  check('helper sends the Page token as Bearer (never in a URL)', (profileSrc.includes('Authorization: `Bearer ${token}`') || profileSrc.includes('Authorization: `Bearer ${input.pageToken}`')) && !profileSrc.includes('access_token=${'));
+  check('helper only fills missing name/picture (never overwrites)', profileSrc.includes('input.customerName ?? profile?.name') && profileSrc.includes('input.customerPictureUrl ?? profile?.pictureUrl'));
   // (Manual-photo update, 2026-11-07: the guard is now needName/needPicture —
   // a 'manual' photo is never refreshed — but it still skips the fetch
   // entirely when the customer already has both name and picture.)

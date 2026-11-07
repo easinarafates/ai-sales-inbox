@@ -8,6 +8,7 @@ import {
   createOAuthChannel,
   exchangeCodeForToken,
   exchangeForLongLived,
+  fetchMeId,
   fetchMeName,
   fetchPages,
   loginUrl,
@@ -60,6 +61,8 @@ export interface IgPickPage extends FbPickPage {
 interface IgSession {
   workspaceId: string;
   pages: IgPickPage[];
+  userToken: string | null;
+  connectedByUserId: string | null;
 }
 
 /**
@@ -93,6 +96,8 @@ async function fetchPageInstagram(
 async function createInstagramChannel(
   workspaceId: string,
   page: IgPickPage,
+  userToken: string | null,
+  connectedByUserId: string | null,
 ): Promise<ReturnType<typeof createOAuthChannel>> {
   const ig = page.instagram as { id: string; username: string; picture: string };
   return createOAuthChannel(workspaceId, {
@@ -102,6 +107,8 @@ async function createInstagramChannel(
     token: page.token,
     pictureUrl: ig.picture,
     sourceId: page.id,
+    userToken,
+    connectedByUserId,
     duplicateMessage: 'This Instagram account is already connected to this workspace.',
   });
 }
@@ -115,6 +122,10 @@ export async function completeInstagramOAuth(
   const shortToken = await exchangeCodeForToken(code);
   const longToken = await exchangeForLongLived(shortToken);
   const account = await fetchMeName(longToken);
+  // Store the connecting user's token + app-scoped ID on the channel
+  // row (migration 20) — the profile fetch retries with the USER token
+  // when the Page token cannot load a sender (see meta-profile.ts).
+  const connectedByUserId = await fetchMeId(longToken);
   const pages = await fetchPages(longToken);
   if (pages.length === 0) {
     return webRedirect(res, 'instagram', {
@@ -137,7 +148,7 @@ export async function completeInstagramOAuth(
     });
   }
   if (linked.length === 1) {
-    const result = await createInstagramChannel(verified.workspaceId, linked[0]);
+    const result = await createInstagramChannel(verified.workspaceId, linked[0], longToken, connectedByUserId || null);
     if (!result.ok) {
       return webRedirect(res, 'instagram', {
         instagram: 'error',
@@ -150,7 +161,12 @@ export async function completeInstagramOAuth(
       name: (linked[0].instagram as { username: string }).username,
     });
   }
-  const session = signSession('instagram_pages', { workspaceId: verified.workspaceId, pages: enriched });
+  const session = signSession('instagram_pages', {
+    workspaceId: verified.workspaceId,
+    pages: enriched,
+    userToken: longToken,
+    connectedByUserId: connectedByUserId || null,
+  });
   return webRedirect(res, 'instagram', {
     instagram: 'pick',
     session,
@@ -173,7 +189,12 @@ function verifyIgSession(token: string): IgSession | null {
   ) {
     return null;
   }
-  return { workspaceId: p.workspaceId as string, pages };
+  return {
+    workspaceId: p.workspaceId as string,
+    pages,
+    userToken: typeof p.userToken === 'string' ? (p.userToken as string) : null,
+    connectedByUserId: typeof p.connectedByUserId === 'string' ? (p.connectedByUserId as string) : null,
+  };
 }
 
 /**
@@ -235,7 +256,12 @@ instagramOAuthRouter.post('/connect', requireAuth, async (req: AuthRequest, res:
     });
     return;
   }
-  const result = await createInstagramChannel(verified.workspaceId, page);
+  const result = await createInstagramChannel(
+    verified.workspaceId,
+    page,
+    verified.userToken,
+    verified.connectedByUserId,
+  );
   if (!result.ok) {
     res.status(result.reason === 'limit' ? 402 : 409).json({ error: result.message });
     return;

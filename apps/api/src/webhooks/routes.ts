@@ -165,12 +165,12 @@ async function recordWebhookEvent(
 async function findChannelByExternalId(
   platform: string,
   externalId: string,
-): Promise<{ id: string; workspace_id: string; token_encrypted: string | null; external_id: string; source_id: string | null } | null> {
+): Promise<{ id: string; workspace_id: string; token_encrypted: string | null; user_token_encrypted: string | null; external_id: string; source_id: string | null } | null> {
   const { rows } = await pool.query(
-    'SELECT id, workspace_id, token_encrypted, external_id, source_id FROM channels WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT 1',
+    'SELECT id, workspace_id, token_encrypted, user_token_encrypted, external_id, source_id FROM channels WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT 1',
     [platform, externalId],
   );
-  return (rows[0] as { id: string; workspace_id: string; token_encrypted: string | null; external_id: string; source_id: string | null } | undefined) ?? null;
+  return (rows[0] as { id: string; workspace_id: string; token_encrypted: string | null; user_token_encrypted: string | null; external_id: string; source_id: string | null } | undefined) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -261,14 +261,29 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
 
       const customer = await findOrCreateCustomer(channel.workspace_id, platform, sender.id);
       // First sight of this sender: fetch the real name + photo from
-      // Graph with the Page token (best-effort — a failed fetch never
-      // blocks the message or the AI reply).
-      if (channel.token_encrypted) {
+      // Graph (best-effort — a failed fetch never blocks the message
+      // or the AI reply). Page token first; the connecting user's token
+      // (migration 20) is retried when the Page token cannot load the
+      // sender, and /me/picture is tried for the marked owner.
+      if (channel.token_encrypted || channel.user_token_encrypted) {
         let pageToken: string | null = null;
         try {
-          pageToken = decryptToken(channel.token_encrypted);
+          pageToken = channel.token_encrypted ? decryptToken(channel.token_encrypted) : null;
         } catch {
           pageToken = null;
+        }
+        let userToken: string | null = null;
+        try {
+          userToken = channel.user_token_encrypted ? decryptToken(channel.user_token_encrypted) : null;
+        } catch {
+          userToken = null;
+        }
+        // The owner-photo route only matters when the sender still has
+        // no photo and a user token exists — fetch the marked owner
+        // PSID only then, never on every message.
+        let ownerPsid: string | null = null;
+        if (userToken && !customer.picture_url && customer.picture_source !== 'manual') {
+          ownerPsid = await getWorkspaceOwnerPsid(channel.workspace_id).catch(() => null);
         }
         await enrichCustomerProfileIfNeeded({
           workspaceId: channel.workspace_id,
@@ -281,6 +296,8 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
           // by the Meta refresh — see meta-profile.ts.
           customerPictureSource: customer.picture_source,
           pageToken,
+          userToken,
+          ownerPsid,
           // Messenger: external_id IS the Page ID. Instagram: the Page ID
           // lives in source_id (external_id is the IG user ID). The Page
           // ID powers the conversations-endpoint profile fallback.

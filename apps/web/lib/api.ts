@@ -738,53 +738,6 @@ export const customersApi = {
   get: (id: string) => api.get<CustomerDetail>(`/api/customers/${id}`),
   merge: (keepCustomerId: string, mergeCustomerId: string) =>
     api.post<{ customer: Customer } | Customer>("/api/customers/merge", { keepCustomerId, mergeCustomerId }),
-  /** Set a customer's photo (an already-uploaded URL, or a base64 file). Manual photos are never overwritten by Meta. */
-  setPhoto: async (
-    id: string,
-    body: { url: string } | { fileBase64: string; fileName?: string; mimeType?: string }
-  ) => {
-    const data = await api.post<{ customer: Customer }>(`/api/customers/${id}/photo`, body);
-    return data.customer;
-  },
-  /** Remove a customer's photo (back to the initials avatar; Meta may fill one again later). */
-  deletePhoto: async (id: string) => {
-    const data = await api.del<{ customer: Customer }>(`/api/customers/${id}/photo`);
-    return data.customer;
-  },
-  /**
-   * Upload one photo file for a customer. Preferred path: direct
-   * browser→Vercel Blob upload (bypasses the API 4.5 MB body cap), then
-   * register the Blob URL. If Blob is unavailable (local dev / no Blob
-   * token), falls back to a base64 upload through the API. Returns the
-   * updated customer.
-   */
-  uploadPhoto: async (id: string, file: File) => {
-    let blobUrl: string | null = null;
-    try {
-      const { upload } = await import("@vercel/blob/client");
-      const token = getToken();
-      const blob = await upload(file.name, file, {
-        access: "public",
-        handleUploadUrl: `${API_URL}/api/customers/upload-token`,
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
-      blobUrl = blob.url;
-    } catch {
-      // Blob unavailable (no Blob token locally) — fall through to base64.
-    }
-    if (blobUrl) return await customersApi.setPhoto(id, { url: blobUrl });
-    const dataUrl = await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(String(reader.result));
-      reader.onerror = () => reject(new Error("Could not read the file."));
-      reader.readAsDataURL(file);
-    });
-    return await customersApi.setPhoto(id, {
-      fileBase64: dataUrl,
-      fileName: file.name,
-      mimeType: file.type,
-    });
-  },
 };
 
 export interface CarouselCard {

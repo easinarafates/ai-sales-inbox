@@ -1,0 +1,22 @@
+-- 20-user-token.sql — store the connecting Facebook user's long-lived
+-- access token (encrypted) + their app-scoped user ID on the channel row.
+--
+-- Why: the Page token cannot load some senders' profiles at all. For a
+-- phone-number-registered sender Meta returns 400 GraphMethodException
+-- #100/33 on EVERY PSID route with the Page token (direct read,
+-- /{psid}/picture, /{psid}/ids_for_apps, conversations participants
+-- picture). The Page admin's own USER token is a different credential:
+-- it may return the profile data the Page token cannot, and
+-- /me/picture gives the Page owner's own photo directly.
+--
+-- The user token is only stored when a Page is (re)connected via Login
+-- with Facebook (see meta-oauth.ts createOAuthChannel). Existing rows
+-- stay NULL until the next reconnect — no backfill is possible, because
+-- the token only exists during the OAuth callback. Long-lived user
+-- tokens last ~60 days; when one expires the profile fetch simply
+-- falls back to the Page-token paths (best-effort, never breaking).
+-- connected_by_user_id is the connector's app-scoped user ID (/me at
+-- connect time). It is stored for future matching; the owner-photo
+-- route uses the workspace's owner_psid instead (see meta-profile.ts).
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS user_token_encrypted TEXT;
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS connected_by_user_id TEXT;

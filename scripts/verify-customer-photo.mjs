@@ -24,6 +24,10 @@
  *   upload-token without a Blob token 503.
  * - Merge preserves photos: the kept customer's photo wins; a kept
  *   customer with no photo inherits the merged customer's photo.
+ * - User-token fallbacks (migration 20): the probe script
+ *   scripts/verify-user-token-photo.ts runs here too — the same routes
+ *   retried with the Page admin's USER token, plus the owner
+ *   /me/picture route. Its PASS/FAIL lines are folded into this count.
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
  * NOTE: uses only test data in a fresh workspace; nothing is sent to Meta.
  */
@@ -137,19 +141,23 @@ async function main() {
   check('inbox detail returns picture_source', inboxApiSrc.includes('picture_url, picture_source, channel_identities'));
 
   const webApiSrc = fs.readFileSync(path.join(ROOT, 'apps/web/lib/api.ts'), 'utf8');
-  check('web customersApi has uploadPhoto/setPhoto/deletePhoto', webApiSrc.includes('uploadPhoto') && webApiSrc.includes('setPhoto') && webApiSrc.includes('deletePhoto'));
+  // Manual upload was REJECTED by the user (2026-11-07): the web photo
+  // helpers and photo labels must be gone from the shipped UI.
+  check('web customersApi has NO photo helpers (manual upload removed)', !webApiSrc.includes('uploadPhoto') && !webApiSrc.includes('setPhoto') && !webApiSrc.includes('deletePhoto'));
 
   const pageSrc = fs.readFileSync(path.join(ROOT, 'apps/web/app/inbox/page.tsx'), 'utf8');
-  check('inbox page has a photo upload control (picker + preview + save)', pageSrc.includes('photoInputRef') && pageSrc.includes('photoPreview') && pageSrc.includes('savePhoto'));
-  check('inbox page has a remove-photo control', pageSrc.includes('removePhoto') && pageSrc.includes('inbox.removePhoto'));
-  check('inbox page shows the manual photo immediately (refresh after save)', pageSrc.includes('await customersApi.uploadPhoto') && pageSrc.includes('await refreshThread()'));
+  // The user REJECTED manual photo upload (2026-11-07): the Inbox must
+  // NOT offer any photo picker/save/remove control. The backend photo
+  // endpoints still exist (already deployed) but are unreachable from
+  // the UI. These checks assert the UI is gone.
+  check('inbox page has NO manual photo upload control', !pageSrc.includes('photoInputRef') && !pageSrc.includes('savePhoto') && !pageSrc.includes('removePhoto') && !pageSrc.includes('uploadPhoto'));
   check('inbox page shows a source badge (MESSENGER/INSTAGRAM/WHATSAPP/…) from the channel platform', pageSrc.includes('ChannelBadge') && pageSrc.includes('MESSENGER') && pageSrc.includes('INSTAGRAM') && pageSrc.includes('WHATSAPP') && pageSrc.includes('TIKTOK'));
   check('source badge is next to the name in the list and in the thread header', pageSrc.includes('<ChannelBadge conversation={c} />') && pageSrc.includes('<ChannelBadge conversation={selected.conversation} />'));
   check("customer photo shows next to the customer's messages", pageSrc.includes('sizeClass="h-8 w-8"') && pageSrc.includes('!isMe && !isAi'));
   check('meta-profile documents the /picture probe (400/33 — not wired in)', profileSrc.includes('/picture?redirect=false') && profileSrc.includes('100/33'));
 
   const dictSrc = fs.readFileSync(path.join(ROOT, 'apps/web/lib/i18n-dict.ts'), 'utf8');
-  check('i18n has inbox photo keys (EN + BN)', dictSrc.includes('inbox.changePhoto') && dictSrc.includes('ছবি বদলান'));
+  check('i18n has NO inbox photo keys (manual upload removed)', !dictSrc.includes('inbox.changePhoto') && !dictSrc.includes('inbox.addPhoto') && !dictSrc.includes('ছবি বদলান'));
 
   // ---------- Stub Graph server ----------
   const graphStub = http.createServer((req, res) => {
@@ -447,6 +455,24 @@ async function main() {
       merge2.status === 200 && merge2.data?.customer?.picture_url === 'https://example.com/meta.jpg' && merge2.data?.customer?.picture_source === 'meta',
       `status=${merge2.status}`,
     );
+
+    // User-token fallbacks (migration 20): run the standalone probe
+    // script and fold its PASS/FAIL lines into this verifier's count.
+    // It uses its own stub Graph (port 4021) + throwaway PGlite DB, so
+    // it never touches this verifier's API.
+    const probeOut = await new Promise((resolve) => {
+      const tsxBin = path.join(ROOT, 'apps/api/node_modules/.bin/tsx');
+      const proc = spawn(tsxBin, ['scripts/verify-user-token-photo.ts'], { cwd: ROOT });
+      let out = '';
+      proc.stdout.on('data', (d) => { out += d.toString(); });
+      proc.stderr.on('data', (d) => { out += d.toString(); });
+      proc.on('close', () => resolve(out));
+    });
+    for (const line of probeOut.split('\n')) {
+      const m = line.match(/^(PASS|FAIL)\s+(.+?)(?: — (.*))?$/);
+      if (!m) continue;
+      check(`user-token probe: ${m[2]}`, m[1] === 'PASS', m[3] ?? '');
+    }
 
     const failed = results.filter((r) => !r.ok);
     console.log(`\n${results.length - failed.length}/${results.length} checks passed.`);

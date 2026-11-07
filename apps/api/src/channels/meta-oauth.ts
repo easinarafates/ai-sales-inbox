@@ -217,6 +217,26 @@ export async function fetchMeName(longLivedToken: string): Promise<string> {
   }
 }
 
+/**
+ * The connecting Facebook user's app-scoped ID (/me?fields=id). Stored
+ * on the channel row as connected_by_user_id (migration 20) for future
+ * matching. Never throws: on any failure it returns '' and the flow
+ * continues without the ID (the user token is still stored).
+ */
+export async function fetchMeId(longLivedToken: string): Promise<string> {
+  try {
+    const res = await fetchWithTimeout(`${GRAPH_BASE}/me?fields=id`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${longLivedToken}` },
+    });
+    const data = (await res.json().catch(() => null)) as { id?: string } | null;
+    if (!res.ok || typeof data?.id !== 'string') return '';
+    return data.id;
+  } catch {
+    return '';
+  }
+}
+
 export async function fetchPages(longLivedToken: string): Promise<FbPickPage[]> {
   const url = new URL(`${GRAPH_BASE}/me/accounts`);
   url.searchParams.set('fields', 'id,name,category,picture{url},access_token');
@@ -330,6 +350,16 @@ export async function createOAuthChannel(
     pictureUrl?: string | null;
     sourceId?: string | null;
     duplicateMessage: string;
+    /**
+     * The connecting Facebook user's long-lived access token + app-scoped
+     * user ID (migration 20). Stored encrypted on the channel row so the
+     * profile fetch can retry with the USER token when the Page token
+     * cannot load a sender (phone-registered accounts: Graph 400 #100/33
+     * on every PSID route). Absent for flows that have no user token
+     * (e.g. WhatsApp stores its user token as the channel token itself).
+     */
+    userToken?: string | null;
+    connectedByUserId?: string | null;
   },
 ): Promise<CreateResult> {
   const dupe = await query(
@@ -345,10 +375,12 @@ export async function createOAuthChannel(
     return { ok: false, reason: 'limit', message: limit.message };
   }
   const expiresAt = new Date(Date.now() + PAGE_TOKEN_TTL_MS).toISOString();
+  const userTokenEncrypted = input.userToken ? encryptToken(input.userToken) : null;
+  const connectedByUserId = input.connectedByUserId || null;
   const { rows } = await query<ChannelRow>(
     workspaceId,
-    `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id)
-     VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8)
+    `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id)
+     VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8, $9, $10)
      RETURNING id, platform, external_id, display_name, status, token_expires_at, picture_url, source_id, created_at`,
     [
       workspaceId,
@@ -359,6 +391,8 @@ export async function createOAuthChannel(
       expiresAt,
       input.pictureUrl || null,
       input.sourceId || null,
+      userTokenEncrypted,
+      connectedByUserId,
     ],
   );
   if (rows.length === 0) {
@@ -393,8 +427,8 @@ export async function createOAuthChannel(
       if (existing.rows.length === 0) {
         await query(
           workspaceId,
-          `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id)
-           VALUES ($1, 'facebook_comment', $2, $3, $4, 'connected', $5, $6, $7)`,
+          `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id)
+           VALUES ($1, 'facebook_comment', $2, $3, $4, 'connected', $5, $6, $7, $8, $9)`,
           [
             workspaceId,
             input.externalId,
@@ -403,6 +437,8 @@ export async function createOAuthChannel(
             expiresAt,
             input.pictureUrl || null,
             input.sourceId || null,
+            userTokenEncrypted,
+            connectedByUserId,
           ],
         );
       }
