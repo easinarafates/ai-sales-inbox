@@ -396,6 +396,25 @@ function demoKeywords(text: string): string[] {
 
 const ORDER_INTENT = /অর্ডার|নিতে চাই|কিনতে চাই|অর্ডার করতে|অর্ডার দিতে|অর্ডার করব|order/i;
 
+// Bengali words customers use for common products, mapped to the English
+// names shops usually store (products are often named "Shirt"/"Jeans" while
+// customers ask "শার্ট"/"জিন্স"). Without this, demo mode — the fallback
+// when every provider is down — answers "I don't have the answer" for a
+// product that IS in the catalog. Matching is substring-based, so Bengali
+// inflections ("শার্টের", "জিন্সের") still match. A broad word like "শার্ট"
+// may match both "Shirt" and "T-shirt"; then the reply lists both with
+// their real prices and asks the customer to pick — never a guessed price.
+const BENGALI_PRODUCT_ALIASES: [bengali: string, english: string][] = [
+  ['জিন্স', 'jeans'],
+  ['জিনস', 'jeans'],
+  ['শার্ট', 'shirt'],
+  ['টিশার্ট', 't-shirt'],
+  ['প্যান্ট', 'pants'],
+  ['শাড়ি', 'saree'],
+  ['পাঞ্জাবি', 'panjabi'],
+  ['কুর্তি', 'kurti'],
+];
+
 interface DemoProduct {
   id: string;
   name: string;
@@ -418,11 +437,16 @@ async function runDemoReply(
 
   // Match products by keyword (Bengali inflections included: "শাড়ির"
   // contains "শাড়ি"). Data comes from the DB rows, never invented.
-  const matched = products.filter((p) =>
-    keywords.some(
-      (kw) => p.name.includes(kw) || kw.includes(p.name) || p.name.includes(kw.slice(0, 4)),
-    ),
-  );
+  // Also matches via BENGALI_PRODUCT_ALIASES: a customer asking "শার্টের
+  // দাম কত?" must find the product stored as "Shirt".
+  const matched = products.filter((p) => {
+    const nameLower = p.name.toLowerCase();
+    return keywords.some((kw) => {
+      const kwLower = kw.toLowerCase();
+      if (nameLower.includes(kwLower) || kwLower.includes(nameLower) || nameLower.includes(kwLower.slice(0, 4))) return true;
+      return BENGALI_PRODUCT_ALIASES.some(([bn, en]) => kwLower.includes(bn) && nameLower.includes(en));
+    });
+  });
 
   let reply: string;
   let confidence = 0.9;
