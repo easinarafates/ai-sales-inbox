@@ -8,12 +8,15 @@ import { recordAttributionForPlatformPost } from '../analytics/attribution';
 import { enrichCustomerProfileIfNeeded } from '../channels/meta-profile';
 import { inferGenderFromName } from '../customers/gender';
 import { decryptToken } from '../db/crypto';
-import { sendMarkSeen } from '../channels/meta-send';
+import { sendMarkSeen, sendMetaTextMessage } from '../channels/meta-send';
 import {
   applyDotCommand,
   getWorkspaceOwnerPsid,
+  MODE_CONFIRMATIONS,
   parseDotCommand,
   sendModeConfirmation,
+  setWorkspaceAiMode,
+  toggleWorkspaceAiMode,
 } from '../inbox/dot-commands';
 
 export const webhooksRouter = Router();
@@ -262,6 +265,45 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       const eventId = message.mid ?? `${sender.id}-${Date.now()}`;
       if (!(await recordWebhookEvent(channel.workspace_id, platform, eventId, event))) continue; // duplicate
 
+      // --- Owner guard: the shop owner messaging his own Page ---
+      // The owner (workspaces.owner_psid) is NEVER a customer: his
+      // messages must never create a customer or conversation and must
+      // never get an AI reply — that is how a chat opened in the name
+      // "ইয়াসিন আরাফাত". His dot commands still work, but with no
+      // conversation to toggle they flip the workspace-wide AI switch
+      // (workspaces.ai_enabled) and the confirmation goes to him as a
+      // direct Page message. Anything else from him is ignored silently.
+      const ownerPsid = await getWorkspaceOwnerPsid(channel.workspace_id);
+      if (ownerPsid && ownerPsid === sender.id) {
+        const ownerCmd = parseDotCommand(message.text);
+        if (ownerCmd) {
+          const enabled =
+            ownerCmd === 'toggle'
+              ? await toggleWorkspaceAiMode(channel.workspace_id)
+              : await setWorkspaceAiMode(channel.workspace_id, ownerCmd === 'on');
+          if (enabled !== null && channel.token_encrypted) {
+            let ownerToken: string | null = null;
+            try {
+              ownerToken = decryptToken(channel.token_encrypted);
+            } catch {
+              ownerToken = null;
+            }
+            if (ownerToken) {
+              await sendMetaTextMessage({
+                platform: platform as 'messenger' | 'instagram',
+                nodeId: channel.external_id,
+                pageToken: ownerToken,
+                recipientId: sender.id,
+                text: MODE_CONFIRMATIONS[enabled ? 'ai' : 'human'],
+              }).catch((err) =>
+                console.error('[webhook/meta] owner confirmation failed:', (err as Error).message),
+              );
+            }
+          }
+        }
+        continue;
+      }
+
       // --- Seen FIRST: the customer sees the Page read their message ---
       // A real Graph read receipt (POST /{page-id}/messages
       // {recipient, sender_action:'mark_seen'}), fired immediately —
@@ -294,23 +336,17 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
         }
       }
 
-      // --- Dot commands from a personal account ---
-      // Only the sender the workspace marked as its owner may toggle
-      // the AI this way. A random customer typing '.' is ignored
-      // silently: the message is saved so the owner can see it, but it
-      // is never enqueued for an AI reply and never toggles anything —
-      // the customer is never told the command exists.
+      // --- Dot commands from a customer ---
+      // Only the owner may toggle the AI this way, and the owner guard
+      // above already handled his messages — a customer typing '.' is
+      // ignored silently: the message is saved so the owner can see it,
+      // but it is never enqueued for an AI reply and never toggles
+      // anything — the customer is never told the command exists.
       const dotCmd = parseDotCommand(message.text);
       if (dotCmd) {
-        const ownerPsid = await getWorkspaceOwnerPsid(channel.workspace_id);
         const customer = await findOrCreateCustomer(channel.workspace_id, platform, sender.id);
         const conversationId = await findOrCreateConversation(channel.workspace_id, channel.id, customer.id);
-        if (ownerPsid && ownerPsid === sender.id) {
-          const newMode = await applyDotCommand(channel.workspace_id, conversationId, dotCmd);
-          if (newMode) await sendModeConfirmation(channel.workspace_id, conversationId, newMode);
-        } else {
-          await saveIncomingMessage(channel.workspace_id, conversationId, message.text, message.mid);
-        }
+        await saveIncomingMessage(channel.workspace_id, conversationId, message.text, message.mid);
         continue;
       }
 
@@ -390,6 +426,10 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       // before the comments table, so it can never trigger an AI reply
       // to the Page's own words.
       if (senderId === pageId) continue;
+      // The owner commenting on his own Page's post is not a customer
+      // either — skip, like the Page's own comments above.
+      const commentOwnerPsid = await getWorkspaceOwnerPsid(channel.workspace_id);
+      if (commentOwnerPsid && senderId === commentOwnerPsid) continue;
       if (!(await recordWebhookEvent(channel.workspace_id, 'facebook_comment', commentId, value))) continue;
       await query(
         channel.workspace_id,

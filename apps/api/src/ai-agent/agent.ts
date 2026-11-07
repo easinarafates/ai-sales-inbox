@@ -49,8 +49,15 @@ import {
   type WorkspaceAiChoice,
 } from './providers';
 import { computeAiCostPaisa } from './pricing';
-import { deliverOutgoingMessage, type DeliveryResult } from '../channels/meta-send';
+import { deliverOutgoingMessage, deliverOutgoingImageMessage, type DeliveryResult } from '../channels/meta-send';
 import { detectAnger, detectOffTopic, escalateConversation, isCantAnswerReply } from '../inbox/escalation';
+import {
+  BENGALI_PRODUCT_ALIASES,
+  detectFastReplyQuestion,
+  detectProductListRequest,
+  looksLikeShowRequest,
+  matchShowProduct,
+} from './detect-intent';
 
 /** Flat MVP estimate per AI reply (paisa). Real per-token pricing plugs in here later. Must stay under the 20-paisa gate. */
 const AI_REPLY_COST_PAISA = 10;
@@ -208,6 +215,41 @@ function deterministicProductReply(
   results: { tool: string; result: unknown }[],
   gender: CustomerGender = 'unknown',
 ): string | null {
+  // Photos already sent (send_product_photos): the customer has the
+  // pictures — never list the products again in text. One photo → its
+  // details; several → just ask which one they like.
+  const photoSent: { name: string; pricePaisa: number; stock: number; description: string | null }[] = [];
+  for (const { tool, result } of results) {
+    if (tool !== 'send_product_photos') continue;
+    const r = result as { sent?: unknown } | null;
+    if (!r || !Array.isArray(r.sent)) continue;
+    for (const s of r.sent as Record<string, unknown>[]) {
+      if (s && typeof s.name === 'string' && typeof s.pricePaisa === 'number') {
+        photoSent.push({
+          name: s.name,
+          pricePaisa: Number(s.pricePaisa),
+          stock: Number((s.stock as number | undefined) ?? 0),
+          description: typeof s.description === 'string' ? (s.description as string) : null,
+        });
+      }
+    }
+  }
+  if (photoSent.length === 1) {
+    const p = photoSent[0];
+    const body =
+      `${p.name}\nদাম: ৳${p.pricePaisa / 100}\nস্টক: ${p.stock > 0 ? `${p.stock}টি আছে ✅` : 'শেষ হয়ে গেছে ❌'}` +
+      (p.description ? `\n${p.description}` : '') +
+      '\nঅর্ডার করতে চাইলে নাম, ফোন নম্বর ও ঠিকানা জানান।';
+    if (gender === 'male') return `স্যার, ${body}\nধন্যবাদ, স্যার।`;
+    if (gender === 'female') return `ম্যাডাম, ${body}\nধন্যবাদ, ম্যাডাম।`;
+    return `${body}\nধন্যবাদ।`;
+  }
+  if (photoSent.length > 1) {
+    const q = 'আমাদের এই প্রোডাক্টগুলো আছে — আপনি কোন প্রোডাক্টে আগ্রহী? নামটা লিখে জানান।';
+    if (gender === 'male') return `স্যার, ${q}\nধন্যবাদ, স্যার।`;
+    if (gender === 'female') return `ম্যাডাম, ${q}\nধন্যবাদ, ম্যাডাম।`;
+    return `${q}\nধন্যবাদ।`;
+  }
   const seen = new Map<string, { name: string; price: number; stock: number }>();
   for (const { tool, result } of results) {
     const r = result as Record<string, unknown> | null;
@@ -410,24 +452,8 @@ function demoKeywords(text: string): string[] {
 
 const ORDER_INTENT = /অর্ডার|নিতে চাই|কিনতে চাই|অর্ডার করতে|অর্ডার দিতে|অর্ডার করব|order/i;
 
-// Bengali words customers use for common products, mapped to the English
-// names shops usually store (products are often named "Shirt"/"Jeans" while
-// customers ask "শার্ট"/"জিন্স"). Without this, demo mode — the fallback
-// when every provider is down — answers "I don't have the answer" for a
-// product that IS in the catalog. Matching is substring-based, so Bengali
-// inflections ("শার্টের", "জিন্সের") still match. A broad word like "শার্ট"
-// may match both "Shirt" and "T-shirt"; then the reply lists both with
-// their real prices and asks the customer to pick — never a guessed price.
-const BENGALI_PRODUCT_ALIASES: [bengali: string, english: string][] = [
-  ['জিন্স', 'jeans'],
-  ['জিনস', 'jeans'],
-  ['শার্ট', 'shirt'],
-  ['টিশার্ট', 't-shirt'],
-  ['প্যান্ট', 'pants'],
-  ['শাড়ি', 'saree'],
-  ['পাঞ্জাবি', 'panjabi'],
-  ['কুর্তি', 'kurti'],
-];
+// (Bengali product aliases live in ai-agent/detect-intent.ts and are
+// imported above — the demo matcher and the photo flows share them.)
 
 interface DemoProduct {
   id: string;
@@ -706,6 +732,100 @@ export async function processBatch(
       reason: `সাবস্ক্রিপশন বন্ধ — AI উত্তর দেয়নি: ${allowance.reasonBn} (প্ল্যান নবায়ন করতে হবে।)`,
     });
     return { replied: false, reason: 'subscription_blocked', confidence: 0 };
+  }
+
+  // --- Deterministic replies that need NO AI call (no AI credit) ---
+  // They run after the subscription gate (an expired plan still gets
+  // the upgrade notice above, never photos) but before the provider
+  // call. A sent reply is still charged the normal reply cost (0 when
+  // included in the plan, else the flat overage) — the same rule as any
+  // other reply; the saving is the AI provider cost, which is 0 here.
+  const replyGender: CustomerGender = normalizeCustomerGender(customer?.gender);
+  const chargeDeterministic = async (): Promise<number> => {
+    const charged = await chargeForReply(
+      workspaceId, conversationId, 0, 0, allowance.costPaisa, 'deterministic', allowance.mode === 'included',
+    );
+    return charged ? allowance.costPaisa : 0;
+  };
+
+  // "Why do you reply so fast?" — deflect as a human shop assistant.
+  // NEVER "আমি AI বলে দ্রুত উত্তর দিই". Not off-topic, not escalated.
+  if (detectFastReplyQuestion(batchedText)) {
+    const sal = genderSalutation(replyGender);
+    const deflection = sal
+      ? `${sal}, আপনার সেবা দেওয়ার জন্য আমরা সবসময় দ্রুত উত্তর দেওয়ার চেষ্টা করি।`
+      : 'আপনার সেবা দেওয়ার জন্য আমরা সবসময় দ্রুত উত্তর দেওয়ার চেষ্টা করি।';
+    const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, deflection);
+    if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.7 };
+    const cost = await chargeDeterministic();
+    return { replied: true, reason: 'deflected_fast_reply', confidence: 0.9, costPaisa: cost };
+  }
+
+  // Product photos — one image message per product, name + price below
+  // each, then the interest question. Only when EVERY product has a
+  // photo; otherwise fall through to the LLM (which has the
+  // send_product_photos tool and mentions photo-less products in text).
+  // The product query runs only when the text might be a list or show
+  // request, so ordinary questions pay no extra round-trip.
+  if (detectProductListRequest(batchedText) || looksLikeShowRequest(batchedText)) {
+    const { rows: photoProducts } = await query<{
+      id: string; name: string; price_paisa: number; stock: number; description: string | null; image_url: string | null;
+    }>(
+      workspaceId,
+      `SELECT p.id, p.name, p.price_paisa, p.stock, p.description,
+              (SELECT pi.url FROM product_images pi WHERE pi.workspace_id = $1 AND pi.product_id = p.id ORDER BY pi.created_at ASC LIMIT 1) AS image_url
+       FROM products p WHERE p.workspace_id = $1 ORDER BY p.created_at ASC`,
+      [workspaceId],
+    );
+
+    if (detectProductListRequest(batchedText) && photoProducts.length > 0 && photoProducts.every((p) => p.image_url)) {
+      let allSent = true;
+      for (const p of photoProducts) {
+        const img = await deliverOutgoingImageMessage(workspaceId, conversationId, p.image_url as string);
+        if (!img.sent) { allSent = false; break; }
+        const cap = await sendChannelMessage(
+          workspaceId, conversationId, channel?.platform ?? null,
+          `${p.name} — দাম ${taka(Number(p.price_paisa))}`,
+        );
+        if (!cap.sent) { allSent = false; break; }
+      }
+      if (allSent) {
+        const sal = genderSalutation(replyGender);
+        const q = sal
+          ? `${sal}, আমাদের এই প্রোডাক্টগুলো আছে — আপনি কোন প্রোডাক্টে আগ্রহী? নামটা লিখে জানান।`
+          : 'আমাদের এই প্রোডাক্টগুলো আছে — আপনি কোন প্রোডাক্টে আগ্রহী? নামটা লিখে জানান।';
+        const qsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, q);
+        if (qsent.sent) {
+          const cost = await chargeDeterministic();
+          return { replied: true, reason: 'product_photos_sent', confidence: 0.95, costPaisa: cost };
+        }
+      }
+      // A photo or caption failed — fall through to the LLM path, which
+      // answers in text (photos already sent stay sent).
+    }
+
+    // Single product: "জিন্সটা দেখাও" → its photo + details + price.
+    const showProduct = matchShowProduct(batchedText, photoProducts);
+    if (showProduct) {
+      const p = photoProducts.find((x) => x.id === showProduct.id);
+      if (p?.image_url) {
+        const img = await deliverOutgoingImageMessage(workspaceId, conversationId, p.image_url);
+        if (img.sent) {
+          const sal = genderSalutation(replyGender);
+          const details =
+            `${p.name}\nদাম: ${taka(Number(p.price_paisa))}\nস্টক: ${Number(p.stock) > 0 ? `${Number(p.stock)}টি আছে ✅` : 'শেষ হয়ে গেছে ❌'}` +
+            (p.description ? `\n${p.description}` : '') +
+            '\nঅর্ডার করতে চাইলে নাম, ফোন নম্বর ও ঠিকানা জানান।';
+          const body = sal ? `${sal}, ${details}\nধন্যবাদ, ${sal}।` : `${details}\nধন্যবাদ।`;
+          const dsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, body);
+          if (dsent.sent) {
+            const cost = await chargeDeterministic();
+            return { replied: true, reason: 'product_photo_sent', confidence: 0.95, costPaisa: cost };
+          }
+        }
+      }
+      // No photo or the send failed — fall through to the LLM path.
+    }
   }
 
   const [{ rows: historyRows }, { rows: openOrders }, { rows: knowledge }, { rows: products }] = await Promise.all([

@@ -55,6 +55,15 @@ interface CustomerRow {
   updated_at: string;
 }
 
+/**
+ * GET /api/customers?q= — search by name or phone (empty q lists all).
+ * BUYERS ONLY: a customer appears here only if they have at least one
+ * order. People who only messaged (never ordered) — including the shop
+ * owner testing the page and the page itself — belong in the Inbox,
+ * not in the Customers list.
+ */
+const BUYERS_ONLY = `EXISTS (SELECT 1 FROM orders o WHERE o.workspace_id = customers.workspace_id AND o.customer_id = customers.id)`;
+
 /** GET /api/customers?q= — search by name or phone (empty q lists all). */
 customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -62,7 +71,7 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   if (!q) {
     const { rows } = await query<CustomerRow>(
       workspaceId,
-      'SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200',
+      `SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 AND ${BUYERS_ONLY} ORDER BY created_at DESC LIMIT 200`,
       [workspaceId],
     );
     res.json({ customers: rows });
@@ -72,7 +81,7 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   const { rows } = await query<CustomerRow>(
     workspaceId,
     `SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers
-     WHERE workspace_id = $1 AND (name ILIKE $2 OR phone ILIKE $2)
+     WHERE workspace_id = $1 AND ${BUYERS_ONLY} AND (name ILIKE $2 OR phone ILIKE $2)
      ORDER BY created_at DESC LIMIT 200`,
     [workspaceId, like],
   );

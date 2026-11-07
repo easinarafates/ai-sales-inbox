@@ -94,6 +94,36 @@ export async function applyDotCommand(
 }
 
 /**
+ * Workspace-level AI switch — the owner's global toggle from Messenger.
+ * When the owner messages "." from his personal account there is NO
+ * conversation to toggle (his messages must never create a customer or
+ * conversation — that is how a chat opened in the name "ইয়াসিন
+ * আরাফাত"), so the command flips workspaces.ai_enabled for the whole
+ * shop instead. processBatch already stops all AI replies when
+ * ai_enabled is false. Returns the new state, or null when the
+ * workspace does not exist.
+ */
+export async function setWorkspaceAiMode(workspaceId: string, enabled: boolean): Promise<boolean | null> {
+  const { rows } = await query<{ ai_enabled: boolean }>(
+    workspaceId,
+    'UPDATE workspaces SET ai_enabled = $1, updated_at = now() WHERE id = $2 RETURNING ai_enabled',
+    [enabled, workspaceId],
+  );
+  return rows[0] ? Boolean(rows[0].ai_enabled) : null;
+}
+
+/** Flip the workspace-level AI switch. Returns the new state. */
+export async function toggleWorkspaceAiMode(workspaceId: string): Promise<boolean | null> {
+  const row = await queryOne<{ ai_enabled: boolean }>(
+    workspaceId,
+    'SELECT ai_enabled FROM workspaces WHERE id = $1',
+    [workspaceId],
+  );
+  if (!row) return null;
+  return setWorkspaceAiMode(workspaceId, !row.ai_enabled);
+}
+
+/**
  * Send the short mode confirmation into the chat as the Page. Best
  * effort: a failed send (e.g. the 24h window closed) is logged, never
  * thrown — the toggle itself already happened.

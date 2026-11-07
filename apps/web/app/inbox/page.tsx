@@ -719,7 +719,12 @@ function InboxPage() {
                           />
                         )}
                         <div className={`max-w-[75%] rounded-xl px-3 py-2 text-sm shadow-sm ${isMe ? "bg-brand text-white" : isAi ? "bg-violet-100 text-violet-900" : "bg-slate-100"}`}>
-                          <p>{msgText(m)}</p>
+                          {(m as { type?: unknown }).type === "image" ? (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={msgText(m)} alt="প্রোডাক্টের ছবি" className="max-h-64 max-w-full rounded-lg object-cover" />
+                          ) : (
+                            <p>{msgText(m)}</p>
+                          )}
                           <p className={`mt-1 text-[11px] ${isMe ? "text-orange-100" : "text-slate-400"}`}>
                             {isAi ? t("inbox.ai", "AI", "AI") : isMe ? t("inbox.you", "You", "আপনি") : t("inbox.customer", "Customer", "কাস্টমার")} • {fmtDate(m.createdAt || m.created_at)}
                           </p>

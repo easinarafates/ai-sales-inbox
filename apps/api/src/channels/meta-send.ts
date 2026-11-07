@@ -376,6 +376,63 @@ export async function sendMetaTextMessage(input: {
   }
 }
 
+/**
+ * Send one image message via the Meta Graph API. Never throws — every
+ * failure is returned as { ok: false, error, code?, windowExpired? }.
+ * The Send API has no caption field for image attachments: the caller
+ * sends the image, then a separate text message with the name + price
+ * (see deliverOutgoingImageMessage's callers) — in the chat they appear
+ * as consecutive bubbles, photo with the details right below it.
+ */
+export async function sendMetaImageMessage(input: {
+  platform: 'messenger' | 'instagram';
+  /** Messenger: Page ID. Instagram: IG user ID (channel external_id). */
+  nodeId: string;
+  /** Page access token (Bearer). */
+  pageToken: string;
+  /** Messenger: customer PSID. Instagram: IG-scoped user ID. */
+  recipientId: string;
+  /** Publicly reachable image URL (Vercel Blob URLs are). */
+  imageUrl: string;
+}): Promise<MetaSendResult> {
+  const url = `${sendGraphBase()}/${encodeURIComponent(input.nodeId)}/messages`;
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${input.pageToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          recipient: { id: input.recipientId },
+          message: {
+            attachment: {
+              type: 'image',
+              payload: { url: input.imageUrl, is_reusable: true },
+            },
+          },
+        }),
+      },
+      15000,
+    );
+    const data = (await res.json().catch(() => null)) as {
+      message_id?: string;
+      recipient_id?: string;
+      error?: { message?: string; code?: number };
+    } | null;
+    if (res.ok && typeof data?.message_id === 'string') {
+      return { ok: true, messageId: data.message_id };
+    }
+    const code = data?.error?.code;
+    const message = data?.error?.message ?? `Meta Graph image send failed (HTTP ${res.status})`;
+    return { ok: false, error: message, code, windowExpired: code === 551 };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
 export type DeliveryStatus = 'sent' | 'failed' | 'local' | 'pending';
 
 export interface DeliveryResult {
@@ -553,6 +610,111 @@ export async function deliverOutgoingMessage(
   });
   if (!result.ok) {
     return fail(result.error ?? 'meta_send_failed', {
+      code: result.code,
+      windowExpired: result.windowExpired,
+    });
+  }
+  await mark('sent', result.messageId);
+  return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
+}
+
+/**
+ * Save an outgoing IMAGE message and deliver it for real — the photo leg
+ * of product cards. Mirrors deliverOutgoingMessage, with two differences:
+ *
+ * - The row is type='image' and its body IS the image URL, so the Inbox
+ *   thread can render it as a photo (web renders type='image' rows as
+ *   <img>). The name + price travel as a separate text message right
+ *   after (the Send API has no image caption) — callers send the pair.
+ * - facebook_comment cannot receive an image (a comment reply is text
+ *   only — the Graph comment endpoint takes no image URL), so it fails
+ *   honestly with send_not_supported_for_facebook_comment and the caller
+ *   falls back to a text reply. Never throws for a delivery failure.
+ */
+export async function deliverOutgoingImageMessage(
+  workspaceId: string,
+  conversationId: string,
+  imageUrl: string,
+  opts: { liveSend?: boolean } = {},
+): Promise<DeliveryResult> {
+  const url = imageUrl.trim();
+  const { rows } = await query<{ id: string }>(
+    workspaceId,
+    `INSERT INTO messages (workspace_id, conversation_id, direction, type, body, delivery_status)
+     VALUES ($1, $2, 'out', 'image', $3, 'pending') RETURNING id`,
+    [workspaceId, conversationId, url],
+  );
+  const messageId = rows[0]?.id ?? '';
+  const mark = async (delivery: DeliveryStatus, platformMessageId?: string, error?: string): Promise<void> => {
+    await query(
+      workspaceId,
+      `UPDATE messages SET delivery_status = $1,
+        platform_message_id = COALESCE($2, platform_message_id),
+        delivery_error = $3 WHERE workspace_id = $4 AND id = $5`,
+      [delivery, platformMessageId ?? null, error ? error.slice(0, 500) : null, workspaceId, messageId],
+    ).catch((err) => console.error('[meta-send] image delivery mark failed:', (err as Error).message));
+  };
+  const fail = async (error: string, extra: Partial<DeliveryResult> = {}): Promise<DeliveryResult> => {
+    await mark('failed', undefined, error);
+    return { sent: false, delivery: 'failed', messageId, error, ...extra };
+  };
+
+  if (opts.liveSend === false) {
+    await mark('local');
+    return { sent: true, delivery: 'local', messageId };
+  }
+
+  const conversation = await queryOne<{ channel_id: string | null; customer_id: string | null }>(
+    workspaceId,
+    'SELECT channel_id, customer_id FROM conversations WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, conversationId],
+  );
+  if (!conversation) return fail('conversation_not_found');
+  if (!conversation.channel_id) return fail('no_channel_connected');
+  const channel = await queryOne<ChannelRow>(
+    workspaceId,
+    'SELECT id, platform, external_id, token_encrypted, source_id FROM channels WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, conversation.channel_id],
+  );
+  if (!channel) return fail('no_channel_connected');
+
+  if (channel.platform === 'webchat') {
+    await mark('local');
+    return { sent: true, delivery: 'local', messageId };
+  }
+  if (channel.platform === 'facebook_comment') {
+    return fail('image_send_not_supported_for_facebook_comment');
+  }
+  if (channel.platform !== 'messenger' && channel.platform !== 'instagram') {
+    return fail(`send_not_supported_for_${channel.platform}`);
+  }
+  if (!channel.token_encrypted) {
+    return fail('no_page_token');
+  }
+  const customer = conversation.customer_id
+    ? await queryOne<{ channel_identities: unknown }>(
+        workspaceId,
+        'SELECT channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+        [workspaceId, conversation.customer_id],
+      )
+    : null;
+  const recipientId = recipientForPlatform(customer?.channel_identities, channel.platform);
+  if (!recipientId) return fail('no_recipient');
+  let pageToken: string;
+  try {
+    pageToken = decryptToken(channel.token_encrypted);
+  } catch {
+    return fail('token_decrypt_failed');
+  }
+  const result = await sendMetaImageMessage({
+    platform: channel.platform,
+    nodeId: channel.external_id,
+    pageToken,
+    recipientId,
+    imageUrl: url,
+  });
+  if (!result.ok) {
+    return fail(result.error ?? 'meta_image_send_failed', {
       code: result.code,
       windowExpired: result.windowExpired,
     });

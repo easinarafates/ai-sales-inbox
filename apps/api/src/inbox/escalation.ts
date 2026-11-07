@@ -124,7 +124,8 @@ const BENGALI_OFF_TOPIC_PHRASES = [
   'তোমার বাড়ি', 'আপনার বাড়ি',
   'তুমি কি বিয়ে', 'বিয়ে করেছ', 'তোমার বউ', 'আপনার বউ',
   'তোমার স্বামী', 'আপনার স্বামী',
-  'তুমি কি মানুষ', 'তুমি কি রোবট', 'তুমি কি এআই',
+  'তুমি কি মানুষ', 'তুমি কি রোবট', 'তুমি কি এআই', 'তুমি কি ai', 'তুমি কি বট',
+  'আপনি কি রোবট', 'আপনি কি এআই', 'আপনি কি ai',
   // Unrelated topics.
   'আবহাওয়া', 'তাপমাত্রা',
   'ক্রিকেট', 'ফুটবল', 'খেলার খবর', 'খেলার ফলাফল',
@@ -153,7 +154,7 @@ const ENGLISH_OFF_TOPIC_PHRASES = [
   'where do you live',
   'are you married', 'do you have a boyfriend', 'do you have a girlfriend',
   'your husband', 'your wife',
-  'are you human', 'are you a robot', 'are you a bot',
+  'are you human', 'are you a robot', 'are you a bot', 'are you a chatbot',
   'are you ai', 'are you an ai', 'are you real',
   'tell me a joke', 'sing a song', 'sing me a song',
   'what is the weather', "what's the weather", 'whats the weather',

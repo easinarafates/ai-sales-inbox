@@ -9,6 +9,7 @@ import { resolveOrderContact } from '../orders/contact';
 import { decrementStockForOrderItems } from '../products/stock';
 import { matchProductByImage } from './tools-image-match';
 import { linkOrderToAttribution } from '../analytics/attribution';
+import { deliverOutgoingImageMessage } from '../channels/meta-send';
 
 export interface ToolDb {
   query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<{ rows: T[]; rowCount: number }>;
@@ -56,6 +57,60 @@ const sendProductCards: ToolFn = async (db, workspaceId, args) => {
       description: p.description,
     })),
   };
+};
+
+/**
+ * 2b. REALLY send product photos — one image message per product, via the
+ * real Graph send (deliverOutgoingImageMessage). The photo comes ONLY
+ * from product_images (the product's own uploaded photos) — never a
+ * placeholder. Each sent entry carries pricePaisa so the agent's
+ * hallucination guard accepts the price in the follow-up text. A
+ * product with no photo, or a channel that cannot receive images
+ * (facebook_comment), lands in `failed` with the reason — the agent
+ * then falls back to a text reply for that product instead of
+ * pretending a photo went out. Needs conversationId (agent.ts injects
+ * it, like customerId).
+ */
+const sendProductPhotos: ToolFn = async (db, workspaceId, args) => {
+  const ids = Array.isArray(args.productIds) ? (args.productIds as unknown[]).filter((x): x is string => typeof x === 'string') : [];
+  if (ids.length === 0) return { error: 'send_product_photos needs productIds' };
+  const conversationId = asString(args.conversationId);
+  if (!conversationId) return { error: 'send_product_photos needs conversationId' };
+  const sent: Record<string, unknown>[] = [];
+  const failed: Record<string, unknown>[] = [];
+  for (const productId of ids) {
+    const { rows } = await db.query<{ id: string; name: string; price_paisa: number; stock: number; description: string | null; image_url: string | null }>(
+      `SELECT p.id, p.name, p.price_paisa, p.stock, p.description,
+              (SELECT pi.url FROM product_images pi WHERE pi.workspace_id = $1 AND pi.product_id = p.id ORDER BY pi.created_at ASC LIMIT 1) AS image_url
+       FROM products p WHERE p.workspace_id = $1 AND p.id = $2`,
+      [workspaceId, productId],
+    );
+    const product = rows[0];
+    if (!product) {
+      failed.push({ productId, error: 'Product not found' });
+      continue;
+    }
+    if (!product.image_url) {
+      failed.push({ productId, name: product.name, error: 'no_photo' });
+      continue;
+    }
+    const result = await deliverOutgoingImageMessage(workspaceId, conversationId, product.image_url);
+    if (!result.sent) {
+      failed.push({ productId, name: product.name, error: result.error ?? 'image_send_failed' });
+      continue;
+    }
+    sent.push({
+      productId: product.id,
+      name: product.name,
+      pricePaisa: Number(product.price_paisa),
+      stock: Number(product.stock),
+      description: product.description,
+      imageUrl: product.image_url,
+      messageId: result.messageId,
+      platformMessageId: result.platformMessageId,
+    });
+  }
+  return { sent, failed };
 };
 
 /** 3. Create an order. Prices come ONLY from the products table.
@@ -312,6 +367,7 @@ const searchKnowledge: ToolFn = async (db, workspaceId, args) => {
 export const tools: Record<string, ToolFn> = {
   search_products: searchProducts,
   send_product_cards: sendProductCards,
+  send_product_photos: sendProductPhotos,
   create_order: createOrder,
   update_order: updateOrder,
   apply_coupon: applyCoupon,
