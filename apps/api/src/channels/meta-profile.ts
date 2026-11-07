@@ -97,6 +97,7 @@
  */
 import { fetchWithTimeout } from '../ai-agent/http';
 import { GRAPH_BASE } from './meta-oauth';
+import { inferGenderFromName } from '../customers/gender';
 import { query } from '../db/pool';
 
 export interface MetaProfile {
@@ -388,6 +389,10 @@ export async function enrichCustomerProfileIfNeeded(input: {
   senderId: string;
   customerId: string;
   customerName: string | null;
+  /** True once the owner corrected the name by hand (migration 23) — the Meta refresh must NEVER overwrite it with the Facebook-returned name again. */
+  customerNameManuallySet?: boolean | null;
+  /** Stored gender ('male' | 'female' | 'unknown' | null) — only filled when 'unknown'/null, and only from a name that was just filled. A hand-set gender is never overwritten. */
+  customerGender?: string | null;
   customerPictureUrl: string | null;
   /** 'manual' = shop-owner upload (never overwritten); 'meta' = from Graph; null = no photo yet. */
   customerPictureSource?: string | null;
@@ -401,7 +406,11 @@ export async function enrichCustomerProfileIfNeeded(input: {
 }): Promise<void> {
   if (!input.pageToken && !input.userToken) return;
   const pictureIsManual = input.customerPictureSource === 'manual';
-  const needName = !input.customerName;
+  // A manually set name is final: the refresh never even considers
+  // filling the name for this customer, so the Facebook-returned name
+  // can never overwrite the owner's correction on a later message.
+  const nameManuallySet = input.customerNameManuallySet === true;
+  const needName = !input.customerName && !nameManuallySet;
   const needPicture = !input.customerPictureUrl && !pictureIsManual;
   if (!needName && !needPicture) return;
   const profile = await fetchMetaProfile({
@@ -411,7 +420,9 @@ export async function enrichCustomerProfileIfNeeded(input: {
     pageId: input.pageId ?? null,
     userToken: input.userToken ?? null,
   });
-  let name = input.customerName ?? profile?.name ?? null;
+  // Manual name: kept exactly as the owner typed it — the Graph name is
+  // ignored entirely, even if the stored name were ever missing.
+  let name = nameManuallySet ? input.customerName : (input.customerName ?? profile?.name ?? null);
   let pictureUrl = pictureIsManual
     ? input.customerPictureUrl
     : (input.customerPictureUrl ?? profile?.pictureUrl ?? null);
@@ -433,10 +444,17 @@ export async function enrichCustomerProfileIfNeeded(input: {
     : !input.customerPictureUrl && pictureUrl
       ? 'meta'
       : (input.customerPictureSource ?? null);
-  if (name === input.customerName && pictureUrl === input.customerPictureUrl && pictureSource === (input.customerPictureSource ?? null)) return;
+  // Gender: only when the name was JUST filled (it was missing before)
+  // and the stored gender is still 'unknown'/null. A name the customer
+  // already had does not re-trigger this — the gender for it was set at
+  // creation or by the backfill — and a hand-set gender is never touched.
+  const nameWasFilled = !nameManuallySet && name !== input.customerName && !!name;
+  const genderUnknown = !input.customerGender || input.customerGender === 'unknown';
+  const gender = nameWasFilled && genderUnknown ? inferGenderFromName(name) : (input.customerGender ?? 'unknown');
+  if (name === input.customerName && pictureUrl === input.customerPictureUrl && pictureSource === (input.customerPictureSource ?? null) && gender === (input.customerGender ?? 'unknown')) return;
   await query(
     input.workspaceId,
-    'UPDATE customers SET name = $1, picture_url = $2, picture_source = $3, updated_at = now() WHERE workspace_id = $4 AND id = $5',
-    [name, pictureUrl, pictureSource, input.workspaceId, input.customerId],
+    'UPDATE customers SET name = $1, picture_url = $2, picture_source = $3, gender = $4, updated_at = now() WHERE workspace_id = $5 AND id = $6',
+    [name, pictureUrl, pictureSource, gender, input.workspaceId, input.customerId],
   );
 }

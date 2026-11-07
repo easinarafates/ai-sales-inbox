@@ -5,6 +5,7 @@ import { Router, type Response } from 'express';
 import { del, put } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { pool, query, queryOne } from '../db/pool';
+import { inferGenderFromName } from './gender';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { checkProductLimit } from '../subscriptions/service';
@@ -44,6 +45,9 @@ interface CustomerRow {
   name: string | null;
   phone: string | null;
   address: string | null;
+  gender: string | null;
+  /** True once the owner corrected the name by hand — the Meta refresh must never overwrite it. */
+  name_manually_set: boolean | null;
   picture_url: string | null;
   picture_source: string | null;
   channel_identities: unknown;
@@ -58,7 +62,7 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   if (!q) {
     const { rows } = await query<CustomerRow>(
       workspaceId,
-      'SELECT id, name, phone, address, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200',
+      'SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200',
       [workspaceId],
     );
     res.json({ customers: rows });
@@ -67,7 +71,7 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   const like = `%${q}%`;
   const { rows } = await query<CustomerRow>(
     workspaceId,
-    `SELECT id, name, phone, address, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers
+    `SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers
      WHERE workspace_id = $1 AND (name ILIKE $2 OR phone ILIKE $2)
      ORDER BY created_at DESC LIMIT 200`,
     [workspaceId, like],
@@ -88,7 +92,7 @@ customersRouter.get('/customers/:id', async (req: AuthRequest, res: Response) =>
   }
   const customer = await queryOne<CustomerRow>(
     workspaceId,
-    'SELECT id, name, phone, address, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 AND id = $2',
     [workspaceId, req.params.id],
   );
   if (!customer) {
@@ -120,6 +124,86 @@ customersRouter.get('/customers/:id', async (req: AuthRequest, res: Response) =>
     orders,
     notes,
   });
+});
+
+/**
+ * PATCH /api/customers/:id { gender?, name? } — correct the customer's
+ * gender and/or display name by hand from the Inbox (ছেলে / মেয়ে /
+ * জানা নেই; নাম ঠিক করা). The AI addresses the customer as "স্যার"
+ * (male) or "ম্যাডাম" (female) throughout its replies, or neutral
+ * "আপনি" when 'unknown'. A hand-set gender is final: the name-based
+ * inference never overwrites it. Correcting the name sets
+ * name_manually_set, and the automatic Meta profile refresh must NEVER
+ * overwrite a manually set name with the Facebook-returned name again
+ * (see channels/meta-profile.ts). The name is stored exactly as typed —
+ * English stays English, Bengali stays Bengali, never translated or
+ * transliterated. When the name is corrected while the gender is still
+ * unknown, the gender is re-inferred from the new name (a hand-set
+ * gender is never re-inferred). The customer must belong to the caller's
+ * workspace (404 otherwise). Anything else in the body is ignored.
+ */
+customersRouter.patch('/customers/:id', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  if (!UUID_RE.test(req.params.id)) {
+    res.status(400).json({ error: 'Customer id is not valid' });
+    return;
+  }
+  const { gender, name } = (req.body ?? {}) as { gender?: unknown; name?: unknown };
+  if (gender !== undefined && gender !== 'male' && gender !== 'female' && gender !== 'unknown') {
+    res.status(400).json({ error: "gender must be 'male', 'female' or 'unknown'" });
+    return;
+  }
+  let newName: string | null = null;
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim() || name.trim().length > 200) {
+      res.status(400).json({ error: 'name must be a non-empty string (max 200 characters)' });
+      return;
+    }
+    newName = name.trim();
+  }
+  if (gender === undefined && newName === null) {
+    res.status(400).json({ error: 'nothing to update — send gender and/or name' });
+    return;
+  }
+  const existing = await queryOne<{ gender: string | null }>(
+    workspaceId,
+    'SELECT gender FROM customers WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, req.params.id],
+  );
+  if (!existing) {
+    res.status(404).json({ error: 'Customer not found' });
+    return;
+  }
+  const newGender =
+    gender !== undefined
+      ? (gender as string)
+      : newName !== null && (existing.gender ?? 'unknown') === 'unknown'
+        ? inferGenderFromName(newName)
+        : undefined;
+  const sets: string[] = [];
+  const params: unknown[] = [];
+  if (newGender !== undefined) {
+    params.push(newGender);
+    sets.push(`gender = $${params.length}`);
+  }
+  if (newName !== null) {
+    params.push(newName);
+    sets.push(`name = $${params.length}`);
+    sets.push('name_manually_set = TRUE');
+  }
+  params.push(workspaceId, req.params.id);
+  const { rows } = await query<CustomerRow>(
+    workspaceId,
+    `UPDATE customers SET ${sets.join(', ')}, updated_at = now()
+     WHERE workspace_id = $${params.length - 1} AND id = $${params.length}
+     RETURNING id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at`,
+    params,
+  );
+  if (!rows[0]) {
+    res.status(404).json({ error: 'Customer not found' });
+    return;
+  }
+  res.json({ customer: rows[0] });
 });
 
 /**
@@ -285,7 +369,7 @@ customersRouter.post('/customers/:id/photo', async (req: AuthRequest, res: Respo
     workspaceId,
     `UPDATE customers SET picture_url = $1, picture_source = 'manual', updated_at = now()
      WHERE workspace_id = $2 AND id = $3
-     RETURNING id, name, phone, address, picture_url, picture_source, channel_identities, created_at, updated_at`,
+     RETURNING id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at`,
     [finalUrl, workspaceId, req.params.id],
   );
   if (existing.picture_url && existing.picture_url !== finalUrl) {
@@ -320,7 +404,7 @@ customersRouter.delete('/customers/:id/photo', async (req: AuthRequest, res: Res
     workspaceId,
     `UPDATE customers SET picture_url = NULL, picture_source = NULL, updated_at = now()
      WHERE workspace_id = $1 AND id = $2
-     RETURNING id, name, phone, address, picture_url, picture_source, channel_identities, created_at, updated_at`,
+     RETURNING id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at`,
     [workspaceId, req.params.id],
   );
   await deleteBlobPhotoBestEffort(existing.picture_url);
@@ -369,8 +453,8 @@ customersRouter.post('/customers/merge', async (req: AuthRequest, res: Response)
       res.status(404).json({ error: 'Customer not found in this workspace' });
       return;
     }
-    const keep = keepRes.rows[0] as { id: string; name: string | null; phone: string | null; address: string | null; picture_url: string | null; picture_source: string | null; channel_identities: Identity[] };
-    const merge = mergeRes.rows[0] as { id: string; name: string | null; phone: string | null; address: string | null; picture_url: string | null; picture_source: string | null; channel_identities: Identity[] };
+    const keep = keepRes.rows[0] as { id: string; name: string | null; phone: string | null; address: string | null; picture_url: string | null; picture_source: string | null; name_manually_set: boolean | null; channel_identities: Identity[] };
+    const merge = mergeRes.rows[0] as { id: string; name: string | null; phone: string | null; address: string | null; picture_url: string | null; picture_source: string | null; name_manually_set: boolean | null; channel_identities: Identity[] };
 
     // Merge identities, deduped by platform+senderId (kept customer's win ties).
     const seen = new Set<string>();
@@ -407,22 +491,25 @@ customersRouter.post('/customers/merge', async (req: AuthRequest, res: Response)
     // A photo is never lost in a merge: the kept customer's photo wins;
     // if it has none, the merged customer's photo (manual or Meta) moves
     // over with its source, so a manual photo still survives later
-    // Meta refreshes.
+    // Meta refreshes. Same for a manually set name: if the kept customer
+    // has no name, the merged customer's name moves over WITH its manual
+    // flag, so the Meta refresh still cannot overwrite it afterwards.
     await client.query(
       `UPDATE customers
        SET channel_identities = $1::jsonb,
            name = COALESCE(name, $2), phone = COALESCE(phone, $3), address = COALESCE(address, $4),
            picture_url = COALESCE(picture_url, $5),
            picture_source = CASE WHEN picture_url IS NULL THEN $6 ELSE picture_source END,
+           name_manually_set = CASE WHEN name IS NULL THEN $9 ELSE name_manually_set END,
            updated_at = now()
        WHERE workspace_id = $7 AND id = $8`,
-      [JSON.stringify(mergedIdentities), merge.name, merge.phone, merge.address, merge.picture_url, merge.picture_source, workspaceId, keepCustomerId],
+      [JSON.stringify(mergedIdentities), merge.name, merge.phone, merge.address, merge.picture_url, merge.picture_source, workspaceId, keepCustomerId, merge.name_manually_set ?? false],
     );
     await client.query('DELETE FROM customers WHERE workspace_id = $1 AND id = $2', [workspaceId, mergeCustomerId]);
     await client.query('COMMIT');
     const customer = await queryOne<CustomerRow>(
       workspaceId,
-      'SELECT id, name, phone, address, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 AND id = $2',
+      'SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 AND id = $2',
       [workspaceId, keepCustomerId],
     );
     res.json({ customer });

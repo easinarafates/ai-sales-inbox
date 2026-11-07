@@ -39,6 +39,7 @@
 import { pool, query, queryOne } from '../db/pool';
 import { checkAiReplyAllowance, UPGRADE_NOTICE, type AiReplyAllowance } from '../subscriptions/service';
 import { buildUserPrompt, SYSTEM_PROMPT, type AgentContext } from './prompts';
+import { addressingLine, genderSalutation, normalizeCustomerGender, type CustomerGender } from '../customers/gender';
 import { runTool, type ToolDb } from './tools';
 import {
   callAiForWorkspace,
@@ -195,8 +196,17 @@ function toolResultAmountsFrom(results: { tool: string; result: unknown }[]): nu
  * hallucination guard below still validates it. Returns null when the
  * results carry no product rows (e.g. create_order) — then the draft reply
  * stands and the order flow is untouched.
+ *
+ * Addressing follows the customer's stored gender (same rule as the AI
+ * prompt): male → "স্যার" at the start and the end, female → "ম্যাডাম",
+ * unknown → neutral, no স্যার/ম্যাডাম at all. The product lines and the
+ * "অর্ডার করতে চাইলে জানাবেন।" ending are unchanged, so the
+ * deterministic-reply shape the verifiers recognise stays intact.
  */
-function deterministicProductReply(results: { tool: string; result: unknown }[]): string | null {
+function deterministicProductReply(
+  results: { tool: string; result: unknown }[],
+  gender: CustomerGender = 'unknown',
+): string | null {
   const seen = new Map<string, { name: string; price: number; stock: number }>();
   for (const { tool, result } of results) {
     const r = result as Record<string, unknown> | null;
@@ -219,7 +229,10 @@ function deterministicProductReply(results: { tool: string; result: unknown }[])
   }
   if (seen.size === 0) return null;
   const lines = [...seen.values()].map((p) => `${p.name} — দাম ৳${p.price}, স্টক ${p.stock}টি আছে।`);
-  return lines.join('\n') + '\nঅর্ডার করতে চাইলে জানাবেন।';
+  const body = lines.join('\n') + '\nঅর্ডার করতে চাইলে জানাবেন।';
+  if (gender === 'male') return `স্যার, আপনার প্রশ্নের উত্তর দিচ্ছি:\n${body}\nধন্যবাদ, স্যার।`;
+  if (gender === 'female') return `ম্যাডাম, আপনার প্রশ্নের উত্তর দিচ্ছি:\n${body}\nধন্যবাদ, ম্যাডাম।`;
+  return body;
 }
 
 export function guardReplyAgainstHallucination(
@@ -431,6 +444,7 @@ async function runDemoReply(
   products: DemoProduct[],
   knowledge: { title: string | null; body: string }[],
   allowance: AiReplyAllowance,
+  gender: CustomerGender = 'unknown',
 ): Promise<ProcessBatchResult> {
   const text = batchedMessages.map((m) => m.body).join(' ');
   const keywords = demoKeywords(text);
@@ -514,6 +528,20 @@ async function runDemoReply(
     }
   }
 
+  // Gender-aware addressing, same rule as the live prompt: the demo reply
+  // is what the customer actually sees when every provider is down (for
+  // webchat, saving IS the delivery), so it opens and closes with the same
+  // salutation — "স্যার" / "ম্যাডাম" — and stays neutral when unknown.
+  // The "[ডেমো AI]" label stays first, so the reply is still honestly
+  // marked as a demo reply.
+  const salutation = genderSalutation(gender);
+  if (salutation) {
+    const opened = reply.startsWith(DEMO_LABEL)
+      ? DEMO_LABEL + `${salutation}, ` + reply.slice(DEMO_LABEL.length)
+      : `${salutation}, ` + reply;
+    reply = `${opened}\nধন্যবাদ, ${salutation}।`;
+  }
+
   // Demo-mode replies are labelled "[ডেমো AI]" — saved only, never sent
   // to a real customer (see sendChannelMessage). The charge below is the
   // pre-existing demo-mode behaviour (the reply is saved in the inbox and
@@ -585,9 +613,9 @@ export async function processBatch(
 
   const [customer, channel, allowance] = await Promise.all([
     conversation.customer_id
-      ? queryOne<{ id: string; name: string | null; phone: string | null; channel_identities: unknown }>(
+      ? queryOne<{ id: string; name: string | null; phone: string | null; gender: string | null; channel_identities: unknown }>(
           workspaceId,
-          'SELECT id, name, phone, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+          'SELECT id, name, phone, gender, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
           [workspaceId, conversation.customer_id],
         )
       : Promise.resolve(null),
@@ -650,9 +678,14 @@ export async function processBatch(
     ),
   ]);
 
+  // Gender-aware addressing: the stored gender (inferred from the name,
+  // or set by hand in the Inbox) decides the salutation — "স্যার" for men,
+  // "ম্যাডাম" for women, neutral "আপনি" when unknown. Never guessed.
+  const customerGender: CustomerGender = normalizeCustomerGender(customer?.gender);
   const ctx: AgentContext = {
     customerName: customer?.name ?? null,
     customerPhone: customer?.phone ?? null,
+    customerGender,
     history: [...historyRows].reverse(),
     openOrders: openOrders.map((o) => ({ id: o.id, status: o.status, totalPaisa: Number(o.total_paisa) })),
     knowledge,
@@ -687,6 +720,7 @@ export async function processBatch(
       ctx.products,
       ctx.knowledge,
       allowance,
+      customerGender,
     );
     // Alert a human that the real AI provider is down / not configured.
     await runTool(toolDb, workspaceId, 'create_ticket', {
@@ -726,6 +760,7 @@ export async function processBatch(
     // The draft reply + tool results + the customer's messages are all
     // the model needs to write the final answer.
     const secondPrompt =
+      `${addressingLine(customerGender)}\n\n` +
       `কাস্টমারের মেসেজ:\n${batchedMessages.map((m) => m.body ?? '').join('\n')}\n\n` +
       `তোমার খসড়া উত্তর: ${parsed?.reply ?? ''}\n\n` +
       `টুলের ফলাফল (শুধু এখানকার তথ্য ব্যবহার করো, বানিয়ে কিছু বলো না):\n` +
@@ -750,7 +785,7 @@ export async function processBatch(
     // but the tools returned real product data, answer deterministically
     // from that data instead of sending a "checking…" placeholder.
     if (!secondOk && parsed && extractPriceAmounts(parsed.reply).length === 0) {
-      const deterministic = deterministicProductReply(results);
+      const deterministic = deterministicProductReply(results, customerGender);
       if (deterministic) {
         parsed = { reply: deterministic, confidence: 0.95, toolCalls: [] };
       }

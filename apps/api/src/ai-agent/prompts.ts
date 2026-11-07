@@ -4,6 +4,7 @@
  * delivery time — only state what a tool returned. Unknown questions go to
  * a human (low confidence), never a guessed answer.
  */
+import { addressingLine } from '../customers/gender';
 export const SYSTEM_PROMPT = `তুমি একজন বাংলাদেশি অনলাইন দোকানের বন্ধুত্বপূর্ণ সেলস সহকারী। বাংলায় উত্তর দাও, ভদ্র ও সংক্ষিপ্তভাবে।
 
 কঠোর নিয়ম:
@@ -26,6 +27,10 @@ export const SYSTEM_PROMPT = `তুমি একজন বাংলাদেশ
 4. পার্সেল ট্র্যাকিং: শুধু track_parcel টুলের ফলাফল বলো; সংযুক্ত না থাকলে মানুষের কাছে পাঠাও।
 5. যা জানো না, তা স্বীকার করো এবং কম confidence দাও — তাহলে মানুষ দেখবে।
 6. অর্ডার বদলাতে হলে: শুধু pending বা on_hold অর্ডার বদলানো যায়। তার পরের ধাপের অর্ডার বদলাতে হলে মানুষের কাছে পাঠাও।
+8. কাস্টমারকে সম্বোধন: কাস্টমারের লিঙ্গ নিচে "সম্বোধন" লাইনে দেওয়া আছে।
+   - পুরুষ হলে পুরো উত্তরে তাকে "স্যার" বলে সম্বোধন করো — শুধু শুরুতে একবার নয়, পুরো উত্তর জুড়ে। যেমন: "স্যার, জিন্সের দাম ৳৫০০।" / "আর কিছু জানতে চাইলে বলবেন, স্যার।"
+   - মহিলা হলে পুরো উত্তরে "ম্যাডাম" বলে সম্বোধন করো। যেমন: "ম্যাডাম, টি-শার্টের দাম ৳৪০০।"
+   - লিঙ্গ জানা না থাকলে শুধু "আপনি" বলো — "স্যার" বা "ম্যাডাম" একদম ব্যবহার করো না।
 
 উত্তর শুধু JSON-এ দাও, এই আকারে:
 {"reply": "কাস্টমারকে পাঠানোর বাংলা উত্তর", "confidence": 0.0 থেকে 1.0, "toolCalls": [{"tool": "টুলের নাম", "args": {...}}]}
@@ -34,6 +39,8 @@ toolCalls খালি থাকতে পারে। প্রোডাক্�
 export interface AgentContext {
   customerName: string | null;
   customerPhone: string | null;
+  /** 'male' → address as "স্যার"; 'female' → "ম্যাডাম"; 'unknown' → neutral "আপনি" only. Inferred from the name (customers/gender.ts) — never from a photo. */
+  customerGender: 'male' | 'female' | 'unknown';
   history: { direction: string; body: string | null }[];
   openOrders: { id: string; status: string; totalPaisa: number }[];
   knowledge: { title: string | null; body: string }[];
@@ -56,6 +63,7 @@ export function buildUserPrompt(ctx: AgentContext): string {
     : 'কোনো প্রোডাক্ট নেই। সতর্কতা: প্রোডাক্ট তালিকা খালি — এই চ্যাটে কোনো দাম বা স্টকের সংখ্যা বলা যাবে না। কাস্টমার দাম জানতে চাইলে বাংলায় বলো দোকানে এখনো কোনো প্রোডাক্ট যোগ করা হয়নি, কোন প্রোডাক্টের দাম জানতে চান তার নাম জানালে দোকানের মালিক জানিয়ে দেবেন।';
   return [
     `কাস্টমার: ${ctx.customerName ?? 'নাম নেই'}${ctx.customerPhone ? `, ফোন: ${ctx.customerPhone}` : ''}`,
+    addressingLine(ctx.customerGender),
     `খোলা অর্ডার:\n${orders}`,
     `নলেজ বুক:\n${knowledge}`,
     `প্রোডাক্ট (শুধু এগুলোর দাম/স্টক বলা যাবে):\n${products}`,

@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   asArray,
+  customersApi,
   getToken,
   inboxApi,
   orderTotalPaisa,
@@ -231,6 +232,60 @@ export default function InboxPage() {
     );
   };
 
+  const [nameDraft, setNameDraft] = useState("");
+  const [nameSaving, setNameSaving] = useState(false);
+  const customerIdForName = selected?.customer?.id;
+  // The draft follows the open thread only — not the 5s auto-refresh —
+  // so typing is never clobbered while the thread reloads.
+  useEffect(() => {
+    setNameDraft(selected?.customer?.name ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [customerIdForName]);
+  // The name stays exactly as it is on Facebook unless the owner
+  // corrects it here; a corrected name is flagged and the Meta refresh
+  // never overwrites it. English stays English, Bengali stays Bengali —
+  // never translated or transliterated.
+  const saveName = async () => {
+    const customerId = selected?.customer?.id;
+    const trimmed = nameDraft.trim();
+    if (!customerId || nameSaving || !trimmed || trimmed === (selected.customer?.name || "")) return;
+    setNameSaving(true);
+    setError("");
+    try {
+      await customersApi.updateName(customerId, trimmed);
+      await refreshThread();
+    } catch (err) {
+      setError(`${t("inbox.nameFailed", "Saving the name failed", "নাম সংরক্ষণ ব্যর্থ")}: ${err instanceof Error ? err.message : ""}`);
+    } finally {
+      setNameSaving(false);
+    }
+  };
+
+  const [genderSaving, setGenderSaving] = useState(false);
+  const customerGender =
+    selected?.customer?.gender === "male" || selected?.customer?.gender === "female"
+      ? selected.customer.gender
+      : "unknown";
+  // Gender-aware addressing: the AI calls a male customer "স্যার" and a
+  // female customer "ম্যাডাম" throughout its replies (unknown → neutral
+  // "আপনি"). The owner can correct the inferred gender here; the stored
+  // value drives all future replies, and the name inference never
+  // overwrites a hand-set value.
+  const changeGender = async (gender: "male" | "female" | "unknown") => {
+    const customerId = selected?.customer?.id;
+    if (!customerId || genderSaving) return;
+    setGenderSaving(true);
+    setError("");
+    try {
+      await customersApi.updateGender(customerId, gender);
+      await refreshThread();
+    } catch (err) {
+      setError(`${t("inbox.genderFailed", "Saving gender failed", "লিঙ্গ সংরক্ষণ ব্যর্থ")}: ${err instanceof Error ? err.message : ""}`);
+    } finally {
+      setGenderSaving(false);
+    }
+  };
+
   return (
     <div>
       <h1 className="page-title">{t("inbox.title", "Inbox", "ইনবক্স")}</h1>
@@ -327,6 +382,48 @@ export default function InboxPage() {
                       {selected.customer?.phone && (
                         <p className="text-sm text-slate-500">{selected.customer.phone}</p>
                       )}
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+                        <span className="text-slate-500">{t("inbox.addressAs", "Address as", "সম্বোধন")}:</span>
+                        <span className="font-medium">
+                          {customerGender === "male"
+                            ? t("inbox.genderMaleShort", "Sir", "স্যার")
+                            : customerGender === "female"
+                              ? t("inbox.genderFemaleShort", "Madam", "ম্যাডাম")
+                              : t("inbox.genderUnknownShort", "Unknown", "জানা নেই")}
+                        </span>
+                        <select
+                          value={customerGender}
+                          disabled={genderSaving}
+                          onChange={(e) => changeGender(e.target.value as "male" | "female" | "unknown")}
+                          aria-label={t("inbox.genderChange", "Change how the AI addresses this customer", "AI এই কাস্টমারকে কী বলে ডাকবে তা বদলান")}
+                          className="border rounded-lg px-2 py-1 text-sm"
+                        >
+                          <option value="male">{t("inbox.genderMale", "Sir (male)", "স্যার (ছেলে)")}</option>
+                          <option value="female">{t("inbox.genderFemale", "Madam (female)", "ম্যাডাম (মেয়ে)")}</option>
+                          <option value="unknown">{t("inbox.genderUnknown", "Unknown", "জানা নেই")}</option>
+                        </select>
+                      </div>
+                      <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
+                        <span className="text-slate-500">{t("inbox.nameLabel", "Name", "নাম")}:</span>
+                        <input
+                          value={nameDraft}
+                          onChange={(e) => setNameDraft(e.target.value)}
+                          aria-label={t("inbox.nameEdit", "Edit the customer's name", "কাস্টমারের নাম ঠিক করুন")}
+                          className="border rounded-lg px-2 py-1 text-sm w-44"
+                        />
+                        <button
+                          onClick={saveName}
+                          disabled={nameSaving || !nameDraft.trim() || nameDraft.trim() === (selected.customer?.name || "")}
+                          className="rounded-lg bg-teal-600 px-3 py-1 text-sm text-white transition hover:bg-teal-700 disabled:opacity-50"
+                        >
+                          {nameSaving ? t("inbox.saving", "Saving…", "সংরক্ষণ হচ্ছে…") : t("inbox.save", "Save", "সংরক্ষণ")}
+                        </button>
+                        {selected.customer?.name_manually_set && (
+                          <span className="text-xs text-teal-700">
+                            {t("inbox.nameManual", "Set by hand — Facebook won't overwrite it", "হাতে ঠিক করা — ফেসবুক আর বদলাতে পারবে না")}
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
                   <div className="flex items-center gap-2">

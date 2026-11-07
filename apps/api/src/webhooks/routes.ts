@@ -6,6 +6,7 @@ import type { AuthRequest } from '../types';
 import { enqueueMessage } from '../queue/client';
 import { recordAttributionForPlatformPost } from '../analytics/attribution';
 import { enrichCustomerProfileIfNeeded } from '../channels/meta-profile';
+import { inferGenderFromName } from '../customers/gender';
 import { decryptToken } from '../db/crypto';
 import { sendMarkSeen } from '../channels/meta-send';
 import {
@@ -25,12 +26,24 @@ interface CustomerRow {
   id: string;
   name: string | null;
   phone: string | null;
+  gender: string | null;
+  name_manually_set: boolean | null;
   picture_url: string | null;
   picture_source: string | null;
   channel_identities: unknown;
 }
 
-/** Find a customer by a channel identity, or create one. Identity shape: {platform, senderId, name?}. */
+/**
+ * Find a customer by a channel identity, or create one. Identity shape: {platform, senderId, name?}.
+ *
+ * Gender is inferred from the name at creation (migration 23) — the only
+ * signal Meta gives us (no gender field, no photo). An existing customer's
+ * gender is NEVER overwritten here: if the owner set it by hand in the
+ * Inbox, that value stands, and a customer created before this feature
+ * keeps 'unknown' until the one-off backfill fills it. When the name
+ * arrives later (Meta profile enrich), the enrich step fills the gender
+ * from the new name — see channels/meta-profile.ts.
+ */
 async function findOrCreateCustomer(
   workspaceId: string,
   platform: string,
@@ -42,7 +55,7 @@ async function findOrCreateCustomer(
   const lookup = () =>
     queryOne<CustomerRow>(
       workspaceId,
-      `SELECT id, name, phone, picture_url, picture_source, channel_identities FROM customers
+      `SELECT id, name, phone, gender, name_manually_set, picture_url, picture_source, channel_identities FROM customers
        WHERE workspace_id = $1 AND channel_identities @> $2::jsonb LIMIT 1`,
       [workspaceId, JSON.stringify([{ platform, senderId }])],
     );
@@ -55,8 +68,8 @@ async function findOrCreateCustomer(
     // winner instead of returning a second row for the same PSID.
     const { rows } = await query<CustomerRow>(
       workspaceId,
-      'INSERT INTO customers (workspace_id, name, channel_identities) VALUES ($1, $2, $3::jsonb) ON CONFLICT DO NOTHING RETURNING id, name, phone, picture_url, picture_source, channel_identities',
-      [workspaceId, name ?? null, identity],
+      'INSERT INTO customers (workspace_id, name, gender, channel_identities) VALUES ($1, $2, $3, $4::jsonb) ON CONFLICT DO NOTHING RETURNING id, name, phone, gender, name_manually_set, picture_url, picture_source, channel_identities',
+      [workspaceId, name ?? null, inferGenderFromName(name ?? null), identity],
     );
     if (rows[0]) return rows[0];
   }
@@ -339,6 +352,8 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
               senderId,
               customerId: customer.id,
               customerName: customer.name,
+              customerNameManuallySet: customer.name_manually_set,
+              customerGender: customer.gender,
               customerPictureUrl: customer.picture_url,
               // A manual photo (picture_source='manual') is never touched
               // by the Meta refresh — see meta-profile.ts.

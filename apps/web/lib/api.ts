@@ -131,6 +131,10 @@ export interface Customer {
   name?: string;
   phone?: string;
   address?: string;
+  /** Gender for AI addressing: 'male' → "স্যার", 'female' → "ম্যাডাম", 'unknown' → neutral "আপনি". Inferred from the name; set by hand in the Inbox. */
+  gender?: string;
+  /** True once the owner corrected the name by hand — the Meta refresh never overwrites it. */
+  name_manually_set?: boolean;
   /** Profile photo URL fetched from Meta (Messenger/Instagram) on first sight. */
   picture_url?: string;
   pictureUrl?: string;
@@ -771,6 +775,12 @@ export const customersApi = {
     return api.get<Customer[] | { customers: Customer[] }>(`/api/customers${qs}`);
   },
   get: (id: string) => api.get<CustomerDetail>(`/api/customers/${id}`),
+  /** Set the customer's gender (male/female/unknown) — drives the AI's স্যার/ম্যাডাম addressing. */
+  updateGender: (id: string, gender: "male" | "female" | "unknown") =>
+    api.patch<{ customer: Customer } | Customer>(`/api/customers/${id}`, { gender }),
+  /** Correct the customer's display name by hand — stored exactly as typed, never overwritten by the Meta refresh. */
+  updateName: (id: string, name: string) =>
+    api.patch<{ customer: Customer } | Customer>(`/api/customers/${id}`, { name }),
   merge: (keepCustomerId: string, mergeCustomerId: string) =>
     api.post<{ customer: Customer } | Customer>("/api/customers/merge", { keepCustomerId, mergeCustomerId }),
 };

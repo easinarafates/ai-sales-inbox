@@ -89,7 +89,7 @@ inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   const customer = conversation.customer_id
     ? await queryOne(
         workspaceId,
-        'SELECT id, name, phone, address, picture_url, picture_source, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+        'SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
         [workspaceId, conversation.customer_id],
       )
     : null;
