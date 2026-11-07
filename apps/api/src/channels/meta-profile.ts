@@ -10,9 +10,32 @@
  * Messenger: GET /{psid}?fields=first_name,last_name,profile_pic
  *   — Meta blocks the direct PSID read for many apps (400
  *   GraphMethodException #100/33), so on failure we fall back to
- *   GET /{page-id}/conversations?user_id={psid}&fields=participants{name,picture}
+ *   GET /{page-id}/conversations?user_id={psid}&fields=participants{name,picture{url}}
  *   and take the participant whose id matches the sender. That endpoint
  *   returns the real name even when the direct read is blocked.
+ *
+ * LIVE PROBE RESULTS (2026-11-07, two real Page tokens, v21.0 + v27.0):
+ * - Direct PSID read fails 400 #100/33 for the test sender on BOTH
+ *   tokens (gd_arafat's 01:38 token and the fresh OUR TEAM token) — even
+ *   `?fields=id`. debug_token confirms both tokens DO have
+ *   pages_messaging granted for Halal Chic, so this is not a scope
+ *   problem. Meta's bug portal notes phone-number-registered users are
+ *   "not yet queryable by the API" — the test sender registered by phone.
+ * - The conversations/messages edges return the name but STRIP the
+ *   `picture` field entirely for page-scoped users (all of
+ *   `picture`, `picture{url}`, `picture.type(large)` return 200 with no
+ *   picture key, for the customer AND the Page participant). So for this
+ *   sender Meta gives no photo on any route — picture_url stays NULL
+ *   and the Inbox shows the initials avatar. This is a platform limit,
+ *   not a code bug.
+ * - The Page's OWN picture DOES work (GET /{page-id}?fields=picture)
+ *   — but it is the Page's photo, never a customer's, so it is never
+ *   stored as a customer photo.
+ * - The pipeline below already stores a photo whenever Graph returns
+ *   one, so other (e.g. email-registered) customers' photos WILL show
+ *   automatically when Meta returns them — no code change needed for
+ *   that. The Inbox initials avatar uses a per-customer colour so
+ *   customers stay recognisable even without a photo.
  * Instagram: GET /{ig-user-id}?fields=name,username,profile_picture_url
  * (Both are Graph v21.0 — GRAPH_BASE is imported from meta-oauth.ts so
  * the version stays in one place. META_GRAPH_BASE_URL overrides the
@@ -108,17 +131,20 @@ async function fetchMessengerDirect(senderId: string, pageToken: string): Promis
 
 /**
  * Messenger fallback: GET /{page-id}/conversations?user_id={psid}
- * &fields=participants{name,picture}. The conversations endpoint returns
+ * &fields=participants{name,picture{url}}. The conversations endpoint returns
  * the participant's real name even when the direct PSID read is blocked
- * (GraphMethodException #100/33). Participants may be a plain array or
- * a Graph edge object { data: [...] } — both shapes are handled.
+ * (GraphMethodException #100/33). NOTE (live probe 2026-11-07): Meta strips
+ * the picture field for page-scoped users on this edge, so for senders
+ * like our test customer the participant carries a name but no picture —
+ * the code below then stores the name and leaves picture_url NULL.
+ * Participants may be a plain array or a Graph edge object { data: [...] } — both shapes are handled.
  */
 async function fetchMessengerViaConversations(
   senderId: string,
   pageId: string,
   pageToken: string,
 ): Promise<MetaProfile | null> {
-  const url = `${profileGraphBase()}/${encodeURIComponent(pageId)}/conversations?user_id=${encodeURIComponent(senderId)}&fields=${encodeURIComponent('participants{name,picture}')}`;
+  const url = `${profileGraphBase()}/${encodeURIComponent(pageId)}/conversations?user_id=${encodeURIComponent(senderId)}&fields=${encodeURIComponent('participants{name,picture{url}}')}`;
   let res: Awaited<ReturnType<typeof fetchWithTimeout>>;
   try {
     res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${pageToken}` } }, 8000);

@@ -160,6 +160,7 @@ async function main() {
 
   const pageSrc = fs.readFileSync(path.join(ROOT, 'apps/web/app/inbox/page.tsx'), 'utf8');
   check('inbox page renders a photo avatar with initials fallback', pageSrc.includes('<img src={pictureUrl}') && pageSrc.includes('CustomerAvatar'));
+  check('inbox initials avatar uses a per-customer colour (recognisable without a photo)', pageSrc.includes('AVATAR_COLORS') && pageSrc.includes('avatarColor(name)'));
   check('inbox page shows the avatar in the list + thread header + profile card', pageSrc.includes('convPicture(c)') && pageSrc.includes('sizeClass="h-12 w-12"') && pageSrc.includes('sizeClass="h-14 w-14"'));
 
   // ---------- Stub Graph server ----------
@@ -180,11 +181,21 @@ async function main() {
     if (req.method === 'GET' && url.pathname === '/v21.0/igsid-ok') {
       return send(200, { id: 'igsid-ok', name: 'Rongdhonu Fashion', username: 'rongdhonu.fashion', profile_picture_url: 'https://example.com/ig-rina.jpg' });
     }
+    if (req.method === 'GET' && url.pathname === '/v21.0/psid-nopic') {
+      // Live case (2026-11-07): direct PSID read blocked exactly like Meta
+      // does for phone-registered senders — 400 GraphMethodException 100/33.
+      return send(400, { error: { message: "Unsupported get request. Object with ID 'psid-nopic' does not exist, cannot be loaded due to missing permissions, or does not support this operation.", type: 'GraphMethodException', code: 100, error_subcode: 33 } });
+    }
     // Page conversations fallback: direct PSID read is blocked (400 above),
     // but the Page's conversations endpoint returns the participant's name.
     if (req.method === 'GET' && url.pathname === '/v21.0/page-profile-ok/conversations') {
       if (url.searchParams.get('user_id') === 'psid-conv') {
         return send(200, { data: [{ id: 'conv-1', participants: [{ id: 'psid-conv', name: 'Karim Uddin', picture: { data: { url: 'https://example.com/karim.jpg' } } }, { id: 'page-profile-ok', name: 'Profile Page' }] }] });
+      }
+      if (url.searchParams.get('user_id') === 'psid-nopic') {
+        // Live case (2026-11-07): Meta strips the picture field for
+        // page-scoped users — the participant carries a name but NO photo.
+        return send(200, { data: [{ id: 'conv-2', participants: [{ id: 'psid-nopic', name: 'Tanvir Hasan' }, { id: 'page-profile-ok', name: 'Profile Page' }] }] });
       }
       return send(200, { data: [] });
     }
@@ -236,6 +247,13 @@ async function main() {
     check('conversations fallback stores the real name', convConv?.customer_name === 'Karim Uddin', `customer_name=${convConv?.customer_name ?? ''}`);
     check('conversations fallback stores the real photo URL', convConv?.customer_picture_url === 'https://example.com/karim.jpg', `customer_picture_url=${convConv?.customer_picture_url ?? ''}`);
     check('fallback hit both the direct read (400) and the conversations endpoint', stubHits.some((h) => h.path === '/v21.0/psid-conv') && stubHits.some((h) => h.path === '/v21.0/page-profile-ok/conversations' && h.auth === 'Bearer tok-profile-page'), `hits=${JSON.stringify(stubHits.filter((h) => h.path.includes('psid-conv') || h.path.includes('conversations')))}`);
+
+    // ---- Messenger: Meta returns a name but NO photo (live case) ----
+    const hookNoPic = await sendCustomerMessage(api, 'page-profile-ok', 'psid-nopic', `p1-mid-nopic-${stamp}`, 'ছবি ছাড়া টেস্ট');
+    check('webhook accepts the message when Meta returns no photo', hookNoPic.status === 200, `status=${hookNoPic.status}`);
+    const convNoPic = await findConvByLastMessage(api, 'ছবি ছাড়া টেস্ট');
+    check('no-photo fallback stores the real name', convNoPic?.customer_name === 'Tanvir Hasan', `customer_name=${convNoPic?.customer_name ?? ''}`);
+    check('no-photo fallback leaves picture_url NULL (never invents a photo)', !convNoPic?.customer_picture_url, `customer_picture_url=${convNoPic?.customer_picture_url ?? ''}`);
 
     // ---- Messenger: Graph error → graceful fallback, message still saved ----
     const hookErr = await sendCustomerMessage(api, 'page-profile-ok', 'psid-err', `p1-mid-err-${stamp}`, 'এরর টেস্ট');
