@@ -39,11 +39,12 @@
  *   matrices, list/show/fast/AI/normal flows, tool test with stubbed
  *   Graph fetch (3 sent + platform ids, no-photo failure, comment
  *   failure), buyers-only predicate, workspace toggle.
- * - Boot 2 (same dir, Meta webhook): owner "." toggles the workspace
- *   AI off (a customer message then gets NO reply) and ".on" turns it
- *   back on (a customer message gets a reply); no customer or
- *   conversation is ever created for the owner PSID; a non-owner "."
- *   does not toggle; an owner normal message creates nothing.
+ * - Boot 2 (same dir, Meta webhook): owner "." is SAVED in his single
+ *   test chat and toggles the workspace AI off (a customer message then
+ *   gets NO reply) and ".on" turns it back on (a customer message gets
+ *   a reply); the owner never gets an AI reply and never appears in
+ *   the Customers list even with an order; a non-owner "." does not
+ *   toggle; an owner normal message lands in the same test chat.
  *
  * Run from the repo root:  node scripts/verify-photo-buyers-owner.mjs
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
@@ -214,12 +215,17 @@ async function main() {
   check('agent: photo flows run before the AI call', agentSrc.includes('detectProductListRequest(batchedText)') && agentSrc.includes("reason: 'product_photos_sent'") && agentSrc.includes("reason: 'product_photo_sent'"));
   check('agent: photo flows use deliverOutgoingImageMessage', agentSrc.includes('deliverOutgoingImageMessage(workspaceId, conversationId'));
   check('agent: deterministic reply does not re-list after photos', agentSrc.includes("tool !== 'send_product_photos'") && agentSrc.includes('photoSent.length === 1'));
+  check('agent: show flow is checked BEFORE the list flow (a pick wins)', agentSrc.indexOf('const showProduct = matchShowProduct(batchedText, photoProducts);') < agentSrc.indexOf("if (detectProductListRequest(latestText)"));
+  check('agent: list fires only when the NEWEST message asks for it', agentSrc.includes("const latestText = batchedMessages.length > 0 ? (batchedMessages[batchedMessages.length - 1]?.body ?? '') : '';") && agentSrc.includes('detectProductListRequest(latestText)'));
+  check('agent: list is NOT re-sent when it was the preceding reply', agentSrc.includes("const listJustSent = (lastOut[0]?.body ?? '').includes('আপনি কোন প্রোডাক্টে আগ্রহী?')") && agentSrc.includes('if (!listJustSent) {'));
 
   const custSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/customers/routes.ts'), 'utf8');
   check('customers: list is buyers-only (EXISTS orders)', custSrc.includes('EXISTS (SELECT 1 FROM orders o'));
+  check('customers: owner PSID explicitly excluded (NOT_OWNER)', custSrc.includes('NOT_OWNER') && custSrc.includes("customers.primary_identity IN ('messenger:' || w.owner_psid, 'facebook_comment:' || w.owner_psid)"));
 
   const hookSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/webhooks/routes.ts'), 'utf8');
-  check('webhook: owner guard before mark_seen (never a customer/conversation/AI reply)', hookSrc.includes('Owner guard: the shop owner messaging his own Page') && hookSrc.indexOf('ownerPsid && ownerPsid === sender.id') < hookSrc.indexOf('mark_seen'));
+  check('webhook: owner guard before mark_seen (never an AI reply)', hookSrc.includes('Owner guard (REVISED 2026-11-08)') && hookSrc.indexOf('ownerPsid && ownerPsid === sender.id') < hookSrc.indexOf('mark_seen'));
+  check('webhook: owner messages SAVED in his test chat (not dropped)', hookSrc.includes('findOwnerTestConversation(channel.workspace_id, channel.id, ownerPsid)') && hookSrc.includes('await saveIncomingMessage(channel.workspace_id, ownerConv, message.text, message.mid);'));
   check('webhook: owner dot toggles the workspace AI switch', hookSrc.includes('toggleWorkspaceAiMode(channel.workspace_id)') && hookSrc.includes('setWorkspaceAiMode(channel.workspace_id'));
   check('webhook: owner comments skipped too', hookSrc.includes('commentOwnerPsid'));
 
@@ -310,16 +316,54 @@ async function main() {
     // sent right after the list request re-fired the list intent and
     // re-sent the WHOLE list. Same conversation, same sender: the show
     // request must send ONLY the jeans photo + details.
-    const listOutBefore = listFound.out.length;
+    // (b2a) Guard FIRST: a repeat list request while the interest
+    // question is still the latest outgoing message must NOT re-send
+    // the list — 0 new images (a text reply instead).
+    const listOutCount = listFound.out.length;
+    const mListAgain = await webchat(api, 'wc-photo-list-1', 'List Customer', 'কি কি প্রোডাক্ট আছে?');
+    check('boot 1: repeat list request accepted', mListAgain.status === 200 && mListAgain.data?.conversationId === listConvId, `status=${mListAgain.status}`);
+    const listAgainFound = await pollFor(async () => {
+      const t = await threadOut(api, listConvId);
+      return t.out.length > listOutCount ? t : null;
+    });
+    const listAgainNew = (listAgainFound?.out ?? []).slice(listOutCount);
+    check('boot 1: repeat list right after the list → pointer reply, ZERO new images', !!listAgainFound && listAgainNew.filter((m) => m.type === 'image').length === 0 && listAgainNew.some((m) => (m.body ?? '').includes('একটু আগেই')), `new=${listAgainNew.length} images=${listAgainNew.filter((m) => m.type === 'image').length} ${JSON.stringify(listAgainNew.map((m) => m.body))}`);
+    // (b2b) Same-thread show: ONLY the jeans photo + details.
+    const showBase = (await threadOut(api, listConvId)).out.length;
     const mShowSame = await webchat(api, 'wc-photo-list-1', 'List Customer', 'জিন্সটা দেখাও');
     check('boot 1: same-thread show message accepted', mShowSame.status === 200 && mShowSame.data?.conversationId === listConvId, `status=${mShowSame.status}`);
     const showSameFound = await pollFor(async () => {
       const t = await threadOut(api, listConvId);
-      return t.out.length >= listOutBefore + 2 ? t : null;
+      return t.out.length >= showBase + 2 ? t : null;
     });
-    const newMsgs = (showSameFound?.out ?? []).slice(listOutBefore);
+    const newMsgs = (showSameFound?.out ?? []).slice(showBase);
     check('boot 1: same-thread show → exactly 2 new messages (photo + details)', !!showSameFound && newMsgs.length === 2, `new=${newMsgs.length} ${JSON.stringify(newMsgs.map((m) => `${m.type}:${(m.body ?? '').slice(0, 30)}`))}`);
     check('boot 1: same-thread show → jeans photo only, NO second list', !!showSameFound && newMsgs.length === 2 && newMsgs[0].type === 'image' && newMsgs[0].body === IMG.jeans && newMsgs[1].type === 'text' && (newMsgs[1].body ?? '').includes('Jeans') && !newMsgs.some((m) => (m.body ?? '').includes('আগ্রহী')), JSON.stringify(newMsgs.map((m) => m.body)));
+    // (b2c) Same-thread price question → ZERO new images + ৳৫০০ reply.
+    const priceBase = (await threadOut(api, listConvId)).out.length;
+    const mPrice2 = await webchat(api, 'wc-photo-list-1', 'List Customer', 'জিন্সের দাম কত?');
+    check('boot 1: same-thread price question accepted', mPrice2.status === 200, `status=${mPrice2.status}`);
+    const price2Found = await pollFor(async () => {
+      const t = await threadOut(api, listConvId);
+      return t.out.length > priceBase ? t : null;
+    });
+    const price2New = (price2Found?.out ?? []).slice(priceBase);
+    check('boot 1: same-thread price question → ZERO new images + ৳৫০০ reply', !!price2Found && price2New.filter((m) => m.type === 'image').length === 0 && price2New.some((m) => (m.body ?? '').includes('৳৫০০') || (m.body ?? '').includes('500')), JSON.stringify(price2New.map((m) => m.body)));
+    // (b2d) Same-thread refusal after the list+pick → ZERO new images.
+    // NOTE: in demo mode (blank keys) the LLM fall-through reply to a
+    // refusal escalates the thread to waiting (pre-existing demo
+    // behaviour — live Gemini answers a refusal normally), so this
+    // check asserts only the flood property (no photos), runs last,
+    // and does NOT assert the thread stays open.
+    const refuseBase = (await threadOut(api, listConvId)).out.length;
+    const mRefuse = await webchat(api, 'wc-photo-list-1', 'List Customer', 'নিবো না');
+    check('boot 1: same-thread refusal accepted', mRefuse.status === 200, `status=${mRefuse.status}`);
+    const refuseFound = await pollFor(async () => {
+      const t = await threadOut(api, listConvId);
+      return t.out.length > refuseBase ? t : null;
+    });
+    const refuseNew = (refuseFound?.out ?? []).slice(refuseBase);
+    check('boot 1: same-thread refusal → ZERO new images', !!refuseFound && refuseNew.filter((m) => m.type === 'image').length === 0, `new=${refuseNew.length} images=${refuseNew.filter((m) => m.type === 'image').length}`);
 
     // (c) Fast-reply question → deflection, no AI word, not escalated.
     const mFast = await webchat(api, 'wc-photo-fast-1', 'Fast Customer', 'তুমি এত দ্রুত রিপ্লাই দিচ্ছ কেন?');
@@ -401,6 +445,12 @@ async function main() {
     check('driver: AI question → off_topic, no reply', aq.result?.replied === false && aq.state?.status === 'waiting' && aq.state?.escalation_reason === 'off_topic' && aq.outMessages === 0, JSON.stringify({ r: aq.result, s: aq.state }));
     const nm = driverResult.normal ?? {};
     check('driver: normal price → open + ৳৫০০, no photos', nm.result?.replied === true && nm.state?.status === 'open' && (nm.images ?? 0) === 0 && (nm.texts ?? []).some((b) => (b ?? '').includes('৳৫০০') || (b ?? '').includes('500')), JSON.stringify({ r: nm.result, s: nm.state }));
+    const mx = driverResult.mixedShow ?? {};
+    check('driver: stale list + pick → show wins (1 jeans photo, no list)', mx.result?.replied === true && mx.result?.reason === 'product_photo_sent' && (mx.images ?? []).length === 1 && (mx.texts ?? []).some((b) => (b ?? '').includes('৳৫০০') || (b ?? '').includes('500')) && !(mx.texts ?? []).some((b) => (b ?? '').includes('আগ্রহী')), JSON.stringify({ r: mx.result, imgs: mx.images, texts: mx.texts }));
+    const mr = driverResult.mixedRefusal ?? {};
+    check('driver: stale list + refusal → NO photos', mr.result?.reason !== 'product_photos_sent' && (mr.images ?? -1) === 0, JSON.stringify({ r: mr.result, imgs: mr.images }));
+    const gr = driverResult.guardRepeat ?? {};
+    check('driver: repeat list right after the list → pointer reply, 0 new images', gr.result?.replied === true && gr.result?.reason === 'list_already_sent' && gr.newImages === 0, JSON.stringify({ r: gr.result, new: gr.newImages }));
     const ts = driverResult.toolSend ?? {};
     check('driver: tool sends 3 images via Graph path (sent + platform ids)', Array.isArray(ts.result?.sent) && ts.result.sent.length === 3 && ts.result.sent.every((s) => !!s.platformMessageId) && ts.fetchCalls === 3, JSON.stringify({ sent: (ts.result?.sent ?? []).length, fetch: ts.fetchCalls }));
     check('driver: tool image rows recorded sent with the right URLs', Array.isArray(ts.imageRows) && ts.imageRows.length === 3 && ts.imageRows.every((r) => r.delivery === 'sent' && typeof r.url === 'string' && r.url.startsWith('https://example.com/photos/')), JSON.stringify(ts.imageRows));
@@ -444,17 +494,7 @@ async function main() {
         const r = await api(`/api/inbox?q=${encodeURIComponent(q)}`);
         return (r.data?.conversations ?? []).length;
       };
-      // Name-independent owner check: if the guard ever failed, the
-      // owner's message would be SAVED as an incoming message in some
-      // conversation. Scan every thread for that exact incoming body.
-      const ownerMessagePresent = async (text) => {
-        const all = await api('/api/inbox');
-        for (const c of (all.data?.conversations ?? [])) {
-          const d = await api(`/api/inbox/${c.id}`);
-          if ((d.data?.messages ?? []).some((m) => m.direction === 'in' && (m.body ?? '') === text)) return true;
-        }
-        return false;
-      };
+      // Scan every thread for conversations holding an exact incoming body.
       const findConversationWithIncoming = async (text) => {
         const all = await api('/api/inbox');
         for (const c of (all.data?.conversations ?? [])) {
@@ -464,11 +504,29 @@ async function main() {
         return '';
       };
 
-      // Owner "." → AI off (no customer/conversation for the owner).
+      // REVISED owner behavior (2026-11-08): the owner's messages are
+      // SAVED and VISIBLE in his single test chat (no AI reply, never a
+      // second owner conversation, never in the Customers list — even
+      // with an order). The first guard dropped them silently.
+      const ownerConvWith = async (text) => {
+        const all = await api('/api/inbox');
+        const ids = [];
+        for (const c of (all.data?.conversations ?? [])) {
+          const d = await api(`/api/inbox/${c.id}`);
+          if ((d.data?.messages ?? []).some((m) => m.direction === 'in' && (m.body ?? '') === text)) ids.push(c.id);
+        }
+        return ids;
+      };
+
+      // Owner "." → SAVED in his test chat + AI off (no AI reply to him).
       const h1 = await metaHook(OWNER, '.', `owner-dot-off-${stamp}`);
       check('boot 2: owner dot accepted', h1.status === 200, `status=${h1.status}`);
       await sleep(3000);
-      check('boot 2: owner dot created NO customer/conversation', !(await ownerMessagePresent('.')), 'owner dot saved as a message');
+      const ownerConvId = (await ownerConvWith('.'))[0] ?? '';
+      check('boot 2: owner dot SAVED in his test chat (visible in Inbox)', !!ownerConvId, 'no conversation holds the owner dot');
+      const ownerAfterDot = ownerConvId ? await api(`/api/inbox/${ownerConvId}`) : null;
+      const ownerOutAfterDot = (ownerAfterDot?.data?.messages ?? []).filter((m) => m.direction === 'out');
+      check('boot 2: owner dot got NO AI reply', ownerOutAfterDot.length === 0, `out=${ownerOutAfterDot.length}`);
 
       // AI is now off: a real customer message gets NO AI reply.
       const h2 = await metaHook(CUSTOMER, 'জিন্সের দাম কত?', `cust-off-${stamp}`);
@@ -479,11 +537,12 @@ async function main() {
       const custOut = (custDetail?.data?.messages ?? []).filter((m) => m.direction === 'out');
       check('boot 2: AI off → customer got NO reply', custOut.length === 0, `out=${custOut.length}`);
 
-      // Owner ".on" → AI back on.
+      // Owner ".on" → saved in the SAME test chat + AI back on.
       const h3 = await metaHook(OWNER, '.on', `owner-dot-on-${stamp}`);
       check('boot 2: owner .on accepted', h3.status === 200, `status=${h3.status}`);
       await sleep(3000);
-      check('boot 2: owner .on created NO customer/conversation either', !(await ownerMessagePresent('.on')), 'owner .on saved as a message');
+      const onConvs = await ownerConvWith('.on');
+      check('boot 2: owner .on saved in the SAME single test chat', onConvs.length === 1 && onConvs[0] === ownerConvId, JSON.stringify(onConvs.map((x) => x.slice(0, 8))));
 
       // AI is back on: a new customer message gets a reply.
       const h4 = await metaHook(CUSTOMER, 'শার্টের দাম কত?', `cust-on-${stamp}`);
@@ -508,11 +567,30 @@ async function main() {
       }, 30000);
       check('boot 2: non-owner dot did NOT turn the AI off', !!custStillOn && custStillOn.length >= 2, `out=${custStillOn?.length ?? 0}`);
 
-      // Owner normal message creates nothing.
+      // Owner normal message → saved in the SAME test chat, no AI reply.
       const h7 = await metaHook(OWNER, 'হাই', `owner-hi-${stamp}`);
-      check('boot 2: owner normal message accepted (ignored)', h7.status === 200, `status=${h7.status}`);
+      check('boot 2: owner normal message accepted', h7.status === 200, `status=${h7.status}`);
       await sleep(3000);
-      check('boot 2: owner normal message created NO customer/conversation', !(await ownerMessagePresent('হাই')), 'owner message saved');
+      const hiConvs = await ownerConvWith('হাই');
+      check('boot 2: owner normal message saved in the SAME single test chat', hiConvs.length === 1 && hiConvs[0] === ownerConvId, JSON.stringify(hiConvs.map((x) => x.slice(0, 8))));
+      const ownerAfterHi = await api(`/api/inbox/${ownerConvId}`);
+      const ownerOutAfterHi = (ownerAfterHi.data?.messages ?? []).filter((m) => m.direction === 'out');
+      check('boot 2: owner normal message got NO AI reply', ownerOutAfterHi.length === 0, `out=${ownerOutAfterHi.length}`);
+      const ownerInCount = (ownerAfterHi.data?.messages ?? []).filter((m) => m.direction === 'in').length;
+      check('boot 2: test chat holds all 3 owner messages', ownerInCount === 3, `in=${ownerInCount}`);
+
+      // Owner with an order is STILL excluded from the Customers list
+      // (explicit owner-PSID exclusion, not just buyers-only).
+      const ownerCustomerId = ownerAfterHi.data?.customer?.id ?? ownerAfterHi.data?.conversation?.customer_id ?? '';
+      const ownerOrder = await api('/api/orders', {
+        method: 'POST',
+        body: { customerId: ownerCustomerId, conversationId: ownerConvId, items: [{ productId: jeansId, quantity: 1 }], customerName: 'Owner Test', customerPhone: '01700000002', deliveryAddress: 'Dhaka' },
+      });
+      check('boot 2: order created for the owner (proves the exclusion, not buyers-only)', ownerOrder.status === 201, `status=${ownerOrder.status}`);
+      const custAfterOwnerOrder = await api('/api/customers');
+      check('boot 2: Customers API still excludes the owner WITH an order', !(custAfterOwnerOrder.data?.customers ?? []).some((c) => c.id === ownerCustomerId), JSON.stringify((custAfterOwnerOrder.data?.customers ?? []).map((c) => c.name)));
+      const custSearchOwner = await api('/api/customers?q=Owner');
+      check('boot 2: Customers search still excludes the owner', (custSearchOwner.data?.customers ?? []).length === 0, JSON.stringify((custSearchOwner.data?.customers ?? []).map((c) => c.name)));
     }
   } finally {
     run2.stop();

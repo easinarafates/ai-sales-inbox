@@ -146,6 +146,30 @@ async function findOrCreateConversation(
   throw new Error('findOrCreateConversation: could not create or find a conversation');
 }
 
+/**
+ * The owner's test chat: his EXISTING owner customer row + its latest
+ * conversation on this channel (20e932c5 in gd_arafat). The lookup
+ * finds the row — it does not create a second owner customer. Only
+ * when no owner row exists at all (a fresh workspace) does
+ * findOrCreateCustomer create the test-chat row: that row is the
+ * owner's own test chat, never a buyer, and GET /api/customers
+ * excludes the owner PSID explicitly, so it can never appear there.
+ */
+async function findOwnerTestConversation(
+  workspaceId: string,
+  channelId: string | null,
+  ownerPsid: string,
+): Promise<string | null> {
+  try {
+    const customer = await findOrCreateCustomer(workspaceId, 'messenger', ownerPsid);
+    if (!customer?.id) return null;
+    return await findOrCreateConversation(workspaceId, channelId, customer.id);
+  } catch (err) {
+    console.error('[webhook/meta] owner test chat lookup failed:', (err as Error).message);
+    return null;
+  }
+}
+
 async function saveIncomingMessage(
   workspaceId: string,
   conversationId: string,
@@ -265,16 +289,23 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       const eventId = message.mid ?? `${sender.id}-${Date.now()}`;
       if (!(await recordWebhookEvent(channel.workspace_id, platform, eventId, event))) continue; // duplicate
 
-      // --- Owner guard: the shop owner messaging his own Page ---
-      // The owner (workspaces.owner_psid) is NEVER a customer: his
-      // messages must never create a customer or conversation and must
-      // never get an AI reply — that is how a chat opened in the name
-      // "ইয়াসিন আরাফাত". His dot commands still work, but with no
-      // conversation to toggle they flip the workspace-wide AI switch
-      // (workspaces.ai_enabled) and the confirmation goes to him as a
-      // direct Page message. Anything else from him is ignored silently.
+      // --- Owner guard (REVISED 2026-11-08): the shop owner messaging his own Page ---
+      // The owner is NEVER a buyer and NEVER gets an AI reply — but his
+      // messages must be SAVED and VISIBLE in the Inbox, in his single
+      // existing test chat (the latest conversation of his owner
+      // customer row, 20e932c5 in gd_arafat), so his own tests show up
+      // on our side. The first version of this guard dropped his
+      // messages silently ("মেসেজ দিলে আমাদের ওই সাইডে শো করতেছেনা").
+      // His dot commands still flip the workspace-wide AI switch (no
+      // conversation to toggle) with a direct Page confirmation.
+      // Anything else from him is saved and then ignored: never
+      // enqueued, never an AI reply, never a new customer row.
       const ownerPsid = await getWorkspaceOwnerPsid(channel.workspace_id);
       if (ownerPsid && ownerPsid === sender.id) {
+        const ownerConv = await findOwnerTestConversation(channel.workspace_id, channel.id, ownerPsid);
+        if (ownerConv) {
+          await saveIncomingMessage(channel.workspace_id, ownerConv, message.text, message.mid);
+        }
         const ownerCmd = parseDotCommand(message.text);
         if (ownerCmd) {
           const enabled =

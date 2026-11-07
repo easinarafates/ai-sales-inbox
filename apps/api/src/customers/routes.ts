@@ -64,6 +64,16 @@ interface CustomerRow {
  */
 const BUYERS_ONLY = `EXISTS (SELECT 1 FROM orders o WHERE o.workspace_id = customers.workspace_id AND o.customer_id = customers.id)`;
 
+/**
+ * NOT THE OWNER: the shop owner (workspaces.owner_psid) is never a
+ * customer — even though he has a test chat and once had his own test
+ * order, his PSID must never appear in the Customers list. Belt and
+ * braces beside BUYERS_ONLY (his test order is deleted, so he is not
+ * a buyer either — but the exclusion holds even if an order ever
+ * points at him again).
+ */
+const NOT_OWNER = `NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.id = customers.workspace_id AND w.owner_psid IS NOT NULL AND customers.primary_identity IN ('messenger:' || w.owner_psid, 'facebook_comment:' || w.owner_psid))`;
+
 /** GET /api/customers?q= — search by name or phone (empty q lists all). */
 customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -71,7 +81,7 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   if (!q) {
     const { rows } = await query<CustomerRow>(
       workspaceId,
-      `SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 AND ${BUYERS_ONLY} ORDER BY created_at DESC LIMIT 200`,
+      `SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 AND ${BUYERS_ONLY} AND ${NOT_OWNER} ORDER BY created_at DESC LIMIT 200`,
       [workspaceId],
     );
     res.json({ customers: rows });
@@ -81,7 +91,7 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   const { rows } = await query<CustomerRow>(
     workspaceId,
     `SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers
-     WHERE workspace_id = $1 AND ${BUYERS_ONLY} AND (name ILIKE $2 OR phone ILIKE $2)
+     WHERE workspace_id = $1 AND ${BUYERS_ONLY} AND ${NOT_OWNER} AND (name ILIKE $2 OR phone ILIKE $2)
      ORDER BY created_at DESC LIMIT 200`,
     [workspaceId, like],
   );

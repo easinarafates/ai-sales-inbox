@@ -177,6 +177,39 @@ async function main(): Promise<void> {
     conversationId: n1.conversationId,
   };
 
+  // --- (5b) FLOOD HARDENING (2026-11-08): a stale batch that still
+  // holds an old list request must never re-send the list ---
+  // (a) stale list + show pick → the pick wins: exactly 1 jeans photo.
+  const m1 = await seedConversation('Mixed Show Customer', [{ platform: 'webchat', senderId: 'wc-d-mix-1' }], 'webchat', webchatChannelId);
+  const rm1 = await processBatch(workspaceId, m1.conversationId, [{ body: 'কি কি প্রোডাক্ট আছে?' }, { body: 'জিন্সটা দেখাও' }]);
+  const rowsM1 = await outRows(m1.conversationId);
+  out.mixedShow = {
+    result: { replied: rm1.replied, reason: rm1.reason },
+    state: await convState(m1.conversationId),
+    images: rowsM1.filter((m) => m.type === 'image').map((m) => m.body),
+    texts: rowsM1.filter((m) => m.type === 'text').map((m) => m.body),
+    conversationId: m1.conversationId,
+  };
+  // (b) stale list + refusal → NO photos at all.
+  const m2 = await seedConversation('Mixed Refusal Customer', [{ platform: 'webchat', senderId: 'wc-d-mix-2' }], 'webchat', webchatChannelId);
+  const rm2 = await processBatch(workspaceId, m2.conversationId, [{ body: 'কি কি প্রোডাক্ট আছে?' }, { body: 'নিবো না' }]);
+  const rowsM2 = await outRows(m2.conversationId);
+  out.mixedRefusal = {
+    result: { replied: rm2.replied, reason: rm2.reason },
+    images: rowsM2.filter((m) => m.type === 'image').length,
+    conversationId: m2.conversationId,
+  };
+  // (c) repeat list request on the thread that JUST got the list (l1,
+  // whose latest out is the interest question) → the guard blocks the
+  // re-send: 0 new images.
+  const rg = await processBatch(workspaceId, l1.conversationId, [{ body: 'কি কি প্রোডাক্ট আছে?' }]);
+  const rowsG = await outRows(l1.conversationId);
+  out.guardRepeat = {
+    result: { replied: rg.replied, reason: rg.reason },
+    newImages: rowsG.filter((m) => m.type === 'image').length - rows1.filter((m) => m.type === 'image').length,
+    conversationId: l1.conversationId,
+  };
+
   // --- (6) Tool test with stubbed Graph fetch: send_product_photos ---
   // Seed a messenger channel with a real encrypted token (decryptToken
   // must succeed) + a customer with a messenger identity.
