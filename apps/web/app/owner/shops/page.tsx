@@ -46,6 +46,10 @@ export default function OwnerShopsPage() {
   };
 
   const toggleSuspend = async (shop: OwnerShop) => {
+    const msg = shop.suspended
+      ? t("owner.activateConfirm", "Activate this shop?", "এই দোকানটি চালু করবেন?")
+      : t("owner.suspendConfirm", "Suspend this shop? Its users will not be able to log in until you re-activate it.", "এই দোকানটি বন্ধ করবেন? আবার চালু না করা পর্যন্ত এর ব্যবহারকারীরা লগইন করতে পারবেন না।");
+    if (!window.confirm(msg)) return;
     setError("");
     setMessage("");
     setBusy(shop.id);

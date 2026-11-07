@@ -23,7 +23,15 @@ export interface Plan {
   [key: string]: unknown;
 }
 
-export function planName(p: Plan): string {
+const PLAN_NAMES: Record<string, [string, string]> = {
+  choto: ["Small", "ছোট"],
+  majhari: ["Medium", "মাঝারি"],
+  boro: ["Large", "বড়"],
+};
+
+export function planName(p: Plan, lang?: "en" | "bn"): string {
+  const pair = PLAN_NAMES[p.slug];
+  if (pair) return lang === "bn" ? pair[1] : pair[0];
   return p.nameBn || p.name_bn || p.slug || "—";
 }
 

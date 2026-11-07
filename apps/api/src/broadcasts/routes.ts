@@ -7,9 +7,9 @@
  * created_at >= now() - interval '24 hours'). Customers outside the window
  * are counted as `skipped` and are never messaged.
  *
- * Real Meta sending is a STUB: recipients are logged and marked 'sent' in
- * our tables only. Sending via the Meta Graph API needs Meta approval and
- * is NOT done here.
+ * Real Meta sending is a STUB: recipients are only logged (status 'logged')
+ * in our tables. Sending via the Meta Graph API needs Meta approval and
+ * is NOT done here — nothing is ever marked 'sent' until a real send happens.
  */
 import { Router, type Response } from 'express';
 import { pool, query, queryOne } from '../db/pool';
@@ -67,9 +67,13 @@ broadcastsRouter.post('/broadcasts', async (req: AuthRequest, res: Response) => 
 /**
  * POST /api/broadcasts/:id/send — ONLY to customers with an inbound message
  * in the last 24 hours (Meta 24-hour window, enforced in SQL below).
- * Recipients are inserted as 'queued', then marked 'sent' via the stub
- * sender (log only — real Meta send needs approval). Returns
- * { broadcast, sent, skipped } where skipped = customers outside the window.
+ *
+ * HONEST STUB: real Meta sending needs approval and is NOT done here, so
+ * nothing is actually sent to anyone. Eligible customers are only LOGGED
+ * (recipients status 'logged', broadcast status 'logged', sent_at stays
+ * NULL). Returns { broadcast, sent: 0, logged, skipped, stub: true, reason }
+ * where skipped = customers outside the window. The UI must show the
+ * logged count and say clearly that nothing was sent.
  */
 broadcastsRouter.post('/broadcasts/:id/send', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -84,6 +88,10 @@ broadcastsRouter.post('/broadcasts/:id/send', async (req: AuthRequest, res: Resp
   }
   if (broadcast.status === 'sent') {
     res.status(400).json({ error: 'এই ব্রডকাস্টটি ইতিমধ্যে পাঠানো হয়েছে।' });
+    return;
+  }
+  if (broadcast.status === 'logged') {
+    res.status(400).json({ error: 'এই ব্রডকাস্টটি ইতিমধ্যে লগ করা হয়েছে — আসল পাঠানো এখনো চালু হয়নি।' });
     return;
   }
 
@@ -104,8 +112,8 @@ broadcastsRouter.post('/broadcasts/:id/send', async (req: AuthRequest, res: Resp
     [workspaceId],
   );
   const totalCustomers = Number(totalRows[0]?.n ?? 0);
-  const sent = eligible.length;
-  const skipped = Math.max(0, totalCustomers - sent);
+  const logged = eligible.length;
+  const skipped = Math.max(0, totalCustomers - logged);
 
   const client = await pool.connect();
   try {
@@ -118,23 +126,31 @@ broadcastsRouter.post('/broadcasts/:id/send', async (req: AuthRequest, res: Resp
       );
     }
     // STUB sender — log only. Real Meta Graph API send needs Meta approval.
+    // Nothing is sent: recipients are marked 'logged', never 'sent'.
     for (const customer of eligible) {
       console.log(
         `[broadcast-stub] broadcast ${broadcast.id} -> customer ${customer.id} (STUB — not really sent; real Meta send needs approval)`,
       );
     }
     await client.query(
-      "UPDATE broadcast_recipients SET status = 'sent', updated_at = now() WHERE workspace_id = $1 AND broadcast_id = $2",
+      "UPDATE broadcast_recipients SET status = 'logged', updated_at = now() WHERE workspace_id = $1 AND broadcast_id = $2",
       [workspaceId, broadcast.id],
     );
     const { rows: updated } = await client.query(
-      `UPDATE broadcasts SET status = 'sent', sent_at = now(), updated_at = now()
+      `UPDATE broadcasts SET status = 'logged', updated_at = now()
        WHERE workspace_id = $1 AND id = $2
        RETURNING id, title, message, offer_text, coupon_code, status, sent_at, created_at`,
       [workspaceId, broadcast.id],
     );
     await client.query('COMMIT');
-    res.json({ broadcast: updated[0], sent, skipped });
+    res.json({
+      broadcast: updated[0],
+      sent: 0,
+      logged,
+      skipped,
+      stub: true,
+      reason: 'Real Meta sending needs approval — messages were only logged, not sent.',
+    });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
     console.error('[broadcasts/send]', err);

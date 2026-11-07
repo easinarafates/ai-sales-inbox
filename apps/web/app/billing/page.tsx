@@ -10,11 +10,8 @@ export default function BillingPage() {
   const router = useRouter();
   const { t, fmtDate, fmtTaka, fmtNum } = useI18n();
   const [billing, setBilling] = useState<Billing | null>(null);
-  const [topupTaka, setTopupTaka] = useState("");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -31,20 +28,6 @@ export default function BillingPage() {
     load();
   }, [load, router]);
 
-  const topup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(""); setNotice(""); setSaving(true);
-    try {
-      const amountPaisa = Math.round(parseFloat(topupTaka || "0") * 100);
-      await billingApi.topup(amountPaisa);
-      setNotice(`${t("billing.topupRequested", "Top-up request sent. It will be confirmed here once the payment gateway is connected — for now this is a stub.", "টপ-আপের অনুরোধ পাঠানো হয়েছে। পেমেন্ট গেটওয়ে যুক্ত হলে এখানেই নিশ্চিত হবে — আপাতত এটি একটি স্টাব।")} (${fmtTaka(amountPaisa)})`);
-      setTopupTaka("");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("billing.topupFailed", "Top-up failed.", "টপ-আপ ব্যর্থ হয়েছে।"));
-    } finally { setSaving(false); }
-  };
-
   if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
 
   const usage = billing ? billingUsage(billing) : [];
@@ -52,13 +35,24 @@ export default function BillingPage() {
   const totalCost = usage.reduce((sum, u) => sum + (u.costPaisa ?? u.cost_paisa ?? u.cost ?? 0), 0);
   const avgCost = usage.length > 0 ? totalCost / usage.length : 0;
 
+  // Wallet transaction type, translated (never show the raw DB value).
+  const txTypeLabel = (type: string | undefined) =>
+    type === "topup" ? t("billing.txTopup", "Top-up", "টপ-আপ")
+    : type === "ai_charge" ? t("billing.txAiCharge", "AI reply cost", "AI উত্তরের খরচ")
+    : type === "subscription_charge" ? t("billing.txSubscription", "Subscription", "সাবস্ক্রিপশন")
+    : type || "—";
+  // Stored descriptions are English; translate the one known value.
+  const txDescription = (tx: { description?: string; type?: string }) =>
+    tx.description === "Free credit on signup"
+      ? t("billing.txFreeCredit", "Free credit on signup", "সাইনআপে ফ্রি ক্রেডিট")
+      : tx.description || txTypeLabel(tx.type);
+
   return (
     <div>
       <h1 className="page-title">{t("billing.title", "Billing & Wallet", "বিলিং ও ওয়ালেট")}</h1>
       <p className="page-subtitle">{t("billing.subtitle", "Wallet balance, top-ups and transactions.", "ওয়ালেট ব্যালেন্স, টপ-আপ আর লেনদেন।")}</p>
       <SubscriptionSummary />
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
         <div className="card p-5">
@@ -67,29 +61,20 @@ export default function BillingPage() {
           <p className="text-xs text-slate-500 mt-2">{t("billing.freeCreditNote", "🎁 New accounts get free credit — no monthly fee, only the cost of each AI reply is deducted.", "🎁 নতুন অ্যাকাউন্টে ফ্রি ক্রেডিট দেওয়া হয় — কোনো মাসিক ফি নেই, শুধু প্রতি AI রিপ্লাইয়ের খরচ কাটা হয়।")}</p>
         </div>
         <div className="card p-5">
-          <p className="text-slate-500 text-sm">{t("billing.totalAiCost", "Total AI cost (ledger)", "মোট AI খরচ (লেজার)")}</p>
+          <p className="text-slate-500 text-sm">{t("billing.totalAiCost", "Total AI cost", "মোট AI খরচ")}</p>
           <p className="text-3xl font-bold">{fmtTaka(totalCost)}</p>
           <p className="text-xs text-slate-500 mt-2">{fmtNum(usage.length)} {t("billing.repliesCount", "replies", "টি রিপ্লাই")}</p>
         </div>
         <div className="card p-5">
           <p className="text-slate-500 text-sm">{t("billing.avgCost", "Average cost / reply", "গড় খরচ / রিপ্লাই")}</p>
           <p className="text-3xl font-bold">{fmtNum(Math.round(avgCost * 100) / 100)} {t("billing.avgCostUnit", "paisa", "পয়সা")}</p>
-          <p className="text-xs text-slate-500 mt-2">{t("billing.avgCostTarget", "Target: under 20 paisa (Phase 1 gate)", "লক্ষ্য: ২০ পয়সার নিচে (ফেজ ১ গেট)")}</p>
+          <p className="text-xs text-slate-500 mt-2">{t("billing.avgCostTarget", "Target: under 20 paisa per reply", "লক্ষ্য: প্রতি রিপ্লাইয়ে ২০ পয়সার নিচে")}</p>
         </div>
       </div>
 
-      <form onSubmit={topup} className="card p-4 mb-6 flex flex-wrap gap-2 items-end">
-        <div className="flex-1 min-w-52">
-          <label className="block text-sm font-medium mb-1">{t("billing.topupAmount", "Top-up amount (৳)", "টপ-আপের পরিমাণ (৳)")}</label>
-          <input required type="number" min="1" step="0.01" value={topupTaka} onChange={(e) => setTopupTaka(e.target.value)} placeholder={t("billing.topupAmountPlaceholder", "e.g. 500", "যেমন: 500")} className="w-full border rounded-lg px-3 py-2" />
-        </div>
-        <button disabled={saving} className="bg-brand text-white px-5 py-2 rounded-lg hover:bg-brand-dark disabled:opacity-50">{saving ? t("billing.topupProcessing", "Processing…", "প্রসেস হচ্ছে…") : t("billing.topupButton", "Top up", "টপ-আপ করুন")}</button>
-        <p className="text-xs text-slate-500 w-full">{t("billing.topupGatewayNote", "Payment gateway (bKash/Nagad/card) is not connected yet — this form only sends amountPaisa to the API.", "পেমেন্ট গেটওয়ে (বিকাশ/নগদ/কার্ড) এখনো যুক্ত হয়নি — এই ফর্মটি API-তে amountPaisa পাঠায় মাত্র।")}</p>
-      </form>
-
       <TopupSection />
 
-      <h2 className="font-bold mb-2">{t("billing.ledgerTitle", "Cost of each AI reply — ledger (ai_usage_ledger)", "প্রতি AI রিপ্লাইয়ের খরচ — লেজার (ai_usage_ledger)")}</h2>
+      <h2 className="font-bold mb-2">{t("billing.ledgerTitle", "Cost of each AI reply", "প্রতি AI রিপ্লাইয়ের খরচ")}</h2>
       {usage.length === 0 ? (
         <p className="text-slate-500 card p-6 mb-6">{t("billing.ledgerEmpty", "No AI usage records yet.", "এখনো কোনো AI ব্যবহারের রেকর্ড নেই।")}</p>
       ) : (
@@ -121,8 +106,8 @@ export default function BillingPage() {
               {transactions.map((tx) => (
                 <tr key={tx.id} className="border-b">
                   <td className="p-3">{fmtDate(tx.createdAt || tx.created_at)}</td>
-                  <td className="p-3">{tx.type || "—"}</td>
-                  <td className="p-3">{tx.description || "—"}</td>
+                  <td className="p-3">{txTypeLabel(tx.type)}</td>
+                  <td className="p-3">{txDescription(tx)}</td>
                   <td className="p-3 text-right">{fmtTaka(tx.amountPaisa ?? tx.amount_paisa ?? tx.amount ?? 0)}</td>
                 </tr>
               ))}

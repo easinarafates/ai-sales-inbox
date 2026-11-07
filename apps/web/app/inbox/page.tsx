@@ -238,13 +238,17 @@ export default function InboxPage() {
 
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:gap-3">
-        <input
-          value={q}
-          onChange={(e) => setQ(e.target.value)}
-          placeholder={t("inbox.searchPlaceholder", "Search — name, phone, order number, chat words…", "খুঁজুন — নাম, ফোন, অর্ডার নম্বর, চ্যাটের শব্দ…")}
-          className="flex-1"
-        />
+      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
+        <div className="flex-1">
+          <label htmlFor="inbox-search" className="mb-1 block text-sm font-medium text-slate-700">{t("inbox.searchLabel", "Search chats", "চ্যাট খুঁজুন")}</label>
+          <input
+            id="inbox-search"
+            value={q}
+            onChange={(e) => setQ(e.target.value)}
+            placeholder={t("inbox.searchPlaceholder", "Search — name, phone, order number, chat words…", "খুঁজুন — নাম, ফোন, অর্ডার নম্বর, চ্যাটের শব্দ…")}
+            className="w-full"
+          />
+        </div>
         <select value={status} onChange={(e) => setStatus(e.target.value)} className="sm:w-44">
           <option value="">{t("common.allStatus", "All statuses", "সব স্ট্যাটাস")}</option>
           <option value="open">{t("inbox.statusOpen", "Open", "খোলা")}</option>
@@ -265,7 +269,10 @@ export default function InboxPage() {
             </div>
           )}
           {!loading && conversations.length === 0 && (
-            <div className="empty-state m-4">{t("inbox.noChats", "No chats found.", "কোনো চ্যাট পাওয়া যায়নি।")}</div>
+            <div className="empty-state m-4">
+              <p>{t("inbox.noChats", "No chats found.", "কোনো চ্যাট পাওয়া যায়নি।")}</p>
+              <p className="mt-1 text-xs">{t("inbox.noChatsHint", "No chats yet — connect your Facebook Page from Channels (or finish the Setup wizard) and new customer messages will appear here.", "এখনো কোনো চ্যাট নেই — Channels থেকে ফেসবুক পেজ যুক্ত করুন (বা Setup উইজার্ড শেষ করুন), তাহলে কাস্টমারের নতুন মেসেজ এখানে আসবে।")}</p>
+            </div>
           )}
           {conversations.map((c) => (
             <button

@@ -155,7 +155,7 @@ followupsRouter.patch('/followups/:id', async (req: AuthRequest, res: Response) 
   }
   if (
     status !== undefined &&
-    !['scheduled', 'sent', 'stopped', 'cancelled', 'failed'].includes(status)
+    !['scheduled', 'sent', 'logged', 'stopped', 'cancelled', 'failed'].includes(status)
   ) {
     res.status(400).json({ error: 'status সঠিক নয়' });
     return;
@@ -204,6 +204,10 @@ followupsRouter.post('/followups/:id/send-now', async (req: AuthRequest, res: Re
   }
   if (existing.status === 'sent') {
     res.status(400).json({ error: 'এই ফলো-আপটি ইতিমধ্যে পাঠানো হয়েছে' });
+    return;
+  }
+  if (existing.status === 'logged') {
+    res.status(400).json({ error: 'এই ফলো-আপটি ইতিমধ্যে লগ করা হয়েছে — আসল পাঠানো এখনো চালু হয়নি' });
     return;
   }
   const result = await sendFollowup(workspaceId, req.params.id);

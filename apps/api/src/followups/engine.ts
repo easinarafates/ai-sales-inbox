@@ -13,11 +13,12 @@ import { pool, query, queryOne } from '../db/pool';
  *
  * Delivery: the message is saved as an 'out' message in the customer's
  * open conversation (a new open conversation is created if none exists),
- * exactly like a team reply in the inbox. STUB — the actual send to
+ * exactly like a team reply in the inbox. HONEST STUB — the actual send to
  * Messenger/Instagram via the Meta Graph API is not wired yet (live page
  * token + approval pending, same as every other outbound send in Phase 1);
- * the message is stored and visible in the inbox, delivery to the platform
- * is wired in the send step.
+ * the message is stored and visible in the inbox, but it is NOT delivered
+ * to the customer. Such follow-ups are marked 'logged' (never 'sent') until
+ * a real Graph send exists, and the UI must say so.
  *
  * NOTE on schema: the followups table has no customer_id column — the
  * customer is reached through followups.lead_id -> leads.customer_id.
@@ -87,7 +88,7 @@ async function getReplyState(
     workspaceId,
     `SELECT f.id, f.updated_at, f.created_at FROM followups f
      JOIN leads l ON l.id = f.lead_id
-     WHERE f.workspace_id = $1 AND l.customer_id = $2 AND f.status = 'sent'
+     WHERE f.workspace_id = $1 AND l.customer_id = $2 AND f.status IN ('sent', 'logged')
      ORDER BY f.updated_at ASC`,
     [workspaceId, customerId],
   );
@@ -139,8 +140,10 @@ async function markFollowup(
 
 /**
  * Send one follow-up (shared by the due-sweep and send-now): applies the
- * smart stop rules first, then saves the 'out' message and marks 'sent'.
- * Returns the updated row, or null if the follow-up does not exist.
+ * smart stop rules first, then saves the 'out' message and marks 'logged'.
+ * Nothing is delivered to the customer until a real Graph send exists —
+ * the status is 'logged', never 'sent'. Returns the updated row, or null
+ * if the follow-up does not exist.
  */
 export async function sendFollowup(
   workspaceId: string,
@@ -181,8 +184,8 @@ export async function sendFollowup(
   }
 
   const conversationId = await findOrCreateOpenConversation(workspaceId, customerId);
-  // STUB send (see header): saved as an outbound inbox message; the real
-  // Meta Graph API send is wired in the send step once approval exists.
+  // HONEST STUB (see header): saved as an outbound inbox message only;
+  // the real Meta Graph API send is not wired yet. Mark 'logged', never 'sent'.
   await query(
     workspaceId,
     `INSERT INTO messages (workspace_id, conversation_id, direction, type, body)
@@ -194,13 +197,14 @@ export async function sendFollowup(
     'UPDATE conversations SET updated_at = now() WHERE workspace_id = $1 AND id = $2',
     [workspaceId, conversationId],
   );
-  const sent = await markFollowup(workspaceId, followupId, 'sent');
-  return { followup: sent, stopped: false };
+  const logged = await markFollowup(workspaceId, followupId, 'logged');
+  return { followup: logged, stopped: false };
 }
 
 async function processDueForWorkspace(workspaceId: string): Promise<{
   processed: number;
   sent: number;
+  logged: number;
   stopped: number;
   failed: number;
 }> {
@@ -215,6 +219,7 @@ async function processDueForWorkspace(workspaceId: string): Promise<{
   );
   let processed = 0;
   let sent = 0;
+  let logged = 0;
   let stopped = 0;
   let failed = 0;
   for (const { id } of due) {
@@ -224,13 +229,14 @@ async function processDueForWorkspace(workspaceId: string): Promise<{
       if (!result.followup) failed++;
       else if (result.stopped) stopped++;
       else if (result.followup.status === 'sent') sent++;
+      else if (result.followup.status === 'logged') logged++;
       else failed++;
     } catch (err) {
       failed++;
       console.error(`[followups] follow-up ${id} failed:`, (err as Error).message);
     }
   }
-  return { processed, sent, stopped, failed };
+  return { processed, sent, logged, stopped, failed };
 }
 
 /**
@@ -241,6 +247,7 @@ async function processDueForWorkspace(workspaceId: string): Promise<{
 export async function processDueFollowups(workspaceId?: string): Promise<{
   processed: number;
   sent: number;
+  logged: number;
   stopped: number;
   failed: number;
 }> {
@@ -249,11 +256,12 @@ export async function processDueFollowups(workspaceId?: string): Promise<{
     `SELECT DISTINCT workspace_id FROM followups
      WHERE status = 'scheduled' AND send_at <= now()`,
   );
-  const total = { processed: 0, sent: 0, stopped: 0, failed: 0 };
+  const total = { processed: 0, sent: 0, logged: 0, stopped: 0, failed: 0 };
   for (const { workspace_id } of workspaces) {
     const r = await processDueForWorkspace(workspace_id);
     total.processed += r.processed;
     total.sent += r.sent;
+    total.logged += r.logged;
     total.stopped += r.stopped;
     total.failed += r.failed;
   }

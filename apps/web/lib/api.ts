@@ -450,6 +450,11 @@ export const productsApi = {
   list: () => api.get<Product[] | { products: Product[] }>("/api/products"),
   create: (body: { name: string; pricePaisa: number; size?: string; stock?: number; description?: string }) =>
     api.post<Product>("/api/products", body),
+  /** Update name / price / size / stock / description (only sent fields change). */
+  update: (id: string, body: { name?: string; pricePaisa?: number; size?: string | null; stock?: number; description?: string | null }) =>
+    api.patch<{ product: Product } | Product>(`/api/products/${id}`, body),
+  /** Delete the product and its photos. */
+  delete: (id: string) => api.del<{ deleted: boolean }>(`/api/products/${id}`),
   // Backend returns { product } — unwrap so the detail page gets the product itself.
   get: async (id: string) => {
     const data = await api.get<Product | { product: Product }>(`/api/products/${id}`);
@@ -539,7 +544,7 @@ export const ordersApi = {
 
 export const ticketsApi = {
   list: () => api.get<Ticket[] | { tickets: Ticket[] }>("/api/tickets"),
-  create: (body: { conversationId: string; reason: string }) =>
+  create: (body: { conversationId?: string; reason: string }) =>
     api.post<Ticket>("/api/tickets", body),
   update: (id: string, body: { status: string }) =>
     api.patch<Ticket>(`/api/tickets/${id}`, body),
@@ -547,8 +552,6 @@ export const ticketsApi = {
 
 export const billingApi = {
   get: () => api.get<Billing>("/api/billing"),
-  topup: (amountPaisa: number) =>
-    api.post<{ balancePaisa: number } | Billing>("/api/billing/topup", { amountPaisa }),
 };
 
 export const channelsApi = {
@@ -911,7 +914,7 @@ export const followupsApi = {
     api.patch<{ followup: Followup } | Followup>(`/api/followups/${id}`, body),
   sendNow: (id: string) =>
     api.post<{ followup: Followup } | Followup>(`/api/followups/${id}/send-now`, {}),
-  runDue: () => api.post<{ processed: number; sent: number }>("/api/followups/run", {}),
+  runDue: () => api.post<{ processed: number; sent: number; logged?: number }>("/api/followups/run", {}),
 };
 
 export interface AnalyticsOverview {
@@ -1023,7 +1026,12 @@ export const teachApi = {
   knowledgeDelete: (id: string) =>
     api.del<{ deleted: boolean }>(`/api/knowledge/${id}`),
   previewChange: (knowledgeId: string | undefined, instruction: string) =>
-    api.post<{ preview: string; newBody?: string }>(`/api/knowledge/preview-change`, { knowledgeId, instruction }),
+    api.post<{ preview: string; newBody?: string; aiGenerated?: boolean; note?: string }>(`/api/knowledge/preview-change`, { knowledgeId, instruction }),
+  /** Earlier saved versions of one item (newest first) — for cross-session rollback. */
+  listVersions: async (knowledgeId: string) => {
+    const data = await api.get<{ versions: { id: string; body: string; createdAt?: string; created_at?: string }[] }>(`/api/knowledge/${knowledgeId}/versions`);
+    return data.versions ?? [];
+  },
   applyChange: (knowledgeId: string, newBody: string) =>
     api.post<{ knowledgeItem: KnowledgeItem; versionId?: string }>(`/api/knowledge/apply-change`, { knowledgeId, newBody }),
   rollback: (knowledgeId: string, versionId: string) =>
@@ -1040,6 +1048,7 @@ export interface Broadcast {
   coupon_code?: string;
   status?: string;
   sent?: number;
+  logged?: number;
   skipped?: number;
   createdAt?: string;
   created_at?: string;
@@ -1051,7 +1060,7 @@ export const broadcastsApi = {
   create: (body: { title: string; message: string; offerText?: string; couponCode?: string }) =>
     api.post<{ broadcast: Broadcast } | Broadcast>("/api/broadcasts", body),
   send: (id: string) =>
-    api.post<{ broadcast: Broadcast; sent: number; skipped: number }>(`/api/broadcasts/${id}/send`, {}),
+    api.post<{ broadcast: Broadcast; sent: number; logged?: number; skipped: number; stub?: boolean; reason?: string }>(`/api/broadcasts/${id}/send`, {}),
   get: (id: string) =>
     api.get<{ broadcast: Broadcast; recipients?: unknown[] }>(`/api/broadcasts/${id}`),
 };
@@ -1094,7 +1103,7 @@ export const bookingsApi = {
   remindersDue: () =>
     api.get<Booking[] | { bookings: Booking[] }>("/api/bookings/reminders-due"),
   remind: (id: string) =>
-    api.post<{ booking: Booking } | Booking>(`/api/bookings/${id}/remind`, {}),
+    api.post<{ booking: Booking; saved?: boolean; alreadySaved?: boolean; sent?: boolean; reason?: string } | Booking>(`/api/bookings/${id}/remind`, {}),
 };
 
 export interface ReviewItem {

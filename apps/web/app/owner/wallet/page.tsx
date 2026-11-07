@@ -113,6 +113,45 @@ export default function OwnerWalletPage() {
     }
   };
 
+  const removeCard = async (id: string) => {
+    if (!window.confirm(t("owner.removeCardConfirm", "Remove this card?", "এই কার্ডটি সরাবেন?"))) return;
+    setError("");
+    setMessage("");
+    setBusy(`card-${id}`);
+    try {
+      await ownerApi.deleteCard(id);
+      setMessage(t("owner.cardRemoved", "Card removed.", "কার্ড সরানো হয়েছে।"));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("ownerCardAddFail", "Could not save the card.", "কার্ডটি সেভ করা যায়নি।"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const setDefaultCard = async (id: string) => {
+    setError("");
+    setMessage("");
+    setBusy(`card-${id}`);
+    try {
+      await ownerApi.setDefaultCard(id);
+      setMessage(t("owner.defaultCardSet", "Primary card set.", "প্রধান কার্ড ঠিক করা হয়েছে।"));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("ownerCardAddFail", "Could not save the card.", "কার্ডটি সেভ করা যায়নি।"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  // Owner wallet history types, translated (never show the raw DB value).
+  const txTypeLabel = (type: string) =>
+    type === "deposit" ? t("ownerTxDeposit", "Deposit", "জমা")
+    : type === "topup" ? t("billing.txTopup", "Top-up", "টপ-আপ")
+    : type === "ai_charge" ? t("billing.txAiCharge", "AI reply cost", "AI উত্তরের খরচ")
+    : type === "subscription_charge" ? t("billing.txSubscription", "Subscription", "সাবস্ক্রিপশন")
+    : type || "—";
+
   const addDeposit = async () => {
     setError("");
     setMessage("");
@@ -315,6 +354,12 @@ export default function OwnerWalletPage() {
                 {cards.map((c) => (
                   <li key={c.id} className="flex justify-between gap-2">
                     <span>{c.masked}{c.expMonth && c.expYear ? ` · ${c.expMonth}/${c.expYear}` : ""}{c.isDefault ? ` · ${t("ownerPrimary", "Primary", "প্রধান")}` : ""}</span>
+                    <span className="flex gap-2 shrink-0">
+                      {!c.isDefault && (
+                        <button onClick={() => setDefaultCard(c.id)} disabled={busy === `card-${c.id}`} className="text-teal-700 underline disabled:opacity-50">{t("owner.setDefaultCard", "Make primary", "প্রধান করুন")}</button>
+                      )}
+                      <button onClick={() => removeCard(c.id)} disabled={busy === `card-${c.id}`} className="text-red-700 underline disabled:opacity-50">{t("owner.removeCard", "Remove", "সরান")}</button>
+                    </span>
                   </li>
                 ))}
               </ul>
@@ -340,7 +385,7 @@ export default function OwnerWalletPage() {
                     {wallet.transactions.map((tx) => (
                       <tr key={tx.id} className="border-b last:border-0">
                         <td className="p-2 whitespace-nowrap">{fmtDate(tx.createdAt)}</td>
-                        <td className="p-2">{tx.type}{tx.provider ? ` · ${tx.provider}` : ""}</td>
+                        <td className="p-2">{txTypeLabel(tx.type)}{tx.provider ? ` · ${tx.provider}` : ""}</td>
                         <td className={`p-2 ${tx.amountPaisa < 0 ? "text-red-600" : "text-teal-600"}`}>
                           {tx.amountPaisa < 0 ? "−" : "+"}{fmtTaka(Math.abs(tx.amountPaisa))}
                         </td>

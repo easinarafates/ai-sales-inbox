@@ -106,8 +106,8 @@ export default function LandingPage() {
           <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-slate-600 sm:text-lg">
             {t(
               "landing.heroSubtitle",
-              "AI Sales Inbox brings your Facebook Page messages, Instagram DMs and WhatsApp chats into one place. The AI replies to customers, shows your products, and takes orders — even while you sleep.",
-              "AI সেলস ইনবক্স আপনার ফেসবুক পেজের মেসেজ, ইনস্টাগ্রাম DM আর WhatsApp চ্যাট এক জায়গায় নিয়ে আসে। AI কাস্টমারের উত্তর দেয়, প্রোডাক্ট দেখায়, অর্ডার নেয় — আপনি ঘুমালেও।"
+              "AI Sales Inbox brings your Facebook Page messages and Instagram DMs into one place. The AI replies to customers, shows your products, and takes orders — even while you sleep. WhatsApp is coming soon.",
+              "AI সেলস ইনবক্স আপনার ফেসবুক পেজের মেসেজ আর ইনস্টাগ্রাম DM এক জায়গায় নিয়ে আসে। AI কাস্টমারের উত্তর দেয়, প্রোডাক্ট দেখায়, অর্ডার নেয় — আপনি ঘুমালেও। WhatsApp শীঘ্রই আসছে।"
             )}
           </p>
           <div className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
@@ -237,6 +237,15 @@ export default function LandingPage() {
             </Link>
             <Link href="/privacy" className="text-teal-700 underline hover:text-teal-800">
               {t("landing.privacy", "Privacy Policy", "প্রাইভেসি পলিসি")}
+            </Link>
+            <Link href="/terms" className="text-teal-700 underline hover:text-teal-800">
+              {t("landing.terms", "Terms of Service", "ব্যবহারের শর্ত")}
+            </Link>
+            <Link href="/about" className="text-teal-700 underline hover:text-teal-800">
+              {t("landing.about", "About", "আমাদের সম্পর্কে")}
+            </Link>
+            <Link href="/contact" className="text-teal-700 underline hover:text-teal-800">
+              {t("landing.contact", "Contact", "যোগাযোগ")}
             </Link>
           </div>
         </div>

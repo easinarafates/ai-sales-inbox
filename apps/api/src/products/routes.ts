@@ -269,6 +269,91 @@ productsRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   res.json({ product });
 });
 
+/**
+ * PATCH /api/products/:id — update name / price / size / stock / description.
+ * Only the fields sent are changed; price must stay non-negative.
+ */
+productsRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { name, pricePaisa, size, stock, description } = (req.body ?? {}) as {
+    name?: string;
+    pricePaisa?: number;
+    size?: string | null;
+    stock?: number;
+    description?: string | null;
+  };
+  const sets: string[] = [];
+  const params: unknown[] = [workspaceId, req.params.id];
+  const push = (sql: string, value: unknown) => {
+    params.push(value);
+    sets.push(`${sql} = $${params.length}`);
+  };
+  if (name !== undefined) {
+    if (typeof name !== 'string' || !name.trim()) {
+      res.status(400).json({ error: 'name must not be empty' });
+      return;
+    }
+    push('name', name.trim());
+  }
+  if (pricePaisa !== undefined) {
+    if (typeof pricePaisa !== 'number' || pricePaisa < 0) {
+      res.status(400).json({ error: 'pricePaisa must be a non-negative number' });
+      return;
+    }
+    push('price_paisa', pricePaisa);
+  }
+  if (size !== undefined) push('size', size ?? null);
+  if (stock !== undefined) {
+    if (typeof stock !== 'number' || stock < 0) {
+      res.status(400).json({ error: 'stock must be a non-negative number' });
+      return;
+    }
+    push('stock', stock);
+  }
+  if (description !== undefined) push('description', description ?? null);
+  if (sets.length === 0) {
+    res.status(400).json({ error: 'nothing to update' });
+    return;
+  }
+  const { rows } = await query<ProductRow>(
+    workspaceId,
+    `UPDATE products SET ${sets.join(', ')}, updated_at = now()
+     WHERE workspace_id = $1 AND id = $2
+     RETURNING id, name, price_paisa, size, stock, description`,
+    params,
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+  const product = rows[0];
+  await attachImages(workspaceId, [product]);
+  res.json({ product });
+});
+
+/**
+ * DELETE /api/products/:id — delete the product and its photos.
+ * No foreign key points at products (verified against the live schema),
+ * so nothing else references it; product_images rows are removed too.
+ */
+productsRouter.delete('/:id', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { rows } = await query<{ id: string }>(
+    workspaceId,
+    'DELETE FROM products WHERE workspace_id = $1 AND id = $2 RETURNING id',
+    [workspaceId, req.params.id],
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Product not found' });
+    return;
+  }
+  await query(workspaceId, 'DELETE FROM product_images WHERE workspace_id = $1 AND product_id = $2', [
+    workspaceId,
+    req.params.id,
+  ]);
+  res.json({ deleted: true });
+});
+
 /** GET /api/products/:id/images — list a product's photos. */
 productsRouter.get('/:id/images', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);

@@ -116,7 +116,9 @@ export default function TeamPage() {
       )}
 
       <h2 className="font-bold mb-3">{t("teamMembers", "Members", "সদস্যরা")}</h2>
-      {members.length === 0 ? (
+      {loading ? (
+        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+      ) : members.length === 0 ? (
         <p className="text-slate-500">{t("teamNoMembers", "No members yet.", "এখনো কোনো সদস্য নেই।")}</p>
       ) : (
         <div className="grid gap-3">

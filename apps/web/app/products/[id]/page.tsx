@@ -16,10 +16,18 @@ export default function ProductDetailPage() {
   const [product, setProduct] = useState<Product | null>(null);
   const [images, setImages] = useState<ProductImage[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [photoError, setPhotoError] = useState("");
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [deletingId, setDeletingId] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editPriceTaka, setEditPriceTaka] = useState("");
+  const [editSize, setEditSize] = useState("");
+  const [editStock, setEditStock] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [savingEdit, setSavingEdit] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const loadImages = useCallback(async () => {
@@ -67,6 +75,52 @@ export default function ProductDetailPage() {
     }
   };
 
+  const startEdit = () => {
+    if (!product) return;
+    setEditName(product.name);
+    setEditPriceTaka(String(productPricePaisa(product) / 100));
+    setEditSize(product.size || "");
+    setEditStock(product.stock != null ? String(product.stock) : "");
+    setEditDescription(product.description || "");
+    setEditing(true);
+  };
+
+  const saveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!product) return;
+    setError("");
+    setNotice("");
+    setSavingEdit(true);
+    try {
+      const updated = await productsApi.update(product.id, {
+        name: editName.trim(),
+        pricePaisa: Math.round(parseFloat(editPriceTaka || "0") * 100),
+        size: editSize || null,
+        stock: editStock ? parseInt(editStock, 10) : 0,
+        description: editDescription || null,
+      });
+      const p = (updated as { product?: Product }).product ?? (updated as Product);
+      setProduct(p);
+      setEditing(false);
+      setNotice(t("products.updated", "Product updated.", "প্রোডাক্ট বদলানো হয়েছে।"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("products.updateFailed", "Could not update the product.", "প্রোডাক্ট বদলানো যায়নি।"));
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const deleteProduct = async () => {
+    if (!product) return;
+    if (!window.confirm(t("products.deleteConfirm", "Delete this product? Its photos will be deleted too.", "এই প্রোডাক্টটি মুছে ফেলবেন? এর ছবিগুলোও মুছে যাবে।"))) return;
+    try {
+      await productsApi.delete(product.id);
+      router.push("/products");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("products.deleteFailed", "Could not delete the product.", "প্রোডাক্ট মোছা যায়নি।"));
+    }
+  };
+
   const removePhoto = async (imageId: string) => {
     if (!window.confirm(t("products.deletePhotoConfirm", "Remove this photo?", "এই ছবিটি সরাবেন?"))) return;
     setPhotoError("");
@@ -88,6 +142,8 @@ export default function ProductDetailPage() {
   return (
     <div>
       <Link href="/products" className="text-brand-dark underline text-sm">{t("products.listLink", "← Product list", "← প্রোডাক্ট তালিকা")}</Link>
+      {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mt-3 max-w-2xl">{error}</p>}
+      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mt-3 max-w-2xl">{notice}</p>}
       <div className="card p-6 mt-3 max-w-2xl">
         <h1 className="text-2xl font-bold">{product.name}</h1>
         <p className="text-3xl font-bold text-brand-dark mt-2">{fmtTaka(productPricePaisa(product))}</p>
@@ -99,6 +155,25 @@ export default function ProductDetailPage() {
           <div className="flex gap-2"><dt className="text-slate-500 w-24">{t("common.id", "ID", "ID")}:</dt><dd className="break-all text-slate-500">{product.id}</dd></div>
         </dl>
 
+        {editing ? (
+          <form onSubmit={saveEdit} className="mt-6 grid grid-cols-1 sm:grid-cols-2 gap-3 border-t pt-4">
+            <h2 className="font-bold sm:col-span-2">{t("products.editTitle", "Edit product", "প্রোডাক্ট বদলান")}</h2>
+            <input required value={editName} onChange={(e) => setEditName(e.target.value)} placeholder={t("products.namePlaceholder", "Product name *", "প্রোডাক্টের নাম *")} className="border rounded-lg px-3 py-2" />
+            <input required type="number" min="0" step="0.01" value={editPriceTaka} onChange={(e) => setEditPriceTaka(e.target.value)} placeholder={t("products.pricePlaceholder", "Price (৳) *", "দাম (৳) *")} className="border rounded-lg px-3 py-2" />
+            <input value={editSize} onChange={(e) => setEditSize(e.target.value)} placeholder={t("products.sizePlaceholder", "Size (e.g. M / 1kg)", "সাইজ (যেমন: M / 1kg)")} className="border rounded-lg px-3 py-2" />
+            <input type="number" min="0" value={editStock} onChange={(e) => setEditStock(e.target.value)} placeholder={t("products.stockPlaceholder", "Stock", "স্টক")} className="border rounded-lg px-3 py-2" />
+            <textarea value={editDescription} onChange={(e) => setEditDescription(e.target.value)} placeholder={t("products.descPlaceholder", "Description", "বিবরণ")} className="border rounded-lg px-3 py-2 sm:col-span-2" />
+            <div className="flex gap-2 sm:col-span-2">
+              <button disabled={savingEdit} className="bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-dark disabled:opacity-50">{savingEdit ? t("products.adding", "Adding…", "যোগ হচ্ছে…") : t("products.saveEdit", "Save changes", "বদল সেভ করুন")}</button>
+              <button type="button" onClick={() => setEditing(false)} className="px-4 py-2 rounded-lg border border-slate-300 text-slate-700 hover:bg-slate-50">{t("products.cancelEdit", "Cancel", "বাতিল")}</button>
+            </div>
+          </form>
+        ) : (
+          <div className="mt-6 flex gap-2 border-t pt-4">
+            <button onClick={startEdit} className="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-teal-700">{t("products.edit", "Edit", "বদলান")}</button>
+            <button onClick={deleteProduct} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700">{t("products.delete", "Delete", "মুছুন")}</button>
+          </div>
+        )}
         <div className="mt-6">
           <h2 className="font-bold">{t("products.photosLabel", "Product photos", "প্রোডাক্টের ছবি")}</h2>
           <p className="text-xs text-slate-500 mb-2">{t("products.photosHint", "Up to 10 photos (jpg / png / gif / webp, max 25 MB each).", "সর্বোচ্চ ১০টি ছবি (jpg / png / gif / webp, প্রতিটি সর্বোচ্চ ২৫ MB)।")}</p>

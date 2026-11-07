@@ -127,7 +127,7 @@ export function LanguageToggle() {
   const { lang, setLang } = useI18n();
   return (
     <div
-      className="inline-flex rounded-lg border border-slate-200 bg-white overflow-hidden"
+      className="inline-flex shrink-0 rounded-lg border border-slate-200 bg-white overflow-hidden"
       role="group"
       aria-label="Language / ভাষা"
     >

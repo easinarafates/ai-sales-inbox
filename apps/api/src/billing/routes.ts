@@ -1,5 +1,6 @@
 import { Router, type Response } from 'express';
 import { pool, query, queryOne } from '../db/pool';
+import { config } from '../config';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 
@@ -16,7 +17,7 @@ billingRouter.get('/', async (req: AuthRequest, res: Response) => {
   );
   const { rows: transactions } = await query(
     workspaceId,
-    'SELECT id, type, amount_paisa, created_at FROM wallet_transactions WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 100',
+    'SELECT id, type, amount_paisa, description, created_at FROM wallet_transactions WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 100',
     [workspaceId],
   );
   const { rows: usage } = await query(
@@ -29,11 +30,21 @@ billingRouter.get('/', async (req: AuthRequest, res: Response) => {
 });
 
 /**
- * POST /api/billing/topup {amountPaisa} — manual/stub top-up.
- * Phase 1 has NO payment gateway: this records a manual top-up (e.g. bKash/
- * bank transfer confirmed by the team). A real gateway plugs in here later.
+ * POST /api/billing/topup {amountPaisa} — TEST-ONLY direct top-up.
+ *
+ * SECURITY: this adds balance to the caller's own wallet with NO payment
+ * verification, so it must NEVER be live in production — any shop could
+ * give itself unlimited balance. It exists only so the subscription
+ * verifier can fund test wallets, and it is gated behind
+ * ALLOW_SUBSCRIPTION_TEST_HOOKS (off by default, 403 otherwise). Real
+ * top-ups go through the manual request flow (POST /api/billing/topup/
+ * request) which the owner approves after checking the real payment.
  */
 billingRouter.post('/topup', async (req: AuthRequest, res: Response) => {
+  if (!config.allowSubscriptionTestHooks) {
+    res.status(403).json({ error: 'Direct top-up is disabled — send a top-up request instead; it is checked by hand.' });
+    return;
+  }
   const workspaceId = getWorkspaceId(req);
   const { amountPaisa } = (req.body ?? {}) as { amountPaisa?: number };
   if (typeof amountPaisa !== 'number' || !Number.isInteger(amountPaisa) || amountPaisa <= 0) {

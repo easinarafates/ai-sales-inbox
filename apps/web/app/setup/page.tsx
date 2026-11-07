@@ -125,7 +125,6 @@ export default function SetupPage() {
                 <input required value={verifyCode} onChange={(e) => setVerifyCode(e.target.value)} placeholder="12345" maxLength={5} className="border rounded-lg px-3 py-2 w-32" />
                 <button className="bg-teal-600 hover:bg-teal-700 text-white rounded-lg px-4 py-2">{t("setupVerify", "Verify", "যাচাই করুন")}</button>
               </form>
-              {verifyMsg && !testCode ? null : null}
             </div>
           )}
           {!testCode && verifyMsg && (

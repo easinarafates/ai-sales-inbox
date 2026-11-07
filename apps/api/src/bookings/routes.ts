@@ -136,8 +136,12 @@ bookingsRouter.patch('/bookings/:id', async (req: AuthRequest, res: Response) =>
 /**
  * POST /api/bookings/:id/remind — marks reminder_sent and saves an outbound
  * reminder message row on the customer's latest conversation (if one exists).
- * STUB: the message row is saved + logged only; real Meta sending needs
- * Meta approval. Already-reminded bookings are returned unchanged.
+ *
+ * HONEST STUB: the message row is saved + logged only; real Meta sending
+ * needs Meta approval, so nothing is delivered to the customer. The response
+ * says so plainly: { booking, saved: true, sent: false, reason }. The
+ * reminder_sent flag means "reminder handled" (so it stops showing as due),
+ * NOT "reminder delivered". Already-reminded bookings are returned unchanged.
  */
 bookingsRouter.post('/bookings/:id/remind', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -151,7 +155,7 @@ bookingsRouter.post('/bookings/:id/remind', async (req: AuthRequest, res: Respon
     return;
   }
   if (booking.reminder_sent) {
-    res.json({ booking, alreadySent: true });
+    res.json({ booking, alreadySaved: true, sent: false });
     return;
   }
   const conversation = await queryOne<{ id: string }>(
@@ -178,5 +182,10 @@ bookingsRouter.post('/bookings/:id/remind', async (req: AuthRequest, res: Respon
      WHERE workspace_id = $1 AND id = $2 RETURNING ${BOOKING_COLUMNS}`,
     [workspaceId, req.params.id],
   );
-  res.json({ booking: rows[0] });
+  res.json({
+    booking: rows[0],
+    saved: true,
+    sent: false,
+    reason: 'Real Meta sending needs approval — the reminder was only saved, not sent.',
+  });
 });

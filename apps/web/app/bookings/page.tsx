@@ -30,6 +30,7 @@ export default function BookingsPage() {
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [reminders, setReminders] = useState<Booking[]>([]);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [dateFilter, setDateFilter] = useState("");
@@ -115,8 +116,10 @@ export default function BookingsPage() {
 
   const remind = async (id: string) => {
     setError("");
+    setNotice("");
     try {
       await bookingsApi.remind(id);
+      setNotice(t("bookings.remindSaved", "Reminder saved — not sent yet. Real Meta sending needs approval, so the customer has not received it.", "রিমাইন্ডার সংরক্ষণ করা হয়েছে — এখনো পাঠানো হয়নি। আসল পাঠাতে Meta-র অনুমতি লাগবে, তাই কাস্টমার এখনো পাননি।"));
       await loadReminders();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("bookings.remindFailed", "Could not send the reminder.", "রিমাইন্ডার পাঠানো যায়নি।"));
@@ -127,6 +130,7 @@ export default function BookingsPage() {
     <div>
       <h1 className="text-2xl font-bold mb-4">{t("bookings.title", "Bookings", "বুকিং")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
+      {notice && <p className="bg-amber-50 text-amber-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       {/* Reminders due */}
       <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-6">

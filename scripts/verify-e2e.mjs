@@ -443,7 +443,7 @@ async function main() {
   const fuId = fu.data?.followup?.id ?? '';
   check('create follow-up (+1h)', fu.status === 201 && !!fuId, `status=${fu.status}`);
   const sent = await api(`/api/followups/${fuId}/send-now`, { method: 'POST' });
-  check('send-now delivers the follow-up', sent.status === 200 && sent.data?.followup?.status === 'sent' && sent.data?.stopped === false, `status=${sent.data?.followup?.status}`);
+  check('send-now logs the follow-up (honest stub: logged, never sent)', sent.status === 200 && sent.data?.followup?.status === 'logged' && sent.data?.stopped === false, `status=${sent.data?.followup?.status}`);
 
   // 24. Analytics overview + posts + lost sales
   const ov = await api('/api/analytics/overview?range=today');
@@ -488,7 +488,7 @@ async function main() {
   const bcId = bc.data?.broadcast?.id ?? '';
   check('create broadcast (draft)', bc.status === 201 && !!bcId, `status=${bc.status}`);
   const bcs = await api(`/api/broadcasts/${bcId}/send`, { method: 'POST' });
-  check('broadcast sends within the 24h window', bcs.status === 200 && Number(bcs.data?.sent) >= 1, `sent=${bcs.data?.sent}, skipped=${bcs.data?.skipped}`);
+  check('broadcast logs within the 24h window (honest stub: logged, never sent)', bcs.status === 200 && Number(bcs.data?.logged) >= 1 && Number(bcs.data?.sent) === 0 && bcs.data?.stub === true && bcs.data?.broadcast?.status === 'logged', `logged=${bcs.data?.logged}, sent=${bcs.data?.sent}, skipped=${bcs.data?.skipped}`);
 
   // 27. Receptionist mode: booking + day-before reminder
   const tomorrowDate = dhakaDate(new Date(Date.now() + 24 * 60 * 60 * 1000));
@@ -503,7 +503,7 @@ async function main() {
   const due = await api('/api/bookings/reminders-due');
   check('reminders-due lists tomorrow’s booking', due.status === 200 && (due.data?.bookings ?? []).some((b) => b.id === bkId), `due=${(due.data?.bookings ?? []).length}`);
   const rem = await api(`/api/bookings/${bkId}/remind`, { method: 'POST' });
-  check('day-before reminder sent', rem.status === 200 && rem.data?.booking?.reminder_sent === true, `reminder_sent=${rem.data?.booking?.reminder_sent}`);
+  check('day-before reminder saved (honest stub: saved, never sent)', rem.status === 200 && rem.data?.booking?.reminder_sent === true && rem.data?.saved === true && rem.data?.sent === false, `reminder_sent=${rem.data?.booking?.reminder_sent}, saved=${rem.data?.saved}, sent=${rem.data?.sent}`);
 
   // 28. Review request after delivery + review list
   const rr = await api(`/api/orders/${orderId}/request-review`, { method: 'POST' });

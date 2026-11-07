@@ -214,6 +214,22 @@ knowledgeRouter.post('/knowledge/apply-change', async (req: AuthRequest, res: Re
 });
 
 /**
+ * GET /api/knowledge/:id/versions — earlier saved bodies for one item,
+ * newest first. Lets the Teach page offer rollback across sessions
+ * (previously only the version from the current browser session worked).
+ */
+knowledgeRouter.get('/knowledge/:id/versions', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { rows } = await query<{ id: string; body: string; created_at: string }>(
+    workspaceId,
+    `SELECT id, body, created_at FROM knowledge_versions
+     WHERE workspace_id = $1 AND knowledge_id = $2 ORDER BY created_at DESC LIMIT 20`,
+    [workspaceId, req.params.id],
+  );
+  res.json({ versions: rows });
+});
+
+/**
  * POST /api/knowledge/:id/rollback {versionId}
  * Restores the body from a knowledge_versions row. The current body is
  * saved as a new version first, so a rollback can itself be rolled back.

@@ -32,6 +32,10 @@ export default function WebsiteChatPage() {
   }, [load, router]);
 
   const copy = async () => {
+    if (!snippet.trim()) {
+      setError(t("websiteChat.copyEmpty", "There is no snippet to copy yet — wait for it to load.", "এখনো কপি করার মতো কোড আসেনি — লোড হওয়া পর্যন্ত অপেক্ষা করুন।"));
+      return;
+    }
     try {
       await navigator.clipboard.writeText(snippet);
       setCopied(true);

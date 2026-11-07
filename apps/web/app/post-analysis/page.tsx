@@ -33,8 +33,19 @@ export default function PostAnalysisPage() {
     try {
       await analyticsApi.likePagePost(postId);
       setLikedIds((p) => ({ ...p, [postId]: true }));
-      // Refresh the counts so the new like shows.
-      await load(channelId || undefined);
+      // Update just this post's counts in place — reloading the whole page
+      // would blank it behind a loading spinner.
+      setData((prev) =>
+        prev
+          ? {
+              ...prev,
+              posts: prev.posts.map((p) =>
+                p.id === postId ? { ...p, likes: p.likes + 1, engagement: p.engagement + 1 } : p,
+              ),
+              totals: { ...prev.totals, likes: prev.totals.likes + 1, engagement: prev.totals.engagement + 1 },
+            }
+          : prev,
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : t("pa.likeFailed", "Could not like the post.", "পোস্টে লাইক দেওয়া যায়নি।"));
     }
@@ -105,7 +116,7 @@ export default function PostAnalysisPage() {
 
       {!loading && error && (
         <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-4">
-          <p className="font-medium">{t("pa.errorTitle", "Facebook থেকে পোস্ট পড়া যায়নি।", "Could not read posts from Facebook.")}</p>
+          <p className="font-medium">{t("pa.errorTitle", "Could not read posts from Facebook.", "Facebook থেকে পোস্ট পড়া যায়নি।")}</p>
           <p className="text-sm mt-1">{error}</p>
           <p className="text-sm mt-2">
             {t("pa.errorHint", "Check that the Page is still connected (Channels page) and that the app has the pages_read_engagement permission.", "পেজটি এখনো যুক্ত আছে কি না দেখুন (Channels পেজ) আর অ্যাপের pages_read_engagement অনুমতি আছে কি না।")}

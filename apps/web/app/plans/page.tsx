@@ -34,7 +34,7 @@ const SUB_STATUS_FALLBACK: Record<string, [string, string]> = {
 
 export default function PlansPage() {
   const router = useRouter();
-  const { t, fmtDate, fmtTaka, fmtNum } = useI18n();
+  const { t, lang, fmtDate, fmtTaka, fmtNum } = useI18n();
   const [plans, setPlans] = useState<Plan[]>([]);
   const [current, setCurrent] = useState<CurrentSubscription | null>(null);
   const [error, setError] = useState("");
@@ -49,7 +49,7 @@ export default function PlansPage() {
   };
   const limitText = (v: number | null, unitKey: string, unitEn: string, unitBn: string) =>
     v === null || v === undefined
-      ? t("plans.unlimited", "Unlimited", "সীমাহীন")
+      ? `${t("plans.unlimited", "Unlimited", "সীমাহীন")} ${t(unitKey, unitEn, unitBn)}`
       : `${fmtNum(v)}${t("plans.countSuffix", "", "টি")} ${t(unitKey, unitEn, unitBn)}`;
 
   const load = useCallback(async () => {
@@ -109,7 +109,7 @@ export default function PlansPage() {
             <div>
               <p className="text-slate-500 text-sm">{t("plans.currentPlan", "Current plan", "বর্তমান প্ল্যান")}</p>
               <p className="text-xl font-bold">
-                {currentPlan ? planName(currentPlan) : "—"}{" "}
+                {currentPlan ? planName(currentPlan, lang) : "—"}{" "}
                 <span className="text-sm font-normal text-slate-500">({subStatusLabel(currentSub)})</span>
               </p>
               <p className="text-sm text-slate-500 mt-1">
@@ -174,7 +174,7 @@ export default function PlansPage() {
                 className={`card p-5 flex flex-col ${isCurrent ? "ring-2 ring-brand" : ""}`}
               >
                 <div className="flex justify-between items-start">
-                  <h2 className="text-xl font-bold">{planName(p)}</h2>
+                  <h2 className="text-xl font-bold">{planName(p, lang)}</h2>
                   <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full">{t("common.suggestedPrice", "Suggested price", "প্রস্তাবিত দাম")}</span>
                 </div>
                 {isCurrent && (

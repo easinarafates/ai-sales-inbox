@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { getToken, ordersApi, orderItemsOf, orderTotalPaisa, type Order } from "@/lib/api";
+import { getToken, ordersApi, orderItemsOf, orderTotalPaisa, reviewsApi, type Order } from "@/lib/api";
 import { ORDER_STATUSES, orderStatusLabel, statusBadge } from "@/lib/orderStatus";
 import { useI18n } from "@/lib/i18n";
 
@@ -20,6 +20,7 @@ export default function OrderDetailPage() {
   const id = params.id as string;
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -59,6 +60,16 @@ export default function OrderDetailPage() {
     } finally { setBusy(false); }
   };
 
+  const askReview = async () => {
+    setBusy(true); setError(""); setNotice("");
+    try {
+      await reviewsApi.requestReview(id);
+      setNotice(t("orders.reviewRequested", "Review request saved — the message to the customer is not sent yet. Real sending needs Meta approval.", "রিভিউয়ের অনুরোধ সেভ হয়েছে — কাস্টমারকে মেসেজ এখনো পাঠানো হয়নি। আসল পাঠাতে Meta-র অনুমোদন লাগবে।"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("orders.reviewRequestFailed", "Could not send the review request.", "রিভিউয়ের অনুরোধ পাঠানো যায়নি।"));
+    } finally { setBusy(false); }
+  };
+
   if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
   if (error && !order) return <div><p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg">{error}</p><Link href="/orders" className="text-brand-dark underline text-sm">{t("orders.backToList", "← Back to order list", "← অর্ডার তালিকায় ফিরুন")}</Link></div>;
   if (!order) return <p className="text-slate-500">{t("orders.detailNotFound", "Order not found.", "অর্ডার পাওয়া যায়নি।")}</p>;
@@ -71,6 +82,7 @@ export default function OrderDetailPage() {
     <div>
       <Link href="/orders" className="text-brand-dark underline text-sm">{t("orders.listLink", "← Order list", "← অর্ডার তালিকা")}</Link>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mt-3">{error}</p>}
+      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mt-3">{notice}</p>}
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
         {/* Bill view */}
@@ -115,6 +127,9 @@ export default function OrderDetailPage() {
             )}
             <button disabled={busy} onClick={togglePayment} className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">
               {pay === "paid" ? t("orders.markUnpaid", "Mark as unpaid", "অপরিশোধিত করুন") : t("orders.markPaid", "Mark as paid", "পরিশোধিত করুন")}
+            </button>
+            <button disabled={busy} onClick={askReview} className="bg-white border border-teal-600 text-teal-700 px-4 py-2 rounded-lg text-sm hover:bg-teal-50 disabled:opacity-50">
+              {t("orders.askReview", "Ask for review", "রিভিউ চান")}
             </button>
           </div>
           <h3 className="font-bold mt-5 mb-2 text-sm">{t("orders.allSteps", "All steps", "সব ধাপ")}</h3>

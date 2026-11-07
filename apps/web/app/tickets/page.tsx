@@ -1,7 +1,7 @@
 "use client";
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { asArray, getToken, ticketsApi, type Ticket } from "@/lib/api";
+import { asArray, getToken, inboxApi, ticketsApi, type Conversation, type Ticket } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 
 const TICKET_STATUSES = ["open", "in_progress", "resolved", "closed"];
@@ -22,11 +22,15 @@ export default function TicketsPage() {
   const router = useRouter();
   const { t, fmtDate } = useI18n();
   const [tickets, setTickets] = useState<Ticket[]>([]);
+  const [conversations, setConversations] = useState<Conversation[]>([]);
   const [conversationId, setConversationId] = useState("");
   const [reason, setReason] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+
+  const conversationLabel = (c: Conversation) =>
+    c.customerName || c.customer_name || c.customer?.name || c.customerId || c.customer_id || c.id.slice(0, 8);
 
   const ticketLabel = (s: string) => {
     const fb = TICKET_STATUS_FALLBACK[s] || [s, s];
@@ -42,6 +46,11 @@ export default function TicketsPage() {
     } finally {
       setLoading(false);
     }
+    try {
+      setConversations(asArray(await inboxApi.list()));
+    } catch {
+      setConversations([]);
+    }
   }, [t]);
 
   useEffect(() => {
@@ -53,7 +62,7 @@ export default function TicketsPage() {
     e.preventDefault();
     setError(""); setSaving(true);
     try {
-      await ticketsApi.create({ conversationId: conversationId.trim(), reason: reason.trim() });
+      await ticketsApi.create({ conversationId: conversationId.trim() || undefined, reason: reason.trim() });
       setConversationId(""); setReason("");
       await load();
     } catch (err) {
@@ -78,7 +87,18 @@ export default function TicketsPage() {
 
       <form onSubmit={create} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-3 gap-3">
         <h2 className="font-bold md:col-span-3">{t("tickets.createTitle", "Create a new ticket", "নতুন টিকেট তৈরি করুন")}</h2>
-        <input required value={conversationId} onChange={(e) => setConversationId(e.target.value)} placeholder={t("tickets.conversationPlaceholder", "Conversation ID *", "Conversation ID *")} className="border rounded-lg px-3 py-2" />
+        <label className="text-sm">
+          {t("tickets.conversationLabel", "Conversation", "কথোপকথন")}
+          <select value={conversationId} onChange={(e) => setConversationId(e.target.value)} className="block w-full border rounded-lg px-3 py-2 bg-white mt-1">
+            <option value="">{t("tickets.pickConversation", "Choose a conversation", "একটি কথোপকথন বেছে নিন")}</option>
+            {conversations.map((c) => (
+              <option key={c.id} value={c.id}>{conversationLabel(c)}</option>
+            ))}
+          </select>
+          {conversations.length === 0 && (
+            <span className="text-xs text-slate-500">{t("tickets.noConversations", "No conversations yet — connect a Page first.", "এখনো কোনো কথোপকথন নেই — আগে একটি পেজ যুক্ত করুন।")}</span>
+          )}
+        </label>
         <input required value={reason} onChange={(e) => setReason(e.target.value)} placeholder={t("tickets.reasonPlaceholder", "Reason (e.g. wants a refund) *", "কারণ (যেমন: রিফান্ড চান) *")} className="border rounded-lg px-3 py-2" />
         <button disabled={saving} className="bg-brand text-white py-2 rounded-lg hover:bg-brand-dark disabled:opacity-50">{saving ? t("tickets.creating", "Creating…", "তৈরি হচ্ছে…") : t("tickets.createButton", "Create ticket", "টিকেট তৈরি করুন")}</button>
       </form>

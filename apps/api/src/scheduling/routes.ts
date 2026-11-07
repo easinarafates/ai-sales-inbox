@@ -718,7 +718,18 @@ schedulingRouter.post('/scheduled-posts', async (req: AuthRequest, res: Response
     return;
   }
   if (plats.length === 0) {
-    res.status(400).json({ error: 'অন্তত একটি প্ল্যাটফর্ম বেছে নিন (facebook / instagram / tiktok)' });
+    res.status(400).json({ error: 'অন্তত একটি প্ল্যাটফর্ম বেছে নিন (facebook)' });
+    return;
+  }
+  // Only Facebook can actually publish (see publisher.ts) — Instagram /
+  // TikTok publishing is not built yet, and Messenger/WhatsApp are message
+  // channels, never post platforms. Reject them here instead of letting a
+  // post sit in 'failed' after its scheduled time.
+  const unsupported = plats.filter((p) => p !== 'facebook');
+  if (unsupported.length > 0) {
+    res.status(400).json({
+      error: `Only Facebook posts can be published right now — ${unsupported.join(', ')} ${unsupported.length === 1 ? 'is' : 'are'} coming soon. (এখন শুধু ফেসবুক পোস্ট প্রকাশ করা যায় — ${unsupported.join(', ')} শীঘ্রই আসছে।)`,
+    });
     return;
   }
   if (scheduledAt !== undefined && scheduledAt !== null && !isValidDate(scheduledAt)) {

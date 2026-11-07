@@ -145,7 +145,7 @@ export default function LeadsPage() {
     setRunning(true);
     try {
       const res = await followupsApi.runDue();
-      setRunResult(`${t("leads.runResultPrefix", "Due follow-ups:", "সময় হওয়া ফলো-আপ:")} ${fmtNum(res.processed)} ${t("leads.runResultProcessed", "processed,", "টি প্রসেস করা হয়েছে,")} ${fmtNum(res.sent)} ${t("leads.runResultSent", "sent.", "টি পাঠানো হয়েছে।")}`);
+      setRunResult(`${t("leads.runResultPrefix", "Due follow-ups:", "সময় হওয়া ফলো-আপ:")} ${fmtNum(res.processed)} ${t("leads.runResultProcessed", "processed,", "টি প্রসেস করা হয়েছে,")} ${fmtNum(res.logged ?? res.sent ?? 0)} ${t("leads.runResultLogged", "logged (not sent yet — real Meta sending needs approval).", "টি লগ করা হয়েছে (এখনো পাঠানো হয়নি — আসল পাঠাতে Meta-র অনুমতি লাগবে)।")}`);
       await loadFollowups(fuStatus || undefined);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("leads.runDueFailed", "Could not run due follow-ups.", "সময় হওয়া ফলো-আপ চালানো যায়নি।"));
@@ -223,10 +223,11 @@ export default function LeadsPage() {
           <option value="">{t("leads.allFollowups", "All follow-ups", "সব ফলো-আপ")}</option>
           <option value="pending">{t("leads.fuPending", "Pending", "অপেক্ষমাণ")}</option>
           <option value="sent">{t("leads.fuSent", "Sent", "পাঠানো")}</option>
+          <option value="logged">{t("leads.fuLogged", "Logged — not sent", "লগ করা — পাঠানো হয়নি")}</option>
           <option value="due">{t("leads.fuDue", "Due", "সময় হয়েছে")}</option>
         </select>
         <button onClick={runDue} disabled={running} className="bg-blue-600 text-white px-4 py-2 rounded-lg disabled:opacity-50">
-          {running ? t("leads.runningDue", "Running…", "চালানো হচ্ছে…") : t("leads.runDue", "Send due follow-ups", "সময় হওয়া ফলো-আপ পাঠান")}
+          {running ? t("leads.runningDue", "Running…", "চালানো হচ্ছে…") : t("leads.runDue", "Run due follow-ups", "সময় হওয়া ফলো-আপ চালান")}
         </button>
       </div>
 
@@ -241,10 +242,10 @@ export default function LeadsPage() {
                 <tr key={f.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3">{f.message || "—"}</td>
                   <td className="p-3">{fmtDate(f.sendAt || f.send_at)}</td>
-                  <td className="p-3">{f.status || "—"}</td>
+                  <td className="p-3">{f.status === "scheduled" ? t("leads.fuScheduled", "Scheduled", "সময় ঠিক করা") : f.status === "sent" ? t("leads.fuSent", "Sent", "পাঠানো") : f.status === "logged" ? t("leads.fuLogged", "Logged — not sent", "লগ করা — পাঠানো হয়নি") : f.status === "stopped" ? t("leads.fuStopped", "Stopped", "থামানো") : f.status === "cancelled" ? t("leads.fuCancelled", "Cancelled", "বাতিল") : f.status === "failed" ? t("leads.fuFailed", "Failed", "ব্যর্থ") : f.status || "—"}</td>
                   <td className="p-3 text-right">
-                    {f.status !== "sent" && (
-                      <button onClick={() => sendNow(f.id)} className="text-brand-dark underline text-sm">{t("leads.sendNow", "Send now", "এখনই পাঠান")}</button>
+                    {f.status !== "sent" && f.status !== "logged" && (
+                      <button onClick={() => sendNow(f.id)} className="text-brand-dark underline text-sm">{t("leads.sendNow", "Run now", "এখনই চালান")}</button>
                     )}
                   </td>
                 </tr>

@@ -41,10 +41,10 @@ export default function SignupPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <form onSubmit={submit} className="w-full max-w-md space-y-4 rounded-2xl border border-orange-100 bg-white p-8 shadow-lg">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-base font-bold text-white shadow-sm">AI</span>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("app.name", "AI Sales Inbox", "AI সেলস ইনবক্স")}</h1>
               <p className="text-sm text-slate-500">{t("auth.signupSubtitle", "Open a new account — start with free credit", "নতুন অ্যাকাউন্ট খুলুন — ফ্রি ক্রেডিট দিয়ে শুরু করুন")}</p>
             </div>
@@ -66,7 +66,7 @@ export default function SignupPage() {
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.password", "Password", "পাসওয়ার্ড")}</label>
-          <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full" placeholder={t("auth.passwordPlaceholder", "At least 6 characters", "কমপক্ষে ৬ অক্ষর")} />
+          <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="w-full" placeholder={t("auth.passwordPlaceholder", "At least 8 characters", "কমপক্ষে ৮ অক্ষর")} />
         </div>
         <button disabled={loading} className="w-full rounded-lg bg-brand py-2.5 font-medium text-white shadow-sm transition hover:bg-brand-dark disabled:opacity-50">
           {loading ? t("auth.creatingAccount", "Creating account…", "অ্যাকাউন্ট তৈরি হচ্ছে…") : t("auth.signup", "Sign up", "সাইন আপ")}

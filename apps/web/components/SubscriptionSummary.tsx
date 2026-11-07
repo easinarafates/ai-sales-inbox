@@ -30,7 +30,7 @@ const SUB_STATUS_FALLBACK: Record<string, [string, string]> = {
  * Mounted in `apps/web/app/billing/page.tsx` as `<SubscriptionSummary />`.
  */
 export default function SubscriptionSummary() {
-  const { t, fmtDate, fmtTaka, fmtNum } = useI18n();
+  const { t, lang, fmtDate, fmtTaka, fmtNum } = useI18n();
   const [current, setCurrent] = useState<CurrentSubscription | null>(null);
 
   const load = useCallback(async () => {
@@ -55,7 +55,7 @@ export default function SubscriptionSummary() {
       <div>
         <p className="text-slate-500 text-sm">{t("billing.yourPlan", "Your plan", "আপনার প্ল্যান")}</p>
         <p className="text-xl font-bold">
-          {planName(current.plan)}{" "}
+          {planName(current.plan, lang)}{" "}
           <span className="text-sm font-normal text-slate-500">
             ({statusLabel})
           </span>

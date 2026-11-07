@@ -111,9 +111,11 @@ export default function PrivacyPage() {
             <h3 className="font-semibold mt-4">2.4 Data we do not collect</h3>
             <ul className="list-disc pl-6 mt-2 space-y-1 leading-relaxed">
               <li>
-                We do not collect payment card numbers. Wallet top-ups are
-                confirmed manually by our team; no card data passes through
-                the app.
+                We do not collect full payment card numbers or CVV. The
+                shop owner may save a card&rsquo;s brand and last 4 digits
+                only (shown in the Owner Panel as &ldquo;Cards on
+                file&rdquo;). Wallet top-ups are confirmed manually by our
+                team; no live payment gateway is connected yet.
               </li>
               <li>
                 We do not sell any personal data to anyone, and we do not use
@@ -198,7 +200,7 @@ export default function PrivacyPage() {
               </li>
               <li>
                 <strong>AI providers:</strong> message text and product data
-                are sent to our AI provider (currently Groq) so the AI can
+                are sent to our AI provider (currently Gemini) so the AI can
                 draft a reply. The AI provider does not receive the
                 seller&rsquo;s password or access tokens.
               </li>
@@ -219,9 +221,8 @@ export default function PrivacyPage() {
               6. How to ask for deletion (buyers and sellers)
             </h2>
             <p className="mt-2 leading-relaxed">
-              <strong>Sellers:</strong> delete your workspace from the
-              dashboard (Settings → Delete workspace), or contact us through
-              the dashboard support (Tickets) with the subject{" "}
+              <strong>Sellers:</strong> contact us through the
+              dashboard support (Tickets) with the subject{" "}
               &ldquo;Delete my data&rdquo; and the email address you signed up
               with.
             </p>
@@ -295,7 +296,8 @@ export default function PrivacyPage() {
               >
                 ai-sales-inbox-web.vercel.app
               </a>
-              .
+              . Our support email address is being set up and will be listed
+              here once it is ready.
             </p>
           </section>
         </div>

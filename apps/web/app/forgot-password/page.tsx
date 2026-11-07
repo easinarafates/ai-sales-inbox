@@ -30,19 +30,19 @@ export default function ForgotPasswordPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <form onSubmit={submit} className="w-full max-w-md space-y-4 rounded-2xl border border-orange-100 bg-white p-8 shadow-lg">
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex min-w-0 items-start gap-3">
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-base font-bold text-white shadow-sm">AI</span>
-            <div>
+            <div className="min-w-0">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("auth.forgotPassword", "Forgot password?", "পাসওয়ার্ড ভুলে গেছো?")}</h1>
-              <p className="text-sm text-slate-500">{t("auth.forgotSubtitle", "Enter the email you signed up with and we will send you a reset link.", "যে ইমেইল দিয়ে সাইন আপ করেছিলে সেটা লেখো — আমরা রিসেট লিংক পাঠাবো।")}</p>
+              <p className="text-sm text-slate-500">{t("auth.forgotSubtitle", "Enter the email you signed up with. Email delivery isn't set up yet, so a reset link can't be emailed right now.", "যে ইমেইল দিয়ে সাইন আপ করেছিলে সেটা লেখো। ইমেইল পাঠানো এখনো চালু হয়নি, তাই এখন রিসেট লিংক ইমেইলে যাবে না।")}</p>
             </div>
           </div>
           <LanguageToggle />
         </div>
         {sent ? (
           <p className="rounded-lg bg-teal-50 p-3 text-sm text-teal-700">
-            {t("auth.resetLinkSent", "If an account exists for this email, a reset link has been sent. Check your inbox (and spam).", "এই ইমেইলে অ্যাকাউন্ট থাকলে রিসেট লিংক পাঠানো হয়েছে। ইনবক্স (আর স্প্যাম) দেখো।")}
+            {t("auth.resetLinkSent", "Request saved. No email was sent — email delivery isn't set up yet. To reset your password, please contact the site owner.", "অনুরোধ জমা হয়েছে। কোনো ইমেইল পাঠানো হয়নি — ইমেইল পাঠানো এখনো চালু হয়নি। পাসওয়ার্ড বদলাতে সাইটের মালিকের সাথে যোগাযোগ করো।")}
           </p>
         ) : (
           <>

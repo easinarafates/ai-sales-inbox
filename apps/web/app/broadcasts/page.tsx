@@ -61,13 +61,14 @@ export default function BroadcastsPage() {
   };
 
   const send = async (id: string) => {
-    if (!confirm(t("broadcasts.sendConfirm", "Send this broadcast? Only customers who messaged in the last 24 hours will get it.", "এই ব্রডকাস্টটি পাঠাবেন? শুধু গত ২৪ ঘণ্টায় মেসেজ করা কাস্টমাররাই পাবেন।"))) return;
+    if (!confirm(t("broadcasts.sendConfirm", "Log this broadcast? Nothing will actually be sent yet — real Meta sending needs approval. Only customers who messaged in the last 24 hours will be included.", "এই ব্রডকাস্টটি লগ করবেন? আসলে এখনো কিছু পাঠানো হবে না — আসল পাঠাতে Meta-র অনুমতি লাগবে। শুধু গত ২৪ ঘণ্টায় মেসেজ করা কাস্টমাররাই ধরা হবে।"))) return;
     setError("");
     setSendResult("");
     setSendingId(id);
     try {
       const res = await broadcastsApi.send(id);
-      setSendResult(`${t("broadcasts.sendResultSent", "Sent to", "পাঠানো হয়েছে:")} ${fmtNum(res.sent)} ${t("broadcasts.sendResultSkipped", "people, skipped", "জনকে, বাদ গেছে:")} ${fmtNum(res.skipped)} ${t("broadcasts.people", "people", "জন")}`);
+      const loggedCount = res.logged ?? res.sent ?? 0;
+      setSendResult(`${t("broadcasts.sendResultLogged", "Logged for", "লগ করা হয়েছে:")} ${fmtNum(loggedCount)} ${t("broadcasts.sendResultSkipped", "people, skipped", "জনকে, বাদ গেছে:")} ${fmtNum(res.skipped)} ${t("broadcasts.people", "people", "জন")} — ${t("broadcasts.loggedNote", "Not sent yet — real Meta sending needs approval.", "এখনো পাঠানো হয়নি — আসল পাঠাতে Meta-র অনুমতি লাগবে।")}`);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("broadcasts.sendFailed", "Could not send the broadcast.", "ব্রডকাস্ট পাঠানো যায়নি।"));
@@ -119,10 +120,7 @@ export default function BroadcastsPage() {
               <p className="text-sm whitespace-pre-wrap mt-1">{b.message || ""}</p>
               {(b.offerText || b.offer_text) && <p className="text-sm text-teal-700 mt-1">🎁 {b.offerText || b.offer_text}</p>}
               {(b.couponCode || b.coupon_code) && <p className="text-sm mt-1">{t("broadcasts.couponLabel", "Coupon:", "কুপন:")} <b>{b.couponCode || b.coupon_code}</b></p>}
-              {b.status && <p className="text-xs text-slate-500 mt-1">{t("broadcasts.statusLabel", "Status:", "স্ট্যাটাস:")} {b.status}</p>}
-              {(b.sent != null || b.skipped != null) && (
-                <p className="text-sm mt-1">{t("broadcasts.sentLine", "Sent:", "পাঠানো:")} {fmtNum(b.sent ?? 0)} {t("broadcasts.people", "people", "জন")} • {t("broadcasts.skippedLine", "skipped:", "বাদ গেছে:")} {fmtNum(b.skipped ?? 0)} {t("broadcasts.people", "people", "জন")}</p>
-              )}
+              {b.status && <p className="text-xs text-slate-500 mt-1">{t("broadcasts.statusLabel", "Status:", "স্ট্যাটাস:")} {b.status === "draft" ? t("broadcasts.statusDraft", "Draft", "খসড়া") : b.status === "logged" ? t("broadcasts.statusLogged", "Logged — not sent", "লগ করা — পাঠানো হয়নি") : b.status === "sent" ? t("broadcasts.statusSent", "Sent", "পাঠানো হয়েছে") : b.status}</p>}
               <div className="flex gap-2 mt-3">
                 <button onClick={() => send(b.id)} disabled={sendingId === b.id} className="bg-brand text-white px-4 py-2 rounded-lg text-sm hover:bg-brand-dark disabled:opacity-50">
                   {sendingId === b.id ? t("broadcasts.sending", "Sending…", "পাঠানো হচ্ছে…") : t("broadcasts.sendButton", "Send", "পাঠান")}
@@ -140,7 +138,7 @@ export default function BroadcastsPage() {
             <h3 className="font-bold">{t("broadcasts.detailTitle", "Details —", "বিস্তারিত —")} {detail.broadcast.title || t("broadcasts.titleFallback", "Broadcast", "ব্রডকাস্ট")}</h3>
             <button onClick={() => setDetail(null)} className="text-sm text-slate-500 underline">{t("common.close", "Close", "বন্ধ করুন")}</button>
           </div>
-          <p className="text-sm mt-2">{t("broadcasts.sentCount", "Sent:", "পাঠানো:")} {detail.broadcast.sent != null ? fmtNum(detail.broadcast.sent) : "—"} {t("broadcasts.people", "people", "জন")} • {t("broadcasts.skippedCount", "skipped:", "বাদ গেছে:")} {detail.broadcast.skipped != null ? fmtNum(detail.broadcast.skipped) : "—"} {t("broadcasts.people", "people", "জন")}</p>
+          <p className="text-sm mt-2">{t("broadcasts.loggedCount", "Logged:", "লগ করা:")} {fmtNum(detail.recipients ? detail.recipients.length : 0)} {t("broadcasts.people", "people", "জন")} • {t("broadcasts.loggedNote", "Not sent yet — real Meta sending needs approval.", "এখনো পাঠানো হয়নি — আসল পাঠাতে Meta-র অনুমতি লাগবে।")}</p>
           <p className="text-sm mt-2">{t("broadcasts.recipients", "Recipients:", "প্রাপক:")} {fmtNum(detail.recipients ? detail.recipients.length : 0)} {t("broadcasts.people", "people", "জন")}</p>
           {(detail.recipients || []).length > 0 && (
             <pre className="text-xs bg-orange-50 rounded-lg p-3 mt-2 overflow-x-auto">

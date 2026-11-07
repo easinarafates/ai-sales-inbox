@@ -32,8 +32,10 @@ export default function TeachPage() {
   const [changeItemId, setChangeItemId] = useState("");
   const [instruction, setInstruction] = useState("");
   const [preview, setPreview] = useState("");
+  const [previewAi, setPreviewAi] = useState<boolean | null>(null);
   const [previewing, setPreviewing] = useState(false);
-  const [lastVersion, setLastVersion] = useState<Record<string, string>>({});
+  const [openVersions, setOpenVersions] = useState<string | null>(null);
+  const [versions, setVersions] = useState<Record<string, { id: string; body: string; createdAt?: string; created_at?: string }[]>>({});
 
   const load = useCallback(async () => {
     try {
@@ -104,10 +106,14 @@ export default function TeachPage() {
     if (!instruction.trim()) return;
     setError("");
     setPreview("");
+    setPreviewAi(null);
     setPreviewing(true);
     try {
       const res = await teachApi.previewChange(changeItemId || undefined, instruction.trim());
       setPreview(res.preview || res.newBody || "");
+      // The API says plainly when the AI could not answer (aiGenerated:
+      // false) — then the preview is just the current text, unchanged.
+      setPreviewAi(res.aiGenerated ?? true);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("teach.previewFailed", "Could not make the preview.", "প্রিভিউ বানানো যায়নি।"));
     } finally {
@@ -121,12 +127,11 @@ export default function TeachPage() {
     setSaving(true);
     try {
       const res = await teachApi.applyChange(changeItemId, preview);
-      if (res.versionId) {
-        setLastVersion((prev) => ({ ...prev, [changeItemId]: res.versionId as string }));
-      }
       setPreview("");
+      setPreviewAi(null);
       setInstruction("");
       await load();
+      if (res.versionId) setOpenVersions(changeItemId);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("teach.applyFailed", "Could not apply the change.", "বদল প্রয়োগ করা যায়নি।"));
     } finally {
@@ -134,17 +139,30 @@ export default function TeachPage() {
     }
   };
 
-  const rollback = async (itemId: string) => {
-    const versionId = lastVersion[itemId];
+  const loadVersions = async (itemId: string) => {
+    try {
+      const list = await teachApi.listVersions(itemId);
+      setVersions((prev) => ({ ...prev, [itemId]: list }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("teach.rollbackFailed", "Could not go back to the earlier version.", "আগের অবস্থায় ফেরানো যায়নি।"));
+    }
+  };
+
+  const toggleVersions = async (itemId: string) => {
+    if (openVersions === itemId) {
+      setOpenVersions(null);
+      return;
+    }
+    setOpenVersions(itemId);
+    if (!versions[itemId]) await loadVersions(itemId);
+  };
+
+  const rollback = async (itemId: string, versionId: string) => {
     if (!versionId) return;
     setError("");
     try {
       await teachApi.rollback(itemId, versionId);
-      setLastVersion((prev) => {
-        const next = { ...prev };
-        delete next[itemId];
-        return next;
-      });
+      await loadVersions(itemId);
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : t("teach.rollbackFailed", "Could not go back to the earlier version.", "আগের অবস্থায় ফেরানো যায়নি।"));
@@ -216,10 +234,24 @@ export default function TeachPage() {
               <div className="flex gap-2 mt-3">
                 <button onClick={() => { setEditing(k); setKTitle(k.title || ""); setKBody(k.body || ""); }} className="bg-teal-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-teal-700">{t("common.edit", "Edit", "এডিট")}</button>
                 <button onClick={() => deleteKnowledge(k.id)} className="bg-red-50 text-red-700 px-3 py-1.5 rounded-lg text-sm">{t("common.delete", "Delete", "মুছুন")}</button>
-                {lastVersion[k.id] && (
-                  <button onClick={() => rollback(k.id)} className="bg-amber-100 text-amber-800 px-3 py-1.5 rounded-lg text-sm">{t("teach.rollback", "Go back to the earlier version", "আগের সংস্করণে ফেরত যান")}</button>
-                )}
+                <button onClick={() => toggleVersions(k.id)} className="bg-amber-100 text-amber-800 px-3 py-1.5 rounded-lg text-sm">{t("teach.versionsTitle", "Earlier versions", "আগের সংস্করণগুলো")}</button>
               </div>
+              {openVersions === k.id && (
+                <div className="mt-3 border-t pt-3">
+                  {(versions[k.id] ?? []).length === 0 ? (
+                    <p className="text-sm text-slate-500">{t("teach.noVersions", "No earlier versions yet.", "এখনো আগের কোনো সংস্করণ নেই।")}</p>
+                  ) : (
+                    <ul className="space-y-2">
+                      {versions[k.id].map((v) => (
+                        <li key={v.id} className="bg-orange-50 border rounded-lg p-3">
+                          <p className="text-sm whitespace-pre-wrap">{v.body}</p>
+                          <button onClick={() => rollback(k.id, v.id)} className="mt-2 text-sm text-amber-800 underline">{t("teach.rollbackTo", "Go back to this version", "এই সংস্করণে ফেরত যান")}</button>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -249,10 +281,13 @@ export default function TeachPage() {
           {preview && (
             <div className="bg-orange-50 border rounded-lg p-3">
               <p className="text-sm font-medium mb-1">{t("teach.previewLabel", "Preview:", "প্রিভিউ:")}</p>
+              {previewAi === false && (
+                <p className="text-sm text-amber-800 bg-amber-100 rounded-lg p-2 mb-2">{t("teach.previewNotAi", "The AI could not answer right now, so this preview is your current text, unchanged.", "AI এখন উত্তর দিতে পারছে না, তাই এই প্রিভিউতে আপনার বর্তমান লেখাটাই অপরিবর্তিত আছে।")}</p>
+              )}
               <p className="text-sm whitespace-pre-wrap">{preview}</p>
             </div>
           )}
-          <p className="text-xs text-slate-500">{t("teach.rollbackNote", "After applying, you can go back to the earlier version in one click (the “Go back to the earlier version” button will show next to the information).", "প্রয়োগের পর এক ক্লিকে আগের সংস্করণে ফিরে যেতে পারবেন (তথ্যের পাশে “আগের সংস্করণে ফেরত যান” বোতাম দেখাবে)।")}</p>
+          <p className="text-xs text-slate-500">{t("teach.rollbackNote", "Earlier versions are saved automatically — open “Earlier versions” next to any information to go back.", "আগের সংস্করণগুলো নিজে নিজে সেভ থাকে — কোনো তথ্যের পাশে “আগের সংস্করণগুলো” খুলে ফিরে যেতে পারবেন।")}</p>
         </div>
       </div>
     </div>

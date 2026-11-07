@@ -117,7 +117,7 @@ export default function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: 
         key={key}
         href={href}
         aria-current={active ? "page" : undefined}
-        className={`block rounded-lg px-4 py-2.5 transition-colors ${active ? "bg-brand font-medium text-white shadow-sm" : "text-slate-700 hover:bg-orange-50"}`}
+        className={`block rounded-lg px-4 py-2.5 ${active ? "bg-brand font-medium text-white shadow-sm" : "text-slate-700 hover:bg-orange-50"}`}
       >
         <span className="flex items-center gap-2.5">
           <span

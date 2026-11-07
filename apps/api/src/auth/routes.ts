@@ -84,7 +84,7 @@ authRouter.post('/signup', async (req: AuthRequest, res: Response) => {
     );
     if (freeCredit > 0) {
       await client.query(
-        "INSERT INTO wallet_transactions (workspace_id, type, amount_paisa) VALUES ($1, 'topup', $2)",
+        "INSERT INTO wallet_transactions (workspace_id, type, amount_paisa, description) VALUES ($1, 'topup', $2, 'Free credit on signup')",
         [workspaceId, freeCredit],
       );
     }

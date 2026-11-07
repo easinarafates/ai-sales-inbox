@@ -21,7 +21,11 @@ import {
   type ScheduledPost,
 } from "@/lib/api-scheduling";
 
-const PLATFORM_OPTIONS = ["facebook", "instagram", "messenger", "whatsapp", "tiktok"];
+// Only Facebook can actually publish today (see publisher.ts). Instagram
+// and TikTok publishing is coming soon; Messenger/WhatsApp are message
+// channels, never post platforms, so they are not offered at all.
+const PLATFORM_OPTIONS = ["facebook"];
+const PLATFORM_COMING_SOON = ["instagram", "tiktok"];
 const STATUS_OPTIONS = ["scheduled", "draft", "published", "cancelled"];
 
 function dhakaDateStr(d: Date): string {
@@ -182,6 +186,9 @@ export default function SchedulePage() {
   );
 
   const togglePlatform = (p: string) => {
+    // Facebook must stay selected: at least one platform is required and
+    // it is the only one that can publish right now.
+    if (p === "facebook") return;
     setPlatforms((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]));
   };
 
@@ -540,7 +547,13 @@ export default function SchedulePage() {
               <input type="checkbox" checked={platforms.includes(p)} onChange={() => togglePlatform(p)} /> {p}
             </label>
           ))}
+          {PLATFORM_COMING_SOON.map((p) => (
+            <label key={p} className="text-sm flex items-center gap-1 text-slate-400">
+              <input type="checkbox" checked={false} disabled /> {p} ({t("schedule.comingSoon", "Coming soon", "শীঘ্রই আসছে")})
+            </label>
+          ))}
         </div>
+        <p className="text-xs text-slate-500">{t("schedule.onlyFacebook", "Only Facebook posts can be published right now — Instagram and TikTok are coming soon.", "এখন শুধু ফেসবুক পোস্ট প্রকাশ করা যায় — Instagram আর TikTok শীঘ্রই আসছে।")}</p>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="text-sm">
             {t("date_label", "Date", "তারিখ")}
