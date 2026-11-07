@@ -26,13 +26,13 @@ type NavItem = {
  * + visual distinction only.
  *
  * - Shop (দোকান, teal): the daily shop work — inbox, products, orders,
- *   customers, channels, coupons, leads, bookings, courier.
+ *   customers, channels, coupons, leads, courier.
  * - Posts & Analytics (পোস্ট ও বিশ্লেষণ, coral): schedule, post analysis,
- *   analytics, comments, broadcasts, reviews.
- * - Teach AI (AI শেখানো, violet): teach, saved replies, agent desk,
+ *   analytics, comments, reviews.
+ * - Teach AI (AI শেখানো, violet): teach, saved replies,
  *   AI providers, website chat.
- * - Help (সাহায্য, sky): tickets, billing, plans, guide, feature requests.
- * - Settings (সেটিংস, amber): setup, team, migration, owner panel.
+ * - Help (সাহায্য, sky): billing, plans, guide.
+ * - Settings (সেটিংস, amber): setup, team, owner panel.
  */
 const SECTIONS: {
   id: SectionId;
@@ -57,19 +57,14 @@ const NAV: NavItem[] = [
   { href: "/channels", key: "nav.channels", labelEn: "Channels", labelBn: "চ্যানেল", section: "shop" },
   { href: "/coupons", key: "nav.coupons", labelEn: "Coupons", labelBn: "কুপন", section: "shop" },
   { href: "/leads", key: "nav.leads", labelEn: "Leads", labelBn: "লিড", section: "shop" },
-  { href: "/bookings", key: "nav.bookings", labelEn: "Bookings", labelBn: "বুকিং", section: "shop" },
   { href: "/courier", key: "nav.courier", labelEn: "Courier", labelBn: "কুরিয়ার", section: "shop" },
   { href: "/schedule", key: "nav.schedule", labelEn: "Schedule", labelBn: "শিডিউল", section: "posts" },
   { href: "/post-analysis", key: "nav.postAnalysis", labelEn: "Post analysis", labelBn: "পোস্ট বিশ্লেষণ", section: "posts" },
   { href: "/analytics", key: "nav.analytics", labelEn: "Analytics", labelBn: "অ্যানালিটিক্স", section: "posts" },
-  { href: "/broadcasts", key: "nav.broadcasts", labelEn: "Broadcasts", labelBn: "ব্রডকাস্ট", section: "posts" },
   { href: "/reviews", key: "nav.reviews", labelEn: "Reviews", labelBn: "রিভিউ", section: "posts" },
   { href: "/teach", key: "nav.teach", labelEn: "Teach AI", labelBn: "শেখানো", section: "teach" },
-  { href: "/tickets", key: "nav.tickets", labelEn: "Tickets", labelBn: "টিকেট", section: "help" },
   { href: "/billing", key: "nav.billing", labelEn: "Billing", labelBn: "বিলিং", section: "help" },
   { href: "/plans", key: "nav.plans", labelEn: "Plans", labelBn: "প্ল্যান", section: "help" },
-  { href: "/feature-requests", key: "nav.feature-requests", labelEn: "Feature Requests", labelBn: "অনুরোধ", section: "help" },
-  { href: "/migration", key: "nav.migration", labelEn: "Migration", labelBn: "মাইগ্রেশন", section: "settings" },
 ];
 
 /** Slug for an extra nav item, used as its dictionary key: nav.<slug>. */

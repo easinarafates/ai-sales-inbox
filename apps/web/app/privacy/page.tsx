@@ -221,20 +221,26 @@ export default function PrivacyPage() {
               6. How to ask for deletion (buyers and sellers)
             </h2>
             <p className="mt-2 leading-relaxed">
-              <strong>Sellers:</strong> contact us through the
-              dashboard support (Tickets) with the subject{" "}
-              &ldquo;Delete my data&rdquo; and the email address you signed up
-              with.
+              <strong>Sellers:</strong> use Facebook&rsquo;s own flow below
+              to remove the app&rsquo;s access to your Page. If you also
+              want your stored data deleted, write to the support email
+              address on the{" "}
+              <Link className="text-[#0f766e] underline" href="/contact">
+                Contact page
+              </Link>{" "}
+              once it is listed there, with the subject{" "}
+              &ldquo;Delete my data&rdquo; and the email address you signed
+              up with.
             </p>
             <p className="mt-2 leading-relaxed">
               <strong>Buyers:</strong> if you messaged a seller&rsquo;s Page
-              and want your messages or order details deleted, contact us
-              through the dashboard support (Tickets) and tell us the name of
-              the Facebook Page you messaged, your Facebook name, and what
-              you want deleted (messages / order details / everything).
+              and want your messages or order details deleted, use
+              Facebook&rsquo;s own flow below, and tell the seller the name
+              of the Facebook Page you messaged, your Facebook name, and
+              what you want deleted (messages / order details / everything).
             </p>
             <p className="mt-2 leading-relaxed">
-              You can also use Facebook&rsquo;s own flow: go to{" "}
+              Facebook&rsquo;s own flow: go to{" "}
               <strong>
                 Facebook Settings → Apps and Websites → AI Sales Inbox →
                 Remove
@@ -288,8 +294,11 @@ export default function PrivacyPage() {
             <h2 className="text-xl font-bold">10. Contact</h2>
             <p className="mt-2 leading-relaxed">
               Questions about this policy or about your data: contact us
-              through the AI Sales Inbox dashboard (Support / Tickets), or
-              visit{" "}
+              through the{" "}
+              <Link className="text-[#0f766e] underline" href="/contact">
+                Contact page
+              </Link>
+              , or visit{" "}
               <a
                 className="text-[#0f766e] underline"
                 href="https://ai-sales-inbox-web.vercel.app"

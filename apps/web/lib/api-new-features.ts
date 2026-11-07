@@ -27,16 +27,6 @@ export interface ModeratedComment {
   updated_at: string;
 }
 
-export interface AgentInstruction {
-  id: string;
-  version: number;
-  body: string;
-  status: string;
-  published_at?: string | null;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface TeamInvite {
   id: string;
   email: string;
@@ -114,35 +104,6 @@ export const commentsApi = {
   markDone: (id: string) =>
     api.post<{ comment: ModeratedComment }>(`/api/comments/${id}/mark-done`, {}),
   remove: (id: string) => api.del<{ deleted: boolean }>(`/api/comments/${id}`),
-};
-
-export const agentDeskApi = {
-  list: () =>
-    api.get<{ instructions: AgentInstruction[]; active: AgentInstruction | null }>(
-      "/api/agent-desk/instructions"
-    ),
-  createDraft: (body: string) =>
-    api.post<{ instruction: AgentInstruction }>("/api/agent-desk/instructions", { body }),
-  test: (question: string) =>
-    api.post<{
-      answer: string | null;
-      aiAvailable: boolean;
-      versionId: string;
-      version: number;
-      status: string;
-      published: boolean;
-      note?: string;
-      provider?: string;
-      model?: string;
-      fallbackFrom?: string | null;
-    }>("/api/agent-desk/test", { question }),
-  publish: (versionId: string) =>
-    api.post<{ instruction: AgentInstruction }>("/api/agent-desk/publish", { versionId }),
-  revert: () =>
-    api.post<{ instruction: AgentInstruction; revertedToVersion: number }>(
-      "/api/agent-desk/revert",
-      {}
-    ),
 };
 
 export const teamApi = {

@@ -10,8 +10,9 @@
  * return-to-ai, handover expiry via the sweep (durationSeconds test-only
  * override, max 300s), voice-note without/with transcript (draft order,
  * no stock reserved), saved-replies CRUD, comments moderation transitions,
- * follow-ups hot/warm filter, agent-desk test (no publish) → publish →
- * revert, team invite create/list/revoke (no email sent), website-chat
+ * follow-ups hot/warm filter, agent-desk endpoints removed (menu
+ * slim-down 2026-11-07 — GET instructions + POST test return 404),
+ * team invite create/list/revoke (no email sent), website-chat
  * message creates an inbox conversation, setup progress + test-code verify
  * (wrong rejected, right accepted).
  */
@@ -268,27 +269,14 @@ async function main() {
     const leadsBad = await api('/api/leads?warmth=cold');
     check('leads rejects invalid warmth filter', leadsBad.status === 400, `status=${leadsBad.status}`);
 
-    // --- 7. Agent Desk: test (no publish) → publish → revert ---
-    const adEmpty = await api('/api/agent-desk/test', { method: 'POST', body: { question: 'দাম কত?' } });
-    check('agent-desk test with no instructions is rejected', adEmpty.status === 400, `status=${adEmpty.status}`);
-    const ad1 = await api('/api/agent-desk/instructions', { method: 'POST', body: { body: 'Always greet politely in Bengali. Never invent prices.' } });
-    const v1Id = ad1.data?.instruction?.id ?? '';
-    check('agent-desk draft v1 created', ad1.status === 201 && ad1.data?.instruction?.version === 1 && ad1.data?.instruction?.status === 'draft', `version=${ad1.data?.instruction?.version}`);
-    const adTest = await api('/api/agent-desk/test', { method: 'POST', body: { question: 'শাড়ির দাম কত?' } });
-    check('agent-desk test answers WITHOUT publishing', adTest.status === 200 && adTest.data?.published === false && typeof adTest.data?.answer === 'string' && adTest.data.answer.length > 0, `published=${adTest.data?.published}, answer=${String(adTest.data?.answer ?? '').slice(0, 60)}`);
-    const adListAfterTest = await api('/api/agent-desk/instructions');
-    check('agent-desk test did not publish anything', adListAfterTest.data?.active === null, `active=${JSON.stringify(adListAfterTest.data?.active)}`);
-    const ad2 = await api('/api/agent-desk/instructions', { method: 'POST', body: { body: 'Always greet politely in Bengali. Offer at most 5% discount.' } });
-    const v2Id = ad2.data?.instruction?.id ?? '';
-    check('agent-desk draft v2 created', ad2.status === 201 && ad2.data?.instruction?.version === 2, `version=${ad2.data?.instruction?.version}`);
-    const pub2 = await api('/api/agent-desk/publish', { method: 'POST', body: { versionId: v2Id } });
-    check('agent-desk publish v2', pub2.status === 200 && pub2.data?.instruction?.status === 'published', `status=${pub2.data?.instruction?.status}`);
-    const pub1 = await api('/api/agent-desk/publish', { method: 'POST', body: { versionId: v1Id } });
-    check('agent-desk publish v1 (v2 archived)', pub1.status === 200 && pub1.data?.instruction?.version === 1, `version=${pub1.data?.instruction?.version}`);
-    const rev = await api('/api/agent-desk/revert', { method: 'POST' });
-    check('agent-desk revert restores v2', rev.status === 200 && rev.data?.instruction?.version === 2 && rev.data?.revertedToVersion === 2, `version=${rev.data?.instruction?.version}`);
-    const adFinal = await api('/api/agent-desk/instructions');
-    check('agent-desk active version is v2 after revert', adFinal.data?.active?.version === 2, `active=${adFinal.data?.active?.version}`);
+    // --- 7. Agent Desk removed (menu slim-down 2026-11-07) -------------
+    // The whole /api/agent-desk/* surface is gone; the UI page, nav
+    // entry and API router were removed. The instructions table stays
+    // in the DB (migrations untouched, data preserved).
+    const adGone = await api('/api/agent-desk/instructions');
+    check('GET /api/agent-desk/instructions is 404 (router removed)', adGone.status === 404, `status=${adGone.status}`);
+    const adTestGone = await api('/api/agent-desk/test', { method: 'POST', body: { question: 'দাম কত?' } });
+    check('POST /api/agent-desk/test is 404 (router removed)', adTestGone.status === 404, `status=${adTestGone.status}`);
 
     // --- 8. Team invites (no email sent) ---
     const inv = await api('/api/team/invites', { method: 'POST', body: { email: 'helper@example.com', role: 'member' } });

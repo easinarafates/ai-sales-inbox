@@ -6,8 +6,10 @@
  * Checks:
  * - Sidebar has 5 labelled sections (Shop, Posts & Analytics, Teach AI,
  *   Help, Settings) with a distinct accent colour each; every one of the
- *   29 menu items (20 core + 9 extra) sits in exactly one section; no
- *   page was removed or renamed (href list is the pre-change list).
+ *   23 menu items (22 kept + owner-only Owner Panel) sits in exactly one
+ *   section. (Menu slim-down 2026-11-07: Bookings, Broadcasts, Agent
+ *   Desk, Tickets, Feature Requests and Migration were removed;
+ *   the pre-slim list of 29 no longer applies.)
  * - Section label keys exist in the i18n dict in EN and BN; the
  *   previously-missing nav.postAnalysis + nav.owner keys exist too.
  * - AppShell renders the ProfileMenu in the header; the mobile drawer
@@ -117,18 +119,21 @@ async function main() {
   const dictSrc = fs.readFileSync(path.join(ROOT, 'apps/web/lib/i18n-dict.ts'), 'utf8');
   const apiSrc = fs.readFileSync(path.join(ROOT, 'apps/web/lib/api.ts'), 'utf8');
 
-  // The complete pre-change href list — no page may be removed or renamed.
+  // The menu after the 2026-11-07 slim-down: 22 kept items + owner-only Owner Panel.
   const expectedHrefs = [
-    '/inbox', '/products', '/orders', '/tickets', '/billing', '/plans',
+    '/inbox', '/products', '/orders', '/billing', '/plans',
     '/courier', '/channels', '/coupons', '/customers', '/schedule',
-    '/leads', '/analytics', '/post-analysis', '/teach', '/broadcasts',
-    '/bookings', '/reviews', '/migration', '/feature-requests',
-    '/owner', '/comments', '/saved-replies', '/agent-desk', '/team',
+    '/leads', '/analytics', '/post-analysis', '/teach',
+    '/reviews',
+    '/owner', '/comments', '/saved-replies', '/team',
     '/setup', '/website-chat', '/guide', '/ai-providers',
   ];
   const combined = sidebarSrc + '\n' + extraSrc;
   const missing = expectedHrefs.filter((h) => !combined.includes(`"${h}"`));
-  check('all 29 pre-change menu items still exist (no page removed/renamed)', missing.length === 0, missing.join(', ') || '29/29 present');
+  check('all 23 menu items still exist (22 kept + owner)', missing.length === 0, missing.join(', ') || '23/23 present');
+  const removedHrefs = ['/bookings', '/broadcasts', '/agent-desk', '/tickets', '/feature-requests', '/migration'];
+  const stillThere = removedHrefs.filter((h) => combined.includes(`"${h}"`));
+  check('none of the 6 removed items is in the nav', stillThere.length === 0, stillThere.join(', ') || 'none present');
   const dupes = expectedHrefs.filter((h) => (combined.match(new RegExp(`href: "${h.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}"`, 'g')) || []).length > 1);
   check('each menu item appears exactly once across Sidebar + NavExtra', dupes.length === 0, dupes.join(', ') || 'no duplicates');
 

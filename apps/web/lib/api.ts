@@ -283,17 +283,6 @@ export function orderItemsOf(o: Order): OrderItem[] {
   return o.items ?? o.orderItems ?? o.order_items ?? [];
 }
 
-export interface Ticket {
-  id: string;
-  conversationId?: string;
-  conversation_id?: string;
-  reason?: string;
-  status?: string;
-  createdAt?: string;
-  created_at?: string;
-  [key: string]: unknown;
-}
-
 export interface WalletTransaction {
   id: string;
   type?: string;
@@ -540,14 +529,6 @@ export const ordersApi = {
     await api.patch(`/api/orders/${id}/payment`, { paymentStatus });
     return ordersApi.get(id);
   },
-};
-
-export const ticketsApi = {
-  list: () => api.get<Ticket[] | { tickets: Ticket[] }>("/api/tickets"),
-  create: (body: { conversationId?: string; reason: string }) =>
-    api.post<Ticket>("/api/tickets", body),
-  update: (id: string, body: { status: string }) =>
-    api.patch<Ticket>(`/api/tickets/${id}`, body),
 };
 
 export const billingApi = {
@@ -1038,73 +1019,6 @@ export const teachApi = {
     api.post<{ knowledgeItem: KnowledgeItem }>(`/api/knowledge/${knowledgeId}/rollback`, { versionId }),
 };
 
-export interface Broadcast {
-  id: string;
-  title?: string;
-  message?: string;
-  offerText?: string;
-  offer_text?: string;
-  couponCode?: string;
-  coupon_code?: string;
-  status?: string;
-  sent?: number;
-  logged?: number;
-  skipped?: number;
-  createdAt?: string;
-  created_at?: string;
-  [key: string]: unknown;
-}
-
-export const broadcastsApi = {
-  list: () => api.get<Broadcast[] | { broadcasts: Broadcast[] }>("/api/broadcasts"),
-  create: (body: { title: string; message: string; offerText?: string; couponCode?: string }) =>
-    api.post<{ broadcast: Broadcast } | Broadcast>("/api/broadcasts", body),
-  send: (id: string) =>
-    api.post<{ broadcast: Broadcast; sent: number; logged?: number; skipped: number; stub?: boolean; reason?: string }>(`/api/broadcasts/${id}/send`, {}),
-  get: (id: string) =>
-    api.get<{ broadcast: Broadcast; recipients?: unknown[] }>(`/api/broadcasts/${id}`),
-};
-
-export interface Booking {
-  id: string;
-  customerId?: string;
-  customer_id?: string;
-  customer?: Customer;
-  service?: string;
-  date?: string;
-  time?: string;
-  advanceTxId?: string;
-  advance_tx_id?: string;
-  advancePaisa?: number;
-  advance_paisa?: number;
-  notes?: string;
-  status?: string;
-  createdAt?: string;
-  created_at?: string;
-  [key: string]: unknown;
-}
-
-export function bookingAdvancePaisa(b: Booking): number {
-  return b.advancePaisa ?? b.advance_paisa ?? 0;
-}
-
-export const bookingsApi = {
-  list: (params?: { date?: string; status?: string }) => {
-    const qs = new URLSearchParams();
-    if (params?.date) qs.set("date", params.date);
-    if (params?.status) qs.set("status", params.status);
-    const s = qs.toString();
-    return api.get<Booking[] | { bookings: Booking[] }>(`/api/bookings${s ? `?${s}` : ""}`);
-  },
-  create: (body: { customerId: string; service: string; date: string; time: string; advanceTxId?: string; advancePaisa?: number; notes?: string }) =>
-    api.post<{ booking: Booking } | Booking>("/api/bookings", body),
-  update: (id: string, body: { status?: string; advanceTxId?: string; advancePaisa?: number }) =>
-    api.patch<{ booking: Booking } | Booking>(`/api/bookings/${id}`, body),
-  remindersDue: () =>
-    api.get<Booking[] | { bookings: Booking[] }>("/api/bookings/reminders-due"),
-  remind: (id: string) =>
-    api.post<{ booking: Booking; saved?: boolean; alreadySaved?: boolean; sent?: boolean; reason?: string } | Booking>(`/api/bookings/${id}/remind`, {}),
-};
 
 export interface ReviewItem {
   id: string;
@@ -1130,41 +1044,3 @@ export const reviewsApi = {
     api.post<{ reviewRequest: ReviewItem } | ReviewItem>(`/api/orders/${orderId}/request-review`, {}),
 };
 
-export type MigrationType = "customers" | "products" | "orders";
-
-export interface MigrationImport {
-  id: string;
-  type?: string;
-  imported?: number;
-  failed?: number;
-  errors?: string[];
-  createdAt?: string;
-  created_at?: string;
-  [key: string]: unknown;
-}
-
-export const migrationApi = {
-  importCsv: (type: MigrationType, csv: string) =>
-    api.post<{ imported: number; failed: number; errors?: string[] }>("/api/migration/import", { type, csv }),
-  listImports: () =>
-    api.get<MigrationImport[] | { imports: MigrationImport[] }>("/api/migration/imports"),
-};
-
-export interface FeatureRequest {
-  id: string;
-  title: string;
-  details?: string;
-  status?: string;
-  createdAt?: string;
-  created_at?: string;
-  [key: string]: unknown;
-}
-
-export const featureRequestsApi = {
-  list: () =>
-    api.get<FeatureRequest[] | { featureRequests: FeatureRequest[] }>("/api/feature-requests"),
-  create: (body: { title: string; details?: string }) =>
-    api.post<{ featureRequest: FeatureRequest } | FeatureRequest>("/api/feature-requests", body),
-  update: (id: string, status: string) =>
-    api.patch<{ featureRequest: FeatureRequest } | FeatureRequest>(`/api/feature-requests/${id}`, { status }),
-};

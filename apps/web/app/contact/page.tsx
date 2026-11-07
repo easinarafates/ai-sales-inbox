@@ -4,7 +4,7 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "Contact — AI Sales Inbox",
   description:
-    "Contact AI Sales Inbox — support through the dashboard Tickets page.",
+    "Contact AI Sales Inbox — support details will be listed here once they are ready.",
 };
 
 export default function ContactPage() {
@@ -23,14 +23,9 @@ export default function ContactPage() {
           <section>
             <h2 className="text-xl font-bold">Support (fastest)</h2>
             <p className="mt-2 leading-relaxed">
-              If you already have an account,{" "}
-              <Link className="text-[#0f766e] underline" href="/login">
-                log in
-              </Link>{" "}
-              and open <strong>Tickets</strong> in the dashboard. Tell us what
-              happened and, if it is about a chat or an order, the name of the
-              Facebook Page and the customer&rsquo;s name. That is the
-              fastest way to reach us.
+              Our support channel is being set up and will be listed here
+              once it is ready. If you already have an account, you can
+              keep using the dashboard in the meantime.
             </p>
           </section>
 
@@ -38,17 +33,17 @@ export default function ContactPage() {
             <h2 className="text-xl font-bold">Email</h2>
             <p className="mt-2 leading-relaxed">
               Our support email address is being set up and will be listed
-              here once it is ready. Until then, please use the Tickets page
-              in the dashboard.
+              here once it is ready.
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-bold">Data deletion requests</h2>
             <p className="mt-2 leading-relaxed">
-              To ask for your data to be deleted, open a Ticket with the
-              subject &ldquo;Delete my data&rdquo; and the email address you
-              signed up with. Details are in the{" "}
+              To ask for your data to be deleted, use Facebook&rsquo;s own
+              flow — Facebook Settings → Apps and Websites → AI Sales
+              Inbox → Remove — then follow the data deletion link provided
+              there. Details are in the{" "}
               <Link className="text-[#0f766e] underline" href="/privacy">
                 Privacy Policy
               </Link>

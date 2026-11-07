@@ -11,7 +11,10 @@
  *  - products: PATCH update + DELETE work, GET reflects the update
  *  - scheduled posts: non-Facebook platforms are rejected at create
  *  - POST /api/billing/topup is 403 without the test-hooks flag
- *  - tickets accept a missing conversation (picker, not a raw UUID)
+ *  - the 2026-11-07 menu slim-down removed Bookings, Broadcasts,
+ *    Agent Desk, Tickets, Feature Requests, Migration (not in PAGES;
+ *    POST /api/tickets is 404 now — the router is unmounted, the
+ *    tickets table itself still serves internal use)
  *  - knowledge preview returns aiGenerated; versions list + rollback work
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
  * Uses only test data in a fresh workspace; nothing is sent to Meta.
@@ -58,9 +61,9 @@ const PAGES = [
   '/privacy', '/terms', '/about', '/contact', '/plans', '/guide',
   '/inbox', '/products', '/orders', '/customers', '/schedule', '/billing',
   '/analytics', '/comments', '/post-analysis', '/channels', '/coupons',
-  '/leads', '/bookings', '/courier', '/broadcasts', '/reviews', '/tickets',
-  '/feature-requests', '/teach', '/saved-replies', '/agent-desk',
-  '/ai-providers', '/website-chat', '/setup', '/team', '/migration',
+  '/leads', '/courier', '/reviews',
+  '/teach', '/saved-replies',
+  '/ai-providers', '/website-chat', '/setup', '/team',
   '/owner', '/owner/shops', '/owner/wallet', '/owner/bank-accounts',
   '/owner/expenses', '/owner/api-costs',
 ];
@@ -152,12 +155,14 @@ const email = `site-audit-${stamp}@yearmedia.xyz`;
   });
   check('scheduled post with facebook is accepted', [200, 201].includes(goodPost.status), `status=${goodPost.status}`);
 
-  // --- tickets: conversation is optional --------------------------------
-  const ticket = await api('/api/tickets', {
+  // --- removed routes: menu slim-down 2026-11-07 ------------------------
+  // The Tickets UI + router are gone; the tickets table itself still
+  // serves internal use (AI-agent create_ticket, analytics, webhooks).
+  const ticketGone = await api('/api/tickets', {
     method: 'POST',
-    body: { reason: 'audit ticket without conversation' },
+    body: { reason: 'audit ticket after removal' },
   });
-  check('ticket without conversationId is accepted', [200, 201].includes(ticket.status), `status=${ticket.status}`);
+  check('POST /api/tickets is 404 (router removed)', ticketGone.status === 404, `status=${ticketGone.status}`);
 
   // --- knowledge: preview flag + versions + rollback --------------------
   const kCreated = await api('/api/knowledge', {

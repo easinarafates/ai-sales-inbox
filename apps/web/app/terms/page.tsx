@@ -112,8 +112,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-bold">8. Contact</h2>
             <p className="mt-2 leading-relaxed">
-              Questions about these terms: contact us through the AI Sales
-              Inbox dashboard (Support / Tickets), or see the{" "}
+              Questions about these terms: contact us through the{" "}
               <Link className="text-[#0f766e] underline" href="/contact">
                 Contact page
               </Link>

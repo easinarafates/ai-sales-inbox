@@ -14,7 +14,6 @@ import { inboxRouter } from './inbox/routes';
 import { knowledgeRouter } from './knowledge/routes';
 import { ordersRouter } from './orders/routes';
 import { productsRouter } from './products/routes';
-import { ticketsRouter } from './tickets/routes';
 import { webhooksRouter } from './webhooks/routes';
 import { tiktokDmRouter } from './webhooks/tiktok-dm';
 import { metaRouter } from './webhooks/meta';
@@ -22,15 +21,11 @@ import { metaRouter } from './webhooks/meta';
 import { analyticsRouter } from './analytics/routes';
 import { postsAnalyticsRouter } from './analytics/posts-routes';
 import { pagePostsAnalysisRouter } from './analytics/page-posts-analysis';
-import { bookingsRouter } from './bookings/routes';
-import { broadcastsRouter } from './broadcasts/routes';
 import { commentsRouter } from './comments/routes';
 import { couponsRouter } from './coupons/routes';
 import { customersRouter } from './customers/routes';
-import { featureRequestsRouter } from './feature-requests/routes';
 import { followupsRouter } from './followups/routes';
 import { leadsRouter } from './leads/routes';
-import { migrationRouter } from './migration/routes';
 import { reviewsRouter } from './reviews/routes';
 import { schedulingRouter } from './scheduling/routes';
 import { subscriptionsRouter } from './subscriptions/routes';
@@ -43,7 +38,6 @@ import { imageMatchRouter } from './image-match/routes';
 import { handoverRouter } from './handover/routes';
 import { voiceOrdersRouter } from './voice-orders/routes';
 import { savedRepliesRouter } from './saved-replies/routes';
-import { agentDeskRouter } from './agent-desk/routes';
 import { teamRouter } from './team/routes';
 import { websiteChatRouter } from './website-chat/routes';
 import { setupRouter } from './setup/routes';
@@ -123,22 +117,17 @@ app.use('/api/channels', channelsRouter);
 app.use('/api/inbox', inboxRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/orders', ordersRouter);
-app.use('/api/tickets', ticketsRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api', knowledgeRouter); // /api/knowledge + /api/unanswered
 // Phase 2/3 (routers carry full /api/... paths).
 app.use('/api', analyticsRouter); // /api/analytics/overview
 app.use('/api', postsAnalyticsRouter); // /api/analytics/posts + /api/analytics/lost-sales
 app.use('/api', pagePostsAnalysisRouter); // /api/analytics/page-posts (real Graph post analysis)
-app.use('/api', bookingsRouter); // /api/bookings (+ receptionist mode)
-app.use('/api', broadcastsRouter); // /api/broadcasts (24h window)
 app.use('/api', commentsRouter); // /api/comments/:postId/carousel
 app.use('/api', couponsRouter); // /api/coupons
 app.use('/api', customersRouter); // /api/customers (+ merge)
-app.use('/api', featureRequestsRouter); // /api/feature-requests
 app.use('/api', followupsRouter); // /api/followups
 app.use('/api', leadsRouter); // /api/leads
-app.use('/api', migrationRouter); // /api/migration/import
 app.use('/api', reviewsRouter); // /api/reviews + /api/orders/:id/request-review
 app.use('/api', schedulingRouter); // /api/scheduled-posts
 app.use('/api', subscriptionsRouter); // /api/subscriptions/* (plans, current, subscribe, upgrade, downgrade, cancel, renew)
@@ -149,7 +138,6 @@ app.use('/api', imageMatchRouter); // POST /api/image-match
 app.use('/api', handoverRouter); // /api/inbox/:id/handover, /return-to-ai, /inbox/handovers/run
 app.use('/api', voiceOrdersRouter); // POST /api/inbox/:id/voice-note, GET /api/inbox/:id/voice-notes
 app.use('/api', savedRepliesRouter); // /api/saved-replies
-app.use('/api', agentDeskRouter); // /api/agent-desk/*
 app.use('/api', teamRouter); // /api/team/invites
 app.use('/api', setupRouter); // /api/setup/*
 app.use('/api', aiProvidersRouter); // /api/ai-providers (get + select)

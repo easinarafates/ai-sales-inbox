@@ -16,7 +16,6 @@ export const EXTRA_NAV: ExtraNavItem[] = [
   { href: "/owner", labelEn: "Owner Panel", labelBn: "ওনার প্যানেল", sub: "Platform control", section: "settings" },
   { href: "/comments", labelEn: "Comments", labelBn: "কমেন্ট", sub: "Moderation", section: "posts" },
   { href: "/saved-replies", labelEn: "Saved replies", labelBn: "সেভ করা উত্তর", sub: "One-tap replies", section: "teach" },
-  { href: "/agent-desk", labelEn: "Agent Desk", labelBn: "এজেন্ট ডেস্ক", sub: "AI instructions", section: "teach" },
   { href: "/team", labelEn: "Team", labelBn: "টিম", sub: "Invites & members", section: "settings" },
   { href: "/setup", labelEn: "Setup", labelBn: "সেটআপ", sub: "7-step wizard", section: "settings" },
   { href: "/website-chat", labelEn: "Website chat", labelBn: "ওয়েবসাইট চ্যাট", sub: "Chat widget", section: "teach" },

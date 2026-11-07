@@ -88,21 +88,6 @@ const GUIDES: { id: string; en: string; bn: string; stepsEn: string[]; stepsBn: 
     ],
   },
   {
-    id: "desk",
-    en: "Teach the AI with Agent Desk",
-    bn: "এজেন্ট ডেস্ক দিয়ে AI-কে শেখান",
-    stepsEn: [
-      "Write how the AI should talk to customers, in plain words.",
-      "Save it as a draft, then test it with a customer-style question.",
-      "If the answer is good, press Publish. If the new version is worse, press Revert.",
-    ],
-    stepsBn: [
-      "AI কাস্টমারের সাথে কীভাবে কথা বলবে, তা সাধারণ ভাষায় লিখুন।",
-      "খসড়া হিসেবে সেভ করুন, তারপর কাস্টমারের মতো প্রশ্ন করে পরীক্ষা করুন।",
-      "উত্তর ভালো হলে Publish চাপুন। নতুন সংস্করণ খারাপ হলে Revert চাপুন।",
-    ],
-  },
-  {
     id: "team",
     en: "Invite your team",
     bn: "টিমকে আমন্ত্রণ জানান",
