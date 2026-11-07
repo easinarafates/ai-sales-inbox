@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { authApi, getToken, setToken } from "@/lib/api";
 import { LanguageToggle, useI18n } from "@/lib/i18n";
+import PasswordInput from "@/components/PasswordInput";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -66,7 +67,7 @@ export default function SignupPage() {
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.password", "Password", "পাসওয়ার্ড")}</label>
-          <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="w-full" placeholder={t("auth.passwordPlaceholder", "At least 8 characters", "কমপক্ষে ৮ অক্ষর")} />
+          <PasswordInput required minLength={8} value={password} onChange={setPassword} placeholder={t("auth.passwordPlaceholder", "At least 8 characters", "কমপক্ষে ৮ অক্ষর")} autoComplete="new-password" />
         </div>
         <button disabled={loading} className="w-full rounded-lg bg-brand py-2.5 font-medium text-white shadow-sm transition hover:bg-brand-dark disabled:opacity-50">
           {loading ? t("auth.creatingAccount", "Creating account…", "অ্যাকাউন্ট তৈরি হচ্ছে…") : t("auth.signup", "Sign up", "সাইন আপ")}

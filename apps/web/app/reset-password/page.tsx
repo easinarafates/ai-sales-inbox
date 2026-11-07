@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import { authApi } from "@/lib/api";
 import { LanguageToggle, useI18n } from "@/lib/i18n";
+import PasswordInput from "@/components/PasswordInput";
 
 function ResetPasswordForm() {
   const router = useRouter();
@@ -61,11 +62,11 @@ function ResetPasswordForm() {
             {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.newPassword", "New password", "নতুন পাসওয়ার্ড")}</label>
-              <input type="password" required minLength={8} value={password} onChange={(e) => setPassword(e.target.value)} className="w-full" placeholder="••••••••" />
+              <PasswordInput required minLength={8} value={password} onChange={setPassword} placeholder="••••••••" autoComplete="new-password" />
             </div>
             <div>
               <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.confirmPassword", "Confirm new password", "নতুন পাসওয়ার্ড আবার লেখো")}</label>
-              <input type="password" required minLength={8} value={confirm} onChange={(e) => setConfirm(e.target.value)} className="w-full" placeholder="••••••••" />
+              <PasswordInput required minLength={8} value={confirm} onChange={setConfirm} placeholder="••••••••" autoComplete="new-password" />
             </div>
             <button disabled={loading} className="w-full rounded-lg bg-brand py-2.5 font-medium text-white shadow-sm transition hover:bg-brand-dark disabled:opacity-50">
               {loading ? t("auth.resetting", "Resetting…", "বদলানো হচ্ছে…") : t("auth.resetPassword", "Reset password", "পাসওয়ার্ড বদলাও")}

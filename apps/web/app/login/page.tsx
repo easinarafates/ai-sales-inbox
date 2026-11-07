@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { authApi, getToken, setToken } from "@/lib/api";
 import { LanguageToggle, useI18n } from "@/lib/i18n";
+import PasswordInput from "@/components/PasswordInput";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -56,7 +57,7 @@ export default function LoginPage() {
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.password", "Password", "পাসওয়ার্ড")}</label>
-          <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full" placeholder="••••••••" />
+          <PasswordInput required value={password} onChange={setPassword} placeholder="••••••••" autoComplete="current-password" />
         </div>
         <div className="text-right">
           <Link href="/forgot-password" className="text-sm font-medium text-brand-dark underline hover:text-brand">{t("auth.forgotPassword", "Forgot password?", "পাসওয়ার্ড ভুলে গেছো?")}</Link>
