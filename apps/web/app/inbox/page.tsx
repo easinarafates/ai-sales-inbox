@@ -112,7 +112,8 @@ function aiModeOf(c: Conversation): boolean | null {
  * stores open / done / snoozed / waiting; the design calls them Open /
  * Closed / Pending / Waiting. Pending = snoozed (waiting for attention),
  * Closed = done. Waiting is its own status: the AI escalated the chat
- * (angry customer / couldn't answer) and a human must take over.
+ * (angry customer / off-topic question / couldn't answer) and a human
+ * must take over.
  */
 function statusOf(c: Conversation): "open" | "pending" | "closed" | "waiting" {
   const s = String(c.status || "").toLowerCase();
@@ -129,6 +130,7 @@ function waitingReason(c: Conversation): { en: string; bn: string } | null {
   if (r === "angry_customer") return { en: "Customer is angry", bn: "কাস্টমার রেগে গেছেন" };
   if (r === "cant_answer") return { en: "AI couldn't answer", bn: "AI উত্তর দিতে পারেনি" };
   if (r === "ai_unsure") return { en: "AI wasn't sure how to answer", bn: "AI উত্তর বুঝতে পারেনি" };
+  if (r === "off_topic") return { en: "Off-topic question", bn: "বিষয়ের বাইরে" };
   return { en: "Needs a human", bn: "মানুষের উত্তর দরকার" };
 }
 
@@ -370,10 +372,10 @@ function InboxPage() {
 
   // Status tabs (spec): All / Open / Pending / Closed / Waiting. They
   // drive the same status filter the search dropdown uses. Waiting is
-  // the auto-escalation tab — angry customers and questions the AI
-  // could not answer land here for a human. Its Bengali label is
-  // deliberately NOT "অপেক্ষমাণ" (that is Pending) — it is
-  // "মানুষের অপেক্ষায়" (waiting for a human).
+  // the auto-escalation tab — angry customers, off-topic questions, and
+  // questions the AI could not answer land here for a human. Its
+  // Bengali label is deliberately NOT "অপেক্ষমাণ" (that is Pending) —
+  // it is "মানুষের অপেক্ষায়" (waiting for a human).
   const activeTab = status === "" ? "all" : status === "open" ? "open" : status === "snoozed" ? "pending" : status === "waiting" ? "waiting" : "closed";
   const setTab = (tab: "all" | "open" | "pending" | "closed" | "waiting") => {
     setStatus(tab === "all" ? "" : tab === "open" ? "open" : tab === "pending" ? "snoozed" : tab === "waiting" ? "waiting" : "done");

@@ -50,7 +50,7 @@ import {
 } from './providers';
 import { computeAiCostPaisa } from './pricing';
 import { deliverOutgoingMessage, type DeliveryResult } from '../channels/meta-send';
-import { detectAnger, escalateConversation, isCantAnswerReply } from '../inbox/escalation';
+import { detectAnger, detectOffTopic, escalateConversation, isCantAnswerReply } from '../inbox/escalation';
 
 /** Flat MVP estimate per AI reply (paisa). Real per-token pricing plugs in here later. Must stay under the 20-paisa gate. */
 const AI_REPLY_COST_PAISA = 10;
@@ -648,6 +648,22 @@ export async function processBatch(
     });
     await recordUnanswered(workspaceId, batchedText);
     return { replied: false, reason: 'escalated_angry_customer' };
+  }
+
+  // Off-topic question? Escalate FIRST too — before any AI call, before
+  // the subscription gate — so the AI never answers (and never burns
+  // credit on) questions outside the shop's scope: personal questions
+  // about the AI ("তুমি ছেলে নাকি মেয়ে?"), weather, sports, politics,
+  // jokes, songs, movies, news, trivia. The chat moves to the Inbox
+  // "Waiting" tab (status='waiting', mode='human') with the reason
+  // stored, plus an unanswered record so the owner can see the question
+  // in Teach AI. Greetings and every shop question (products, price,
+  // orders, delivery, location, payment) never match the off-topic list
+  // (see inbox/escalation.ts) and flow through normally.
+  if (detectOffTopic(batchedText)) {
+    await escalateConversation(workspaceId, conversationId, 'off_topic');
+    await recordUnanswered(workspaceId, batchedText);
+    return { replied: false, reason: 'escalated_off_topic' };
   }
 
   const [customer, channel, allowance] = await Promise.all([
