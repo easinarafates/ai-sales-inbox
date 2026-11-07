@@ -116,11 +116,25 @@ migration `02-phase2-engagement.sql`.
 
 ## Approval gates — what is NOT live yet
 
-- **Real Meta publishing is a stub.** `publishScheduledPost` logs the publish and sets
-  `platform_post_id` to `stub-<uuid>`; no request reaches Facebook/Instagram. Real
-  sending needs a live Meta Graph API call with an approved page token (Meta App
-  Review + Business Verification still pending). Replace only the stub-send block
-  in `publisher.ts` when approval exists.
+- **Real Meta publishing is LIVE for Facebook (2026-11-07).**
+  `publishScheduledPost` sends for real via `sendPagePost` (Graph v21.0,
+  the workspace's stored Page token): text → `/{page-id}/feed`, one
+  image → `/{page-id}/photos`, several images → unpublished uploads +
+  one feed post with `attached_media`, video → `/{page-id}/videos`.
+  A post is 'published' only when Graph returns a real post id; a
+  failure is logged in `post_publish_logs` with Meta's message and the
+  post ends 'failed' (the Schedule page shows the reason). It needs
+  `pages_manage_posts` on the Page token — tokens granted before that
+  scope was added must have the Page reconnected once (Login with
+  Facebook). The cron sweep (`/api/cron/sweep` every 5 min via GitHub
+  Actions) publishes due posts; opening the Schedule page also runs a
+  lazy sweep for the workspace, so an overdue post publishes then even
+  if the cron workflow is broken. NOTE: the GitHub workflow
+  `.github/workflows/cron-sweep.yml` must call the Vercel API URL
+  (https://ai-sales-inbox-api.vercel.app/api/cron/sweep) — it used to
+  call https://api.yearmedia.xyz, which does not serve the API, so the
+  sweep never ran until the URL was fixed (edit the file on GitHub;
+  the App cannot push workflow files).
 - **TikTok scheduling is audit-gated.** Until `TIKTOK_SCHEDULING_AUDITED=true`,
   TikTok posts are recorded in `post_publish_logs` as failed (`TikTok audit pending`)
   and skipped — never published. Per the PDF, TikTok posting is a Phase 3 item

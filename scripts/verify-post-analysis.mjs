@@ -147,7 +147,7 @@ async function main() {
   check('comments answer says honestly when there is no Facebook comment to reply to', commentsSrc.includes('delivered: false') && commentsSrc.includes('deliveryNote'));
 
   const metaSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/meta-oauth.ts'), 'utf8');
-  check('OAuth connect creates a companion facebook_comment row (same Page + token)', metaSrc.includes("platform = 'facebook_comment'") && metaSrc.includes("INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id)"));
+  check('OAuth connect creates a companion facebook_comment row (same Page + token)', metaSrc.includes("platform = 'facebook_comment'") && metaSrc.includes("INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id)"));
   check('companion row is idempotent (checked before insert, never fails the connect)', metaSrc.includes('companion facebook_comment channel failed') && metaSrc.includes('existing.rows.length === 0'));
 
   const subSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/subscriptions/service.ts'), 'utf8');

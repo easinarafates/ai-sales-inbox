@@ -756,6 +756,8 @@ export const commentsApi = {
     api.get<{ postId: string; cards: CarouselCard[] }>(`/api/comments/${postId}/carousel`),
   reply: (commentId: string, text: string) =>
     api.post<{ comment?: unknown; conversationId?: string }>(`/api/comments/${commentId}/reply`, { text }),
+  like: (commentId: string) =>
+    api.post<{ liked: boolean; alreadyLiked?: boolean }>(`/api/comments/${commentId}/like`, {}),
 };
 
 export interface ScheduledPost {
@@ -769,6 +771,7 @@ export interface ScheduledPost {
   status?: string;
   platformPostId?: string;
   platform_post_id?: string;
+  lastError?: string | null;
   createdAt?: string;
   created_at?: string;
   [key: string]: unknown;
@@ -926,6 +929,12 @@ export const analyticsApi = {
   // Real Facebook Page post analysis (Graph data, never invented).
   pagePosts: (channelId?: string) =>
     api.get<PagePostAnalysis>(`/api/analytics/page-posts${channelId ? `?channelId=${encodeURIComponent(channelId)}` : ""}`),
+  // Like a Page post as the Page (needs pages_manage_engagement).
+  likePagePost: (postId: string) =>
+    api.post<{ liked: boolean; alreadyLiked?: boolean }>(
+      `/api/analytics/page-posts/${encodeURIComponent(postId)}/like`,
+      {}
+    ),
 };
 
 export interface UnansweredQuestion {

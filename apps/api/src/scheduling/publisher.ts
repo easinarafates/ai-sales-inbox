@@ -1,22 +1,33 @@
-import { randomUUID } from 'node:crypto';
 import { config } from '../config';
 import { pool, query, queryOne } from '../db/pool';
+import {
+  decryptPageToken,
+  getWorkspacePageChannel,
+  sendPagePost,
+} from '../channels/meta-send';
 
 /**
  * Scheduled-post publisher (Module B, Phase 2).
  *
- * STUB — real publishing is NOT wired yet: sending a post to Facebook /
- * Instagram needs a live Meta Graph API call with an approved page token,
- * and Meta approval is still pending (see RUNNING.md). What this module
- * does today is the full scheduling machinery around that send: due-post
- * pickup, per-platform attempts, publish logs, 3-attempt retry, and the
- * TikTok audit gate. When the real send is wired, replace ONLY the
- * `stubSend` block below; the status/log/retry flow stays the same.
+ * REAL publishing to Facebook (2026-11-07): the Facebook leg sends for
+ * real via sendPagePost (Graph v21.0, the workspace's stored Page token)
+ * — POST /{page-id}/feed for text, /photos for images, /videos for
+ * video. A post counts as published ONLY when Graph returns a real post
+ * id, stored as platform_post_id (never a stub id). A Graph failure is
+ * logged in post_publish_logs with Meta's own message and the post ends
+ * 'failed' after 3 attempts — the Schedule page shows that reason.
+ * Publishing needs pages_manage_posts on the Page token: tokens granted
+ * before that scope was added (login scopes, facebook-oauth.ts) do NOT
+ * carry it, so the Page must be reconnected once (Login with Facebook).
  *
  * TikTok gate (PDF section 6): the TikTok Content Posting API shows posts
  * as private until the app passes audit. Until then
  * TIKTOK_SCHEDULING_AUDITED must be 'true', otherwise TikTok posts are
  * recorded as failed ('TikTok audit pending') and skipped — never published.
+ * Instagram / Messenger / WhatsApp are not post platforms for this app:
+ * Instagram publishing (media containers) is not built yet and Messenger /
+ * WhatsApp are messaging channels — they are logged as failed with a
+ * plain reason instead of pretending to publish.
  */
 
 export interface ScheduledPostRow {
@@ -31,6 +42,8 @@ export interface ScheduledPostRow {
   platform_post_id: string | null;
   created_at: string;
   updated_at: string;
+  /** Latest failed publish reason (from post_publish_logs) — response-only, not a DB column. */
+  lastError?: string | null;
 }
 
 const POST_COLUMNS =
@@ -70,9 +83,12 @@ async function setStatus(
 
 /**
  * Publish one scheduled post now. Per platform:
+ * - facebook -> REAL Graph publish via sendPagePost (needs the workspace's
+ *   connected Page + pages_manage_posts on its token). Only a Graph
+ *   post id counts as published.
  * - TikTok without a passed audit -> failure logged, platform skipped.
- * - Any other platform -> STUB send: a log line + platform_post_id
- *   `stub-<uuid>` (clearly not a real platform id).
+ * - instagram / messenger / whatsapp / anything else -> failure logged
+ *   with a plain reason (not built / not a post platform); never faked.
  * Retries a failed publish up to 3 attempts total, then status 'failed'.
  * Returns the updated post row.
  */
@@ -88,10 +104,9 @@ export async function publishScheduledPost(
   if (!post) throw new Error('Scheduled post not found');
   if (post.status === 'published') return post;
   if (post.status === 'cancelled') throw new Error('বাতিল করা পোস্ট প্রকাশ করা যায় না');
-  // Video posts need a playable video attached — the local (stub) flow
-  // marks them published and returns the post row, whose media_urls
-  // carry the playable URL for the UI (<video controls>). Real Meta
-  // publishing is unchanged: nothing here reaches any platform.
+  // Video posts need a playable video attached — the returned row keeps
+  // media_type 'video' + media_urls, so the UI can play the video from
+  // its servable URL as well.
   if (post.media_type === 'video' && (!post.media_urls || post.media_urls.length === 0)) {
     throw new Error('ভিডিও পোস্টে ভিডিও লাগবে — মিডিয়া ছাড়া প্রকাশ করা যায় না');
   }
@@ -128,34 +143,82 @@ export async function publishScheduledPost(
         continue;
       }
 
-      try {
-        // STUB SEND — replace with the real Meta Graph API call once the
-        // page token + approval exist. Nothing here reaches any platform.
-        // Video posts are handled the same way in this local flow: the
-        // returned row keeps media_type 'video' + media_urls, so the UI
-        // can play the video from its servable URL.
-        const stubId = `stub-${randomUUID()}`;
-        console.log(
-          `[publisher:stub] post ${postId} -> ${platform} (attempt ${attempt}): ${post.media_type ?? 'text'} caption ${(post.caption ?? '').slice(0, 80)}`,
-        );
-        await logAttempt(workspaceId, postId, platform, attempt, 'published', null);
-        platformPostId = stubId;
-        publishedAny = true;
-      } catch (err) {
-        attemptFailed = true;
-        await logAttempt(
-          workspaceId,
-          postId,
-          platform,
-          attempt,
-          'failed',
-          (err as Error).message,
-        );
+      // Facebook — the real publish. Logged once for setup failures
+      // (no Page / bad token), every attempt for real Graph failures.
+      if (platform === 'facebook') {
+        const channel = await getWorkspacePageChannel(workspaceId);
+        if (!channel) {
+          if (attempt === 1) {
+            await logAttempt(
+              workspaceId,
+              postId,
+              platform,
+              attempt,
+              'failed',
+              'কোনো Facebook Page যুক্ত নেই — Channels পেজ থেকে Login with Facebook দিয়ে পেজ যুক্ত করুন (no Facebook Page connected)',
+            );
+          }
+          attemptFailed = true;
+          continue;
+        }
+        const pageToken = decryptPageToken(channel);
+        if (!pageToken) {
+          if (attempt === 1) {
+            await logAttempt(
+              workspaceId,
+              postId,
+              platform,
+              attempt,
+              'failed',
+              'পেজের টোকেন পড়া যায়নি — পেজটি আবার যুক্ত করুন (stored Page token could not be read — reconnect the Page)',
+            );
+          }
+          attemptFailed = true;
+          continue;
+        }
+        const result = await sendPagePost({
+          pageId: channel.external_id,
+          pageToken,
+          caption: post.caption,
+          mediaUrls: post.media_urls ?? [],
+          mediaType: post.media_type,
+        });
+        if (result.ok && result.platformPostId) {
+          console.log(
+            `[publisher] post ${postId} -> facebook (attempt ${attempt}): published as ${result.platformPostId}`,
+          );
+          await logAttempt(workspaceId, postId, platform, attempt, 'published', null);
+          platformPostId = result.platformPostId;
+          publishedAny = true;
+        } else {
+          attemptFailed = true;
+          await logAttempt(
+            workspaceId,
+            postId,
+            platform,
+            attempt,
+            'failed',
+            result.error ?? 'Facebook publishing failed',
+          );
+        }
+        continue;
       }
+
+      // Anything else is not published by this app — say so plainly.
+      if (attempt === 1) {
+        const reason =
+          platform === 'instagram'
+            ? 'Instagram-এ পোস্ট প্রকাশ এখনো যুক্ত হয়নি — আপাতত Instagram অ্যাপ থেকে পোস্ট করুন (Instagram publishing is not connected yet)'
+            : platform === 'messenger' || platform === 'whatsapp'
+              ? `${platform} মেসেজের চ্যানেল, পোস্টের প্ল্যাটফর্ম নয় (not a post platform)`
+              : `এই প্ল্যাটফর্মে প্রকাশ এখনো যুক্ত হয়নি (publishing not supported for ${platform})`;
+        await logAttempt(workspaceId, postId, platform, attempt, 'failed', reason);
+      }
+      attemptFailed = true;
     }
 
     // Published on at least one platform (a gated TikTok alongside a live
-    // Facebook/Instagram post does not fail the whole post; the TikTok
+    // Facebook post does not fail the whole post; the other platform's
     // failure stays visible in post_publish_logs).
     if (publishedAny) {
       const done = await setStatus(workspaceId, postId, 'published', platformPostId);
@@ -163,13 +226,48 @@ export async function publishScheduledPost(
     }
     if (!attemptFailed) break; // nothing failed and nothing published — nothing left to retry
     if (attempt === MAX_ATTEMPTS) break;
-    // Small pause before the next attempt; the stub never throws, so in
-    // practice this path only runs for the audit gate / real-send errors.
+    // Small pause before the next attempt (only reached for real-send errors).
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
   const failed = await setStatus(workspaceId, postId, 'failed', platformPostId);
   return failed ?? post;
+}
+
+/**
+ * Pick up every due scheduled post (status 'scheduled', scheduled_at <= now)
+ * in ONE workspace and publish it. Used by the lazy sweep on the Schedule
+ * page load (see scheduling/routes.ts) — Vercel has no always-on worker,
+ * so this is the belt-and-braces next to the GitHub Actions cron sweep.
+ * Never throws for one bad post — it is logged and the sweep continues.
+ */
+export async function processDueScheduledPostsForWorkspace(workspaceId: string): Promise<{
+  processed: number;
+  published: number;
+  failed: number;
+}> {
+  const { rows: due } = await query<{ id: string }>(
+    workspaceId,
+    `SELECT id FROM scheduled_posts
+     WHERE workspace_id = $1 AND status = 'scheduled' AND scheduled_at <= now()
+     ORDER BY scheduled_at ASC`,
+    [workspaceId],
+  );
+  let processed = 0;
+  let published = 0;
+  let failed = 0;
+  for (const { id } of due) {
+    processed++;
+    try {
+      const post = await publishScheduledPost(workspaceId, id);
+      if (post.status === 'published') published++;
+      else failed++;
+    } catch (err) {
+      failed++;
+      console.error(`[publisher] post ${id} failed:`, (err as Error).message);
+    }
+  }
+  return { processed, published, failed };
 }
 
 /**
@@ -191,24 +289,10 @@ export async function processDueScheduledPosts(): Promise<{
   let published = 0;
   let failed = 0;
   for (const { workspace_id: workspaceId } of workspaces) {
-    const { rows: due } = await query<{ id: string }>(
-      workspaceId,
-      `SELECT id FROM scheduled_posts
-       WHERE workspace_id = $1 AND status = 'scheduled' AND scheduled_at <= now()
-       ORDER BY scheduled_at ASC`,
-      [workspaceId],
-    );
-    for (const { id } of due) {
-      processed++;
-      try {
-        const post = await publishScheduledPost(workspaceId, id);
-        if (post.status === 'published') published++;
-        else failed++;
-      } catch (err) {
-        failed++;
-        console.error(`[publisher] post ${id} failed:`, (err as Error).message);
-      }
-    }
+    const r = await processDueScheduledPostsForWorkspace(workspaceId);
+    processed += r.processed;
+    published += r.published;
+    failed += r.failed;
   }
   return { processed, published, failed };
 }

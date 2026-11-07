@@ -57,14 +57,23 @@ import { completeWhatsappOAuth } from './whatsapp-oauth';
 export const facebookOAuthRouter = Router();
 
 // pages_manage_engagement: replying to Page-post comments as the Page
-// (POST /{comment-id}/comments). Needs App Review for public shops —
+// (POST /{comment-id}/comments) and liking Page posts/comments as the
+// Page (POST /{object-id}/likes). Needs App Review for public shops —
 // the app admin can grant it in dev/Live mode for his own Pages.
 // NOTE (2026-11-07): pages_manage_engagement was requested here overnight
 // for comment replies, but the Facebook Login dialog then fails with
-// "Feature Unavailable". Reverted to the 4 scopes that worked when Halal Chic
-// connected (2026-11-07 01:38). Re-add pages_manage_engagement only after
-// Meta grants Advanced Access / App Review for it.
-const SCOPES = ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'];
+// "Feature Unavailable". It was reverted to the 4 scopes that worked when
+// Halal Chic connected (2026-11-07 01:38). It is re-added now because
+// liking (and comment replies) as the Page are impossible without it —
+// and so is pages_manage_posts below. If the Login dialog shows
+// "Feature Unavailable" again, grant the permission instead in Facebook
+// Settings → Business integrations → "AI Sales Inbox" (the same place the
+// 4 permissions were ticked on 2026-11-07), or revert this scope and
+// redeploy. Tokens granted before a scope was added do NOT carry it:
+// the Page must be reconnected once (Login with Facebook) after deploy.
+// pages_manage_posts: publishing Page posts as the Page (POST
+// /{page-id}/feed, /photos, /videos) — the Schedule page's real publish.
+const SCOPES = ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_engagement'];
 
 /** Complete the Facebook flow after the code exchange. */
 export async function completeFacebookOAuth(

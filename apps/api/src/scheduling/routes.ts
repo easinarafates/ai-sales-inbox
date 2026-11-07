@@ -9,7 +9,7 @@ import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { callGroq } from '../ai-agent/groq';
 import { analyzePostMedia } from './media-caption';
-import { publishScheduledPost, type ScheduledPostRow } from './publisher';
+import { publishScheduledPost, processDueScheduledPostsForWorkspace, type ScheduledPostRow } from './publisher';
 import { enqueueScheduledPost } from './queue';
 
 export const schedulingRouter = Router();
@@ -235,6 +235,31 @@ async function loadPost(workspaceId: string, postId: string): Promise<ScheduledP
   );
 }
 
+/**
+ * Latest failed publish reason per post (from post_publish_logs), so the
+ * Schedule page can show WHY a post failed instead of only "Failed".
+ */
+async function lastErrors(
+  workspaceId: string,
+  postIds: string[],
+): Promise<Record<string, string>> {
+  if (postIds.length === 0) return {};
+  const { rows } = await query<{ scheduled_post_id: string; error: string | null }>(
+    workspaceId,
+    `SELECT DISTINCT ON (scheduled_post_id) scheduled_post_id, error FROM post_publish_logs
+     WHERE workspace_id = $1 AND scheduled_post_id = ANY($2) AND status = 'failed' AND error IS NOT NULL
+     ORDER BY scheduled_post_id, created_at DESC`,
+    [workspaceId, postIds],
+  );
+  const map: Record<string, string> = {};
+  for (const r of rows) if (r.error) map[r.scheduled_post_id] = r.error;
+  return map;
+}
+
+function withLastErrors(posts: ScheduledPostRow[], errors: Record<string, string>): ScheduledPostRow[] {
+  return posts.map((p) => (errors[p.id] ? { ...p, lastError: errors[p.id] } : p));
+}
+
 async function loadPostProducts(workspaceId: string, postId: string) {
   const { rows } = await query(
     workspaceId,
@@ -275,6 +300,13 @@ schedulingRouter.get('/scheduled-posts', async (req: AuthRequest, res: Response)
   const workspaceId = getWorkspaceId(req);
   const status = typeof req.query.status === 'string' ? req.query.status : null;
   const platform = typeof req.query.platform === 'string' ? req.query.platform : null;
+  // Lazy sweep: Vercel has no always-on worker, and the GitHub Actions
+  // cron is the only other trigger — so opening the Schedule page also
+  // publishes anything already due in this workspace. When nothing is
+  // due this is one cheap indexed query; errors never block the list.
+  await processDueScheduledPostsForWorkspace(workspaceId).catch((err) =>
+    console.error('[scheduling] lazy sweep failed:', (err as Error).message),
+  );
   const { rows } = await query<ScheduledPostRow>(
     workspaceId,
     `SELECT ${POST_COLUMNS} FROM scheduled_posts
@@ -285,7 +317,8 @@ schedulingRouter.get('/scheduled-posts', async (req: AuthRequest, res: Response)
     [workspaceId, status, platform],
   );
   const counts = await dayCounts(workspaceId);
-  res.json({ posts: rows, counts, maxPerDay: MAX_POSTS_PER_DAY, windowDays: WINDOW_DAYS });
+  const errors = await lastErrors(workspaceId, rows.map((r) => r.id));
+  res.json({ posts: withLastErrors(rows, errors), counts, maxPerDay: MAX_POSTS_PER_DAY, windowDays: WINDOW_DAYS });
 });
 
 /**
@@ -668,7 +701,8 @@ schedulingRouter.get('/scheduled-posts/:id', async (req: AuthRequest, res: Respo
     return;
   }
   const products = await loadPostProducts(workspaceId, post.id);
-  res.json({ post, products });
+  const errors = await lastErrors(workspaceId, [post.id]);
+  res.json({ post: withLastErrors([post], errors)[0], products });
 });
 
 /** POST /api/scheduled-posts — draft unless scheduledAt is given, then scheduled. */

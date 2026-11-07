@@ -109,6 +109,8 @@ export const commentsApi = {
   answer: (id: string, text: string) =>
     api.post<{ comment: ModeratedComment }>(`/api/comments/${id}/answer`, { text }),
   hide: (id: string) => api.post<{ comment: ModeratedComment }>(`/api/comments/${id}/hide`, {}),
+  like: (id: string) =>
+    api.post<{ liked: boolean; alreadyLiked?: boolean }>(`/api/comments/${id}/like`, {}),
   markDone: (id: string) =>
     api.post<{ comment: ModeratedComment }>(`/api/comments/${id}/mark-done`, {}),
   remove: (id: string) => api.del<{ deleted: boolean }>(`/api/comments/${id}`),

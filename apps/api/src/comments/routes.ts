@@ -2,7 +2,7 @@ import { Router, type Response } from 'express';
 import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
-import { deliverOutgoingMessage } from '../channels/meta-send';
+import { deliverOutgoingMessage, getWorkspacePageChannel, decryptPageToken, likeGraphObject } from '../channels/meta-send';
 import { recordAttributionForPlatformPost } from '../analytics/attribution';
 
 /**
@@ -143,6 +143,47 @@ commentsRouter.post('/comments/:id/answer', async (req: AuthRequest, res: Respon
     delivered: false,
     deliveryNote: 'এই কমেন্টের সাথে Facebook-এ কোনো কমেন্ট যুক্ত নেই — উত্তরটি শুধু ইনবক্সে সংরক্ষণ করা হয়েছে।',
   });
+});
+
+/**
+ * POST /api/comments/:id/like — like the Facebook comment as the Page.
+ * POST /{platform_comment_id}/likes with the workspace's Page token.
+ * Needs pages_manage_engagement on the token (granted at Login with
+ * Facebook after the scope was added — a token from before must have
+ * the Page reconnected once). A failed like returns 502 with Graph's
+ * own message; the comment is never marked liked when Graph refused.
+ */
+commentsRouter.post('/comments/:id/like', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const comment = await queryOne<CommentRow>(
+    workspaceId,
+    `SELECT ${COMMENT_COLUMNS} FROM comments WHERE workspace_id = $1 AND id = $2`,
+    [workspaceId, req.params.id],
+  );
+  if (!comment) {
+    res.status(404).json({ error: 'Comment not found' });
+    return;
+  }
+  if (!comment.platform_comment_id) {
+    res.status(400).json({ error: 'এই কমেন্টের সাথে Facebook-এ কোনো কমেন্ট যুক্ত নেই — লাইক দেওয়া যাবে না (no Facebook comment linked)' });
+    return;
+  }
+  const channel = await getWorkspacePageChannel(workspaceId);
+  if (!channel) {
+    res.status(502).json({ error: 'কোনো Facebook Page যুক্ত নেই — Channels পেজ থেকে পেজ যুক্ত করুন (no Facebook Page connected)' });
+    return;
+  }
+  const pageToken = decryptPageToken(channel);
+  if (!pageToken) {
+    res.status(502).json({ error: 'stored_page_token_invalid', detail: 'The stored Page token could not be read — reconnect the Page.' });
+    return;
+  }
+  const result = await likeGraphObject({ objectId: comment.platform_comment_id, pageToken });
+  if (!result.ok) {
+    res.status(502).json({ error: `Like failed: ${result.error ?? 'unknown error'}`, code: result.code ?? null });
+    return;
+  }
+  res.json({ liked: true, alreadyLiked: result.alreadyLiked ?? false, comment });
 });
 
 /** POST /api/comments/:id/hide — hide the comment (status 'hidden'). */

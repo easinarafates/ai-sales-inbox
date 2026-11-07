@@ -15,6 +15,7 @@ export default function CommentsPage() {
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState("");
   const [answerText, setAnswerText] = useState<Record<string, string>>({});
+  const [likedIds, setLikedIds] = useState<Record<string, boolean>>({});
   const [newBody, setNewBody] = useState("");
   const [newPostId, setNewPostId] = useState("");
 
@@ -115,6 +116,17 @@ export default function CommentsPage() {
                 <button onClick={() => act(() => commentsApi.hide(c.id), "cHideFail", "Could not hide the comment.", "কমেন্ট লুকানো যায়নি।")} className="text-sm border rounded-lg px-3 py-1">
                   {t("cHide", "Hide", "লুকান")}
                 </button>
+                {c.platform_comment_id && (
+                  <button
+                    onClick={() => act(() => commentsApi.like(c.id).then(() => setLikedIds((p) => ({ ...p, [c.id]: true }))), "cLikeFail", "Could not like the comment.", "কমেন্টে লাইক দেওয়া যায়নি।")}
+                    disabled={likedIds[c.id]}
+                    className="text-sm border rounded-lg px-3 py-1 disabled:opacity-50"
+                  >
+                    {likedIds[c.id]
+                      ? t("cLiked", "Liked ✓", "লাইক দেওয়া হয়েছে ✓")
+                      : t("cLike", "👍 Like", "👍 লাইক")}
+                  </button>
+                )}
                 <button onClick={() => act(() => commentsApi.markDone(c.id), "cDoneFail", "Could not mark done.", "শেষ করা যায়নি।")} className="text-sm border border-teal-600 text-teal-600 rounded-lg px-3 py-1">
                   {t("cMarkDone", "Mark done", "শেষ করুন")}
                 </button>

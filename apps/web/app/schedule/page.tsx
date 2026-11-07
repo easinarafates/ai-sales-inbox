@@ -648,6 +648,11 @@ export default function SchedulePage() {
                       </div>
                     )}
                     <p className="text-sm whitespace-pre-wrap">{p.caption || "—"}</p>
+                    {p.status === "failed" && (p.lastError || (p as Record<string, unknown>).last_error) && (
+                      <p className="text-xs text-red-700 bg-red-50 border border-red-100 rounded-lg p-2 mt-2">
+                        {(p.lastError as string) || ((p as Record<string, unknown>).last_error as string)}
+                      </p>
+                    )}
                     <div className="flex flex-wrap gap-2 mt-2 text-xs">
                       <span className="bg-orange-100 text-[#ff6a4d] px-2 py-0.5 rounded">{mediaTypeLabel(postMediaType(p))}</span>
                       {(p.platforms || []).map((pl) => (

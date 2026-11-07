@@ -140,7 +140,7 @@ async function main() {
   const metaSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/meta-oauth.ts'), 'utf8');
   check('facebook-oauth router exists', oauthSrc.length > 0);
   check('router has login/callback/pages/connect', ['/login', '/callback', '/pages', '/connect'].every((p) => oauthSrc.includes(`'${p}'`)));
-  check('shared module uses Graph v21.0 + router has required scopes', metaSrc.includes("v21.0") && ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'].every((s) => oauthSrc.includes(s)));
+  check('shared module uses Graph v21.0 + router has required scopes', metaSrc.includes("v21.0") && ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_posts', 'pages_manage_engagement'].every((s) => oauthSrc.includes(s)));
   check('shared module never puts a token in a URL (Bearer header / POST body only)', !metaSrc.includes('access_token=${') && !metaSrc.includes('fb_exchange_token=${'));
   check('shared callback dispatches by state channel (instagram/whatsapp)', oauthSrc.includes('completeInstagramOAuth') && oauthSrc.includes('completeWhatsappOAuth'));
   check('no_pages redirect carries the account name', oauthSrc.includes('fetchMeName') && oauthSrc.includes("reason: 'no_pages'") && oauthSrc.includes('account'));

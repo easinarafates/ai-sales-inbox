@@ -7,19 +7,26 @@
  * Starts its OWN API (tsx, port 4011) on a throwaway PGlite data dir in
  * /tmp, so it never touches the real local database or port 4000.
  * Covers: 15/day limit (16th rejected 400), 7-day window (beyond 7 days
- * rejected 400), publish frees a slot (15 -> publish 1 -> add 1 succeeds),
- * base64 image upload returns a servable URL, auto-caption returns 2-3
+ * rejected 400), publish frees a slot (15 -> publish attempt -> add 1
+ * succeeds), base64 image upload returns a servable URL, auto-caption returns 2-3
  * options containing the REAL product price (never invented), MEDIA-AWARE
  * auto-caption (Gemini vision analyzes the attached image/video and the
  * caption comes from what is actually in it — red/blue test PNG, small
  * red test video via the inline path, >18 MB test video via the Gemini
  * File API path, bogus media URL falls back honestly with no fake
- * analysis), video post create + list shows media_type 'video' (and
- * publishes in the local flow).
+ * analysis), video post create + list shows media_type 'video'.
+ * REAL publishing (2026-11-07): publish-now with NO Page connected must
+ * FAIL honestly (never a fake 'published', no stub- id); with a test Page
+ * channel connected and Meta Graph pointed at a local fake server
+ * (META_GRAPH_BASE_URL), text / image / video posts publish for real and
+ * store Graph's ids, liking a Page post + a comment reaches Graph, a due
+ * post publishes when the Schedule list loads (lazy sweep), and a failed
+ * post carries its reason (lastError) in the list.
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
  * NOTE: uses only test data in a fresh workspace; nothing is sent to Meta.
  */
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -32,6 +39,38 @@ const PORT = Number(process.env.VERIFY_PORT ?? 4011);
 const API = `http://localhost:${PORT}`;
 const results = [];
 let token = '';
+
+/**
+ * Fake Meta Graph server (META_GRAPH_BASE_URL override): answers the
+ * exact calls the real publisher + like endpoints make, with fixed ids
+ * — so the verifier proves a publish reaches Graph and stores Graph's
+ * id, never a stub id, without touching real Facebook. Every request
+ * is recorded in graphCalls for assertions.
+ */
+const FAKE_GRAPH_PORT = Number(process.env.FAKE_GRAPH_PORT ?? 4021);
+const graphCalls = [];
+function startFakeGraph() {
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (d) => { body += d.toString(); });
+    req.on('end', () => {
+      let parsed = null;
+      try { parsed = body ? JSON.parse(body) : null; } catch { parsed = null; }
+      graphCalls.push({ method: req.method, path: req.url, body: parsed });
+      const send = (status, obj) => {
+        res.writeHead(status, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(obj));
+      };
+      if (req.method === 'POST' && req.url === '/v21.0/12345/feed') return send(200, { id: '12345_67890' });
+      if (req.method === 'POST' && req.url === '/v21.0/12345/photos') return send(200, { id: 'photo_1', post_id: '12345_67891' });
+      if (req.method === 'POST' && req.url === '/v21.0/12345/videos') return send(200, { id: 'video_1' });
+      if (req.method === 'POST' && req.url === '/v21.0/12345_67890/likes') return send(200, { success: true });
+      if (req.method === 'POST' && req.url === '/v21.0/comment_1/likes') return send(200, { success: true });
+      return send(404, { error: { message: 'fake Graph: unknown route ' + req.url, code: 404 } });
+    });
+  });
+  return new Promise((resolve) => server.listen(FAKE_GRAPH_PORT, '127.0.0.1', () => resolve(server)));
+}
 
 function check(name, ok, detail = '') {
   results.push({ name, ok, detail });
@@ -93,6 +132,7 @@ async function waitForHealth(child, timeoutMs = 90000) {
 }
 
 async function main() {
+  const fakeGraph = await startFakeGraph();
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'sched-verify-'));
   const dataDir = path.join(tmpDir, 'pglite-data');
   const env = {
@@ -100,6 +140,9 @@ async function main() {
     ...parseEnvFile(path.join(API_DIR, '.env')),
     PORT: String(PORT),
     DATABASE_URL: `pglite://${dataDir}`,
+    // Point Meta Graph at the fake server above (meta-send reads this
+    // env var on every call) — nothing in this verifier touches real Meta.
+    META_GRAPH_BASE_URL: `http://127.0.0.1:${FAKE_GRAPH_PORT}/v21.0`,
   };
   const tsxBin = path.join(API_DIR, 'node_modules', '.bin', 'tsx');
   const child = spawn(tsxBin, ['src/index.ts'], {
@@ -206,16 +249,18 @@ async function main() {
     });
     check('scheduled_at on day 6 (inside window) accepted', ok6.status === 201, `status=${ok6.status}`);
 
-    // 4. Publishing frees the slot: publish 1 of the 15, then adding 1 more must succeed.
+    // 4. Publishing frees the slot: publish 1 of the 15 — with no Page
+    // connected it must FAIL honestly (never a fake 'published'), and a
+    // failed post frees its slot just like a published one.
     const pub = await api(`/api/scheduled-posts/${createdIds[0]}/publish-now`, { method: 'POST' });
     check(
-      'publish-now publishes one of the 15',
-      pub.status === 200 && pub.data?.post?.status === 'published',
-      `status=${pub.data?.post?.status}`,
+      'publish-now without a connected Page fails honestly (never fake published, no stub- id)',
+      pub.status === 200 && pub.data?.post?.status === 'failed' && !String(pub.data?.post?.platform_post_id ?? '').startsWith('stub-'),
+      `status=${pub.data?.post?.status}, platform_post_id=${pub.data?.post?.platform_post_id ?? ''}`,
     );
     const afterPub = await api('/api/scheduled-posts');
     check(
-      'published post no longer counts toward the day (14/15)',
+      'failed post no longer counts toward the day (14/15)',
       Number(afterPub.data?.counts?.[targetDate]) === 14,
       `counts[${targetDate}]=${afterPub.data?.counts?.[targetDate]}`,
     );
@@ -463,13 +508,106 @@ async function main() {
     if (vidId) {
       const vpub = await api(`/api/scheduled-posts/${vidId}/publish-now`, { method: 'POST' });
       check(
-        'video post publishes in the local flow (stub) with playable media URL',
-        vpub.status === 200 && vpub.data?.post?.status === 'published' && vpub.data?.post?.media_type === 'video' && (vpub.data?.post?.media_urls ?? [])[0] === 'https://example.com/sample.mp4',
+        'video post without a connected Page fails honestly (media kept for the UI player)',
+        vpub.status === 200 && vpub.data?.post?.status === 'failed' && vpub.data?.post?.media_type === 'video' && (vpub.data?.post?.media_urls ?? [])[0] === 'https://example.com/sample.mp4',
         `status=${vpub.data?.post?.status}`,
       );
     } else {
-      check('video post publishes in the local flow (stub) with playable media URL', false, 'no video post id');
+      check('video post without a connected Page fails honestly (media kept for the UI player)', false, 'no video post id');
     }
+
+    // 8. REAL publish against the fake Graph server: connect a Page
+    // channel (fake token), then text / image / video posts must publish
+    // with Graph's real ids — never a stub id. Likes as the Page must
+    // reach Graph too. And a due post must publish when the Schedule
+    // list loads (lazy sweep).
+    const chan = await api('/api/channels', {
+      method: 'POST',
+      body: { platform: 'messenger', externalId: '12345', displayName: 'Test Page', token: 'fake-page-token' },
+    });
+    check(
+      'connect test Page channel (messenger, fake token)',
+      chan.status === 201 && chan.data?.channel?.status === 'connected',
+      `status=${chan.status}, channel=${JSON.stringify(chan.data?.channel ?? chan.data ?? '')}`,
+    );
+
+    const mkPost = async (body) => {
+      const r = await api('/api/scheduled-posts', { method: 'POST', body });
+      return r.data?.post?.id ?? '';
+    };
+    const tId = await mkPost({ caption: 'আসল প্রকাশ টেস্ট', mediaType: 'text', platforms: ['facebook'], scheduledAt: new Date(`${day6}T13:00:00+06:00`).toISOString() });
+    const tpub = await api(`/api/scheduled-posts/${tId}/publish-now`, { method: 'POST' });
+    check(
+      'real publish: text post gets Graph post id (not stub-)',
+      tpub.status === 200 && tpub.data?.post?.status === 'published' && tpub.data?.post?.platform_post_id === '12345_67890',
+      `status=${tpub.data?.post?.status}, platform_post_id=${tpub.data?.post?.platform_post_id ?? ''}`,
+    );
+    check(
+      'fake Graph received the feed POST for the text post',
+      graphCalls.some((c) => c.path === '/v21.0/12345/feed' && c.body?.message === 'আসল প্রকাশ টেস্ট'),
+      `feed calls=${graphCalls.filter((c) => c.path === '/v21.0/12345/feed').length}`,
+    );
+
+    const iId = await mkPost({ caption: 'ছবির পোস্ট টেস্ট', mediaType: 'image', mediaUrls: ['https://example.com/pic.jpg'], platforms: ['facebook'], scheduledAt: new Date(`${day6}T14:00:00+06:00`).toISOString() });
+    const ipub = await api(`/api/scheduled-posts/${iId}/publish-now`, { method: 'POST' });
+    check(
+      'real publish: image post gets Graph photo post id',
+      ipub.status === 200 && ipub.data?.post?.status === 'published' && ipub.data?.post?.platform_post_id === '12345_67891',
+      `status=${ipub.data?.post?.status}, platform_post_id=${ipub.data?.post?.platform_post_id ?? ''}`,
+    );
+    check(
+      'fake Graph received the photos POST with the image URL',
+      graphCalls.some((c) => c.path === '/v21.0/12345/photos' && c.body?.url === 'https://example.com/pic.jpg'),
+      `photos calls=${graphCalls.filter((c) => c.path === '/v21.0/12345/photos').length}`,
+    );
+
+    const vId = await mkPost({ caption: 'ভিডিও আসল প্রকাশ টেস্ট', mediaType: 'video', mediaUrls: ['https://example.com/sample.mp4'], platforms: ['facebook'], scheduledAt: new Date(`${day6}T15:00:00+06:00`).toISOString() });
+    const vpub2 = await api(`/api/scheduled-posts/${vId}/publish-now`, { method: 'POST' });
+    check(
+      'real publish: video post gets Graph video id',
+      vpub2.status === 200 && vpub2.data?.post?.status === 'published' && vpub2.data?.post?.platform_post_id === 'video_1',
+      `status=${vpub2.data?.post?.status}, platform_post_id=${vpub2.data?.post?.platform_post_id ?? ''}`,
+    );
+
+    const likePost = await api(`/api/analytics/page-posts/${encodeURIComponent('12345_67890')}/like`, { method: 'POST' });
+    check(
+      'like a Page post as the Page reaches Graph',
+      likePost.status === 200 && likePost.data?.liked === true,
+      `status=${likePost.status}, body=${JSON.stringify(likePost.data ?? '')}`,
+    );
+    const cmt = await api('/api/comments', {
+      method: 'POST',
+      body: { platformPostId: '12345_67890', platformCommentId: 'comment_1', body: 'টেস্ট কমেন্ট' },
+    });
+    const cId = cmt.data?.comment?.id ?? '';
+    const likeCmt = cId ? await api(`/api/comments/${cId}/like`, { method: 'POST' }) : { status: 0, data: null };
+    check(
+      'like a comment as the Page reaches Graph',
+      likeCmt.status === 200 && likeCmt.data?.liked === true,
+      `status=${likeCmt.status}, body=${JSON.stringify(likeCmt.data ?? '')}`,
+    );
+    check(
+      'fake Graph received both /likes calls',
+      graphCalls.some((c) => c.path === '/v21.0/12345_67890/likes') && graphCalls.some((c) => c.path === '/v21.0/comment_1/likes'),
+      `likes calls=${graphCalls.filter((c) => c.path.endsWith('/likes')).length}`,
+    );
+
+    // Due post (scheduled 2 min ago — inside the 5-min grace) must
+    // publish when the Schedule list loads (lazy sweep).
+    const dueId = await mkPost({ caption: 'সময়মতো প্রকাশ টেস্ট', mediaType: 'text', platforms: ['facebook'], scheduledAt: new Date(Date.now() - 2 * 60 * 1000).toISOString() });
+    const list3 = await api('/api/scheduled-posts');
+    const dueRow = (list3.data?.posts ?? []).find((p) => p.id === dueId);
+    check(
+      'lazy sweep: due post published with Graph id when the list loads',
+      !!dueRow && dueRow.status === 'published' && dueRow.platform_post_id === '12345_67890',
+      `status=${dueRow?.status}, platform_post_id=${dueRow?.platform_post_id ?? ''}`,
+    );
+    const failedRow = (list3.data?.posts ?? []).find((p) => p.id === createdIds[0]);
+    check(
+      'failed post carries its reason (lastError) in the list',
+      typeof failedRow?.lastError === 'string' && failedRow.lastError.length > 0,
+      `lastError=${String(failedRow?.lastError ?? '')}`,
+    );
 
     const failed = results.filter((r) => !r.ok);
     console.log(`\n${results.length - failed.length}/${results.length} checks passed.`);
@@ -489,6 +627,7 @@ async function main() {
     child.kill('SIGTERM');
     await new Promise((r) => setTimeout(r, 1000));
     if (child.exitCode === null) child.kill('SIGKILL');
+    try { fakeGraph.close(); } catch { /* best-effort */ }
     try {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     } catch {

@@ -34,7 +34,7 @@ import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { decryptToken } from '../db/crypto';
 import { fetchWithTimeout } from '../ai-agent/http';
-import { graphBaseUrl } from '../channels/meta-send';
+import { decryptPageToken, getWorkspacePageChannel, graphBaseUrl, likeGraphObject } from '../channels/meta-send';
 
 export const pagePostsAnalysisRouter = Router();
 pagePostsAnalysisRouter.use(requireAuth);
@@ -286,4 +286,33 @@ pagePostsAnalysisRouter.get('/analytics/page-posts', async (req: AuthRequest, re
       ? { message: 'এই পেজে এখনো কোনো পোস্ট পাওয়া যায়নি।' }
       : {}),
   });
+});
+
+/**
+ * POST /api/analytics/page-posts/:postId/like — like a Page post as the
+ * Page (POST /{post-id}/likes with the workspace's Page token). Needs
+ * pages_manage_engagement on the token (granted at Login with Facebook
+ * after the scope was added — a token from before must have the Page
+ * reconnected once). A failed like returns 502 with Graph's own message
+ * and never pretends the like went through.
+ */
+pagePostsAnalysisRouter.post('/analytics/page-posts/:postId/like', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const postId = decodeURIComponent(req.params.postId);
+  const channel = await getWorkspacePageChannel(workspaceId);
+  if (!channel) {
+    res.status(502).json({ error: 'কোনো Facebook Page যুক্ত নেই — Channels পেজ থেকে পেজ যুক্ত করুন (no Facebook Page connected)' });
+    return;
+  }
+  const pageToken = decryptPageToken(channel);
+  if (!pageToken) {
+    res.status(502).json({ error: 'stored_page_token_invalid', detail: 'The stored Page token could not be read — reconnect the Page.' });
+    return;
+  }
+  const result = await likeGraphObject({ objectId: postId, pageToken });
+  if (!result.ok) {
+    res.status(502).json({ error: `Like failed: ${result.error ?? 'unknown error'}`, code: result.code ?? null });
+    return;
+  }
+  res.json({ liked: true, alreadyLiked: result.alreadyLiked ?? false, postId });
 });

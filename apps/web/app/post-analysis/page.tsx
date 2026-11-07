@@ -26,6 +26,19 @@ export default function PostAnalysisPage() {
   const [data, setData] = useState<PagePostAnalysis | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [likedIds, setLikedIds] = useState<Record<string, boolean>>({});
+
+  const likePost = async (postId: string) => {
+    setError("");
+    try {
+      await analyticsApi.likePagePost(postId);
+      setLikedIds((p) => ({ ...p, [postId]: true }));
+      // Refresh the counts so the new like shows.
+      await load(channelId || undefined);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("pa.likeFailed", "Could not like the post.", "পোস্টে লাইক দেওয়া যায়নি।"));
+    }
+  };
 
   const load = useCallback(async (cid?: string) => {
     setLoading(true);
@@ -172,6 +185,15 @@ export default function PostAnalysisPage() {
                         </span>
                       )}
                     </p>
+                    <button
+                      onClick={() => likePost(p.id)}
+                      disabled={likedIds[p.id]}
+                      className="mt-2 text-sm border rounded-lg px-3 py-1 disabled:opacity-50"
+                    >
+                      {likedIds[p.id]
+                        ? t("pa.liked", "Liked ✓", "লাইক দেওয়া হয়েছে ✓")
+                        : t("pa.like", "👍 Like as Page", "👍 পেজ হিসেবে লাইক")}
+                    </button>
                   </div>
                 ))}
               </div>
