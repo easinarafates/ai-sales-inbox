@@ -151,6 +151,8 @@ async function main() {
   check('agent loads the customer gender in processBatch', agentSrc.includes('gender') && agentSrc.includes('FROM customers WHERE workspace_id = $1 AND id = $2'));
   check('deterministic fallback takes gender and uses স্যার/ম্যাডাম', agentSrc.includes('deterministicProductReply(') && agentSrc.includes('ধন্যবাদ, স্যার।') && agentSrc.includes('ধন্যবাদ, ম্যাডাম।'));
   check('demo mode also opens/closes with the salutation', agentSrc.includes('genderSalutation(gender)') && agentSrc.includes('ধন্যবাদ, ${salutation}।'));
+  check('demo mode addresses unknown gender with neutral আপনি (never স্যার/ম্যাডাম)', agentSrc.includes('আপনার প্রশ্নের উত্তর দিচ্ছি') && agentSrc.includes('Unknown gender: neutral'));
+  check('deterministic fallback addresses unknown gender with neutral আপনি', agentSrc.includes('return `আপনার প্রশ্নের উত্তর দিচ্ছি:'));
   check('second-call prompt repeats the addressing rule', agentSrc.includes('addressingLine(customerGender)'));
 
   const whSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/webhooks/routes.ts'), 'utf8');

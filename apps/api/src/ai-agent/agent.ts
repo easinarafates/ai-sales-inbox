@@ -232,7 +232,7 @@ function deterministicProductReply(
   const body = lines.join('\n') + '\nঅর্ডার করতে চাইলে জানাবেন।';
   if (gender === 'male') return `স্যার, আপনার প্রশ্নের উত্তর দিচ্ছি:\n${body}\nধন্যবাদ, স্যার।`;
   if (gender === 'female') return `ম্যাডাম, আপনার প্রশ্নের উত্তর দিচ্ছি:\n${body}\nধন্যবাদ, ম্যাডাম।`;
-  return body;
+  return `আপনার প্রশ্নের উত্তর দিচ্ছি:\n${body}\nধন্যবাদ।`;
 }
 
 export function guardReplyAgainstHallucination(
@@ -540,6 +540,16 @@ async function runDemoReply(
       ? DEMO_LABEL + `${salutation}, ` + reply.slice(DEMO_LABEL.length)
       : `${salutation}, ` + reply;
     reply = `${opened}\nধন্যবাদ, ${salutation}।`;
+  } else {
+    // Unknown gender: neutral "আপনি" addressing — never স্যার/ম্যাডাম.
+    // ("আপনার প্রশ্নের উত্তর দিচ্ছি" is the আপনি-form; the "দুঃখিত" fallback
+    // already contains "আপনাকে", so only the product replies need it.)
+    if (!reply.includes('আপন')) {
+      const opened = reply.startsWith(DEMO_LABEL)
+        ? DEMO_LABEL + 'আপনার প্রশ্নের উত্তর দিচ্ছি:\n' + reply.slice(DEMO_LABEL.length)
+        : 'আপনার প্রশ্নের উত্তর দিচ্ছি:\n' + reply;
+      reply = `${opened}\nধন্যবাদ।`;
+    }
   }
 
   // Demo-mode replies are labelled "[ডেমো AI]" — saved only, never sent
