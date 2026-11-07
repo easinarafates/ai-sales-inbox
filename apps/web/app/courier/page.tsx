@@ -12,6 +12,7 @@ import {
   courierApi,
   shipmentOrderId,
   shipmentTrackingNumber,
+  type CourierProviderInfo,
   type Shipment,
   type TrackResult,
 } from "@/lib/courier";
@@ -25,6 +26,10 @@ const SHIPMENT_STATUS_KEYS: Record<string, string> = {
   delivered: "shipmentStatus.delivered",
   cancelled: "shipmentStatus.cancelled",
   failed: "shipmentStatus.failed",
+  in_review: "shipmentStatus.in_review",
+  pending: "shipmentStatus.pending",
+  hold: "shipmentStatus.hold",
+  partial_delivered: "shipmentStatus.partial_delivered",
 };
 const SHIPMENT_STATUS_FALLBACK: Record<string, [string, string]> = {
   awaiting_provider: ["Courier not connected", "কুরিয়ার যুক্ত হয়নি"],
@@ -34,6 +39,10 @@ const SHIPMENT_STATUS_FALLBACK: Record<string, [string, string]> = {
   delivered: ["Delivered", "ডেলিভারি হয়েছে"],
   cancelled: ["Cancelled", "বাতিল"],
   failed: ["Failed", "ব্যর্থ"],
+  in_review: ["In review", "যাচাই হচ্ছে"],
+  pending: ["Pending", "অপেক্ষায়"],
+  hold: ["On hold", "আটকে আছে"],
+  partial_delivered: ["Partially delivered", "আংশিক ডেলিভারি হয়েছে"],
 };
 
 export default function CourierPage() {
@@ -41,6 +50,8 @@ export default function CourierPage() {
   const { t, fmtDate, fmtTaka } = useI18n();
   const [orders, setOrders] = useState<Order[]>([]);
   const [shipments, setShipments] = useState<Shipment[]>([]);
+  const [providerInfo, setProviderInfo] = useState<CourierProviderInfo | null>(null);
+  const [checking, setChecking] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [trackingInput, setTrackingInput] = useState("");
   const [trackResult, setTrackResult] = useState<TrackResult | null>(null);
@@ -58,12 +69,14 @@ export default function CourierPage() {
 
   const load = useCallback(async () => {
     try {
-      const [orderData, shipmentData] = await Promise.all([
+      const [orderData, shipmentData, providerData] = await Promise.all([
         ordersApi.list(),
         courierApi.listShipments(),
+        courierApi.providerInfo().catch(() => null),
       ]);
       setOrders(asArray(orderData));
       setShipments(shipmentData);
+      if (providerData) setProviderInfo(providerData);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("courier.loadFailed", "Could not load courier information.", "কুরিয়ার তথ্য লোড করা যায়নি।"));
     } finally {
@@ -125,6 +138,27 @@ export default function CourierPage() {
     }
   };
 
+  const checkStatusNow = async () => {
+    setError("");
+    setNotice("");
+    setChecking(true);
+    try {
+      const res = await courierApi.checkStatus();
+      setNotice(
+        t(
+          "courier.checkDone",
+          `Checked ${res.checked} shipment(s): ${res.changed} status change(s), ${res.notified} customer message(s) sent.`,
+          `${res.checked}টি শিপমেন্ট দেখা হয়েছে: ${res.changed}টি অবস্থা বদলেছে, ${res.notified}টি কাস্টমার মেসেজ পাঠানো হয়েছে।`
+        )
+      );
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("courier.checkFailed", "Status check failed.", "অবস্থা দেখা যায়নি।"));
+    } finally {
+      setChecking(false);
+    }
+  };
+
   const shippedOrderIds = new Set(shipments.map((s) => shipmentOrderId(s)));
   const bookableOrders = orders.filter((o) => !shippedOrderIds.has(o.id));
 
@@ -138,11 +172,35 @@ export default function CourierPage() {
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
-      <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm p-4 rounded-xl mb-6">
-        <p className="font-bold mb-1">{t("courier.notConnectedTitle", "⚠️ The real courier is not connected yet", "⚠️ আসল কুরিয়ার এখনো যুক্ত হয়নি")}</p>
-        <p>
-          {t("courier.notConnectedBody", "Booking now will only save the request — no tracking number will come. To get real booking and live tracking you need a Pathao / Steadfast / RedX merchant API key.", "এখন বুকিং করলে শুধু অনুরোধটি সংরক্ষণ হবে — ট্র্যাকিং নম্বর আসবে না। আসল বুকিং ও লাইভ ট্র্যাকিং পেতে Pathao / Steadfast / RedX-এর মার্চেন্ট API চাবি লাগবে।")}
+      <div className="card p-4 mb-6">
+        <p className="font-bold mb-1">
+          {t("courier.providerTitle", "Courier provider", "কুরিয়ার প্রোভাইডার")}
+          {providerInfo ? `: ${providerInfo.provider === "steadfast" ? "Steadfast" : providerInfo.provider === "pathao" ? "Pathao" : providerInfo.provider === "redx" ? "RedX" : t("courier.stubName", "Local only (stub)", "শুধু লোকাল (স্টাব)")}` : ""}
         </p>
+        {providerInfo && (
+          <ul className="text-sm text-slate-600 space-y-1">
+            {providerInfo.providers.map((p) => (
+              <li key={p.name}>
+                <span className="font-medium">{p.name === "steadfast" ? "Steadfast" : p.name === "pathao" ? "Pathao" : p.name === "redx" ? "RedX" : t("courier.stubName", "Local only (stub)", "শুধু লোকাল (স্টাব)")}</span>
+                {" — "}
+                {p.selected ? t("courier.selected", "selected", "নির্বাচিত") + " • " : ""}
+                {p.configured
+                  ? t("courier.connected", "connected", "যুক্ত আছে")
+                  : p.name === "stub"
+                    ? t("courier.stubDesc", "saves bookings locally only, no tracking number", "শুধু লোকালভাবে বুকিং সংরক্ষণ করে, ট্র্যাকিং নম্বর দেয় না")
+                    : t("courier.needsKeys", "keys needed", "চাবি লাগবে") + ` (${p.needs})`}
+              </li>
+            ))}
+          </ul>
+        )}
+        <p className="text-xs text-slate-500 mt-2">
+          {t("courier.providerNote", "All four options stay available — the provider is chosen in the server settings (COURIER_PROVIDER). Real booking and live tracking need that provider's merchant API key.", "চারটি অপশনই থাকবে — প্রোভাইডার সার্ভার সেটিংসে (COURIER_PROVIDER) বেছে নেওয়া হয়। আসল বুকিং ও লাইভ ট্র্যাকিং পেতে সেই প্রোভাইডারের মার্চেন্ট API চাবি লাগবে।")}
+        </p>
+        {providerInfo && !providerInfo.configured && (
+          <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-3">
+            {t("courier.notConnectedBody", "Booking now will only save the request — no tracking number will come. To get real booking and live tracking you need a Pathao / Steadfast / RedX merchant API key.", "এখন বুকিং করলে শুধু অনুরোধটি সংরক্ষণ হবে — ট্র্যাকিং নম্বর আসবে না। আসল বুকিং ও লাইভ ট্র্যাকিং পেতে Pathao / Steadfast / RedX-এর মার্চেন্ট API চাবি লাগবে।")}
+          </p>
+        )}
       </div>
 
       <form onSubmit={bookCourier} className="card p-4 mb-6 flex flex-wrap gap-2 items-end">
@@ -200,7 +258,19 @@ export default function CourierPage() {
         </div>
       )}
 
-      <h2 className="font-bold mb-2">{t("courier.shipmentsTitle", "Shipment list", "শিপমেন্টের তালিকা")}</h2>
+      <div className="flex items-center gap-3 mb-2">
+        <h2 className="font-bold">{t("courier.shipmentsTitle", "Shipment list", "শিপমেন্টের তালিকা")}</h2>
+        <button
+          onClick={checkStatusNow}
+          disabled={checking || shipments.length === 0}
+          className="bg-brand text-white text-sm px-4 py-1.5 rounded-lg hover:bg-brand-dark disabled:opacity-50"
+        >
+          {checking ? t("courier.checking", "Checking…", "দেখছি…") : t("courier.checkNow", "Check status now", "এখন অবস্থা দেখুন")}
+        </button>
+        <p className="text-xs text-slate-500">
+          {t("courier.checkNote", "Steadfast status is also checked automatically every 5 minutes; the customer is messaged when a parcel is delivered, cancelled or held.", "Steadfast-এর অবস্থা প্রতি ৫ মিনিটে আপনাআপনি দেখা হয়; পার্সেল ডেলিভারি হলে, বাতিল হলে বা আটকে গেলে কাস্টমারকে মেসেজ পাঠানো হয়।")}
+        </p>
+      </div>
       {shipments.length === 0 ? (
         <div className="empty-state">{t("courier.empty", "No shipments yet.", "এখনো কোনো শিপমেন্ট নেই।")}</div>
       ) : (

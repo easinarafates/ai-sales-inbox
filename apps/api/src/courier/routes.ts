@@ -18,10 +18,14 @@ import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import {
+  CourierValidationError,
   getCourierProvider,
+  providerForName,
   ProviderNotConfiguredError,
+  SteadfastCourierProvider,
   type OrderForBooking,
 } from './provider';
+import { processDueShipmentChecks } from './tracking-check';
 
 export const courierRouter = Router();
 courierRouter.use(requireAuth);
@@ -68,9 +72,12 @@ courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) 
     customer_id: string | null;
     total_paisa: number;
     status: string;
+    customer_name: string | null;
+    customer_phone: string | null;
+    delivery_address: string | null;
   }>(
     workspaceId,
-    'SELECT id, customer_id, total_paisa, status FROM orders WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, customer_id, total_paisa, status, customer_name, customer_phone, delivery_address FROM orders WHERE workspace_id = $1 AND id = $2',
     [workspaceId, orderId],
   );
   if (!order) {
@@ -101,14 +108,16 @@ courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) 
         [workspaceId, order.customer_id],
       )
     : null;
+  // The order snapshot (taken when the order was placed) is the delivery
+  // contact the courier must use; the customer row is only a fallback.
   const orderForBooking: OrderForBooking = {
     id: order.id,
     customerId: order.customer_id,
     totalPaisa: Number(order.total_paisa),
     status: order.status,
-    customerName: customer?.name ?? null,
-    customerPhone: customer?.phone ?? null,
-    customerAddress: customer?.address ?? null,
+    customerName: order.customer_name ?? customer?.name ?? null,
+    customerPhone: order.customer_phone ?? customer?.phone ?? null,
+    customerAddress: order.delivery_address ?? customer?.address ?? null,
   };
 
   const provider = getCourierProvider();
@@ -116,6 +125,11 @@ courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) 
   try {
     booking = await provider.createBooking(orderForBooking);
   } catch (err) {
+    if (err instanceof CourierValidationError) {
+      // Refused before anything was sent to the courier (bad/missing contact).
+      res.status(400).json({ error: err.message, code: err.code, provider: provider.name });
+      return;
+    }
     if (err instanceof ProviderNotConfiguredError) {
       // Honest failure: no shipment row, no fake booking/tracking number.
       res.status(502).json({
@@ -193,7 +207,7 @@ courierRouter.get('/courier/track/:trackingNumber', async (req: AuthRequest, res
     });
     return;
   }
-  const provider = getCourierProvider();
+  const provider = providerForName(shipment.courier ?? getCourierProvider().name);
   try {
     const result = await provider.track(trackingNumber);
     res.json({ ...result, shipment: publicShipment(shipment) });
@@ -213,6 +227,74 @@ courierRouter.get('/courier/track/:trackingNumber', async (req: AuthRequest, res
       shipment: publicShipment(shipment),
       reason: 'ট্র্যাকিং দেখা যাচ্ছে না — কুরিয়ার প্রোভাইডারের সাথে সংযোগ ব্যর্থ হয়েছে।',
     });
+  }
+});
+
+/** GET /api/courier/provider — current provider + all options with their status.
+ * The selection itself is env-based (COURIER_PROVIDER); this endpoint only
+ * reports it honestly — it never returns a key value. */
+courierRouter.get('/courier/provider', async (req: AuthRequest, res: Response) => {
+  const { config } = await import('../config');
+  const current = getCourierProvider().name;
+  const configured: Record<string, boolean> = {
+    stub: true,
+    steadfast: Boolean(config.courier.steadfast.apiKey && config.courier.steadfast.secretKey),
+    pathao: Boolean(config.courier.pathao.clientId && config.courier.pathao.clientSecret),
+    redx: Boolean(config.courier.redx.apiKey),
+  };
+  const needs: Record<string, string> = {
+    stub: '',
+    steadfast: 'STEADFAST_API_KEY / STEADFAST_SECRET_KEY',
+    pathao: 'PATHAO_CLIENT_ID / PATHAO_CLIENT_SECRET',
+    redx: 'REDX_API_KEY',
+  };
+  res.json({
+    provider: current,
+    configured: configured[current] ?? false,
+    providers: (['stub', 'steadfast', 'pathao', 'redx'] as const).map((name) => ({
+      name,
+      configured: configured[name] ?? false,
+      needs: needs[name] ?? '',
+      selected: name === current,
+    })),
+  });
+});
+
+/** GET /api/courier/balance — Steadfast merchant balance (read-only).
+ * Only available when Steadfast is the selected provider and its keys exist. */
+courierRouter.get('/courier/balance', async (req: AuthRequest, res: Response) => {
+  const provider = getCourierProvider();
+  if (provider.name !== 'steadfast') {
+    res.status(400).json({
+      available: false,
+      reason: `ব্যালেন্স দেখা শুধু Steadfast-এর জন্য — এখন নির্বাচিত প্রোভাইডার "${provider.name}"।`,
+    });
+    return;
+  }
+  try {
+    const balance = await (provider as SteadfastCourierProvider).getBalance();
+    res.json({ available: true, provider: 'steadfast', currentBalance: balance, currency: 'BDT' });
+  } catch (err) {
+    if (err instanceof ProviderNotConfiguredError) {
+      res.status(502).json({ available: false, reason: err.message, code: err.code });
+      return;
+    }
+    console.error('[courier/balance]', err);
+    res.status(502).json({ available: false, reason: 'Steadfast ব্যালেন্স দেখা যাচ্ছে না — সংযোগ ব্যর্থ হয়েছে।' });
+  }
+});
+
+/** POST /api/courier/check-status — re-check this workspace's Steadfast
+ * shipments now and notify customers on status change. Same check the cron
+ * sweep runs every 5 minutes; this is the manual trigger. */
+courierRouter.post('/courier/check-status', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  try {
+    const summary = await processDueShipmentChecks(workspaceId);
+    res.json({ ok: true, ...summary });
+  } catch (err) {
+    console.error('[courier/check-status]', err);
+    res.status(500).json({ error: (err as Error).message });
   }
 });
 

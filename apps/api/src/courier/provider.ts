@@ -7,13 +7,14 @@
  * - The stub provider creates only a local shipment row with status
  *   'awaiting_provider' and NO tracking number. It means: "we saved the
  *   booking request, but no real courier has it yet."
- * - Pathao / Steadfast / RedX implement the same interface, but every
- *   method fails honestly with PROVIDER_NOT_CONFIGURED until real API
- *   credentials are set (see config.courier). They never return a fake
- *   booking id or tracking number.
+ * - Steadfast is fully implemented (real API: book, status, balance).
+ *   Pathao / RedX keep the same interface, but every method fails honestly
+ *   with PROVIDER_NOT_CONFIGURED until real API credentials are set (see
+ *   config.courier). They never return a fake booking id or tracking number.
  */
 
 import { config } from '../config';
+import { fetchWithTimeout } from '../ai-agent/http';
 
 export type CourierProviderName = 'stub' | 'pathao' | 'steadfast' | 'redx';
 
@@ -118,13 +119,69 @@ export class PathaoCourierProvider implements CourierProvider {
 }
 
 /**
- * Steadfast Courier — TODO stub.
- * TODO: implement with the real Steadfast API once merchant credentials
- * exist (STEADFAST_BASE_URL, STEADFAST_API_KEY, STEADFAST_SECRET_KEY —
- * see config.courier.steadfast). Until then every call fails honestly.
+ * Steadfast Courier — real implementation (official API doc V1:
+ * https://github.com/codernayeem/payment-sms-courier-api-docs/blob/HEAD/courier-services/steadfast/steadfast%20api%20doc.md).
+ *
+ * Base URL: https://portal.packzy.com/api/v1 (STEADFAST_BASE_URL overrides).
+ * Auth: `Api-Key` + `Secret-Key` headers + `Content-Type: application/json`.
+ * - POST /create_order — invoice (unique, alphanumeric + hyphens/underscores),
+ *   recipient_name (≤100), recipient_phone (11-digit), recipient_address
+ *   (≤250), cod_amount (BDT, ≥0), note (optional, ≤480). Returns the
+ *   consignment with consignment_id + tracking_code, status 'in_review'.
+ * - GET /status_by_cid/{id} | /status_by_invoice/{invoice} |
+ *   /status_by_trackingcode/{code} — {status: 200, delivery_status}.
+ *   Statuses: in_review, pending, delivered_approval_pending,
+ *   partial_delivered_approval_pending, cancelled_approval_pending,
+ *   unknown_approval_pending, delivered, partial_delivered, cancelled,
+ *   hold, unknown. NOTE: the doc lists NO "out for delivery" status and
+ *   NO arrival-date ETA — the honest customer trigger is a status change
+ *   to delivered / partial_delivered / cancelled / hold (see
+ *   tracking-check.ts), never an invented ETA.
+ * - GET /get_balance — {status: 200, current_balance}.
+ *
+ * Steadfast has NO sandbox: every booking on a live key is a REAL parcel.
+ * Never create a test booking. Verify with GET /get_balance (read-only)
+ * and a status lookup on a real past consignment first.
  */
+
+/** Shop delivery-charge rule (also taught to the AI in knowledge_items):
+ * Dhaka → ৳100, everywhere else in Bangladesh → ৳130; ৳130 when unclear. */
+export function deliveryChargeForAddress(address: string | null | undefined): number {
+  const a = (address ?? '').toLowerCase();
+  if (a.includes('dhaka') || a.includes('ঢাকা')) return 100;
+  return 130;
+}
+
+/** COD amount in BDT: order product total + delivery charge. */
+export function codAmountBdt(order: OrderForBooking): number {
+  return Math.round(Number(order.totalPaisa) / 100) + deliveryChargeForAddress(order.customerAddress);
+}
+
+/** Normalize a Bangladeshi mobile number to 11-digit 01XXXXXXXXX, or null. */
+export function normalizeBdPhone(phone: string | null | undefined): string | null {
+  if (!phone) return null;
+  let d = phone.replace(/[\s\-()]/g, '');
+  if (d.startsWith('+')) d = d.slice(1);
+  if (d.startsWith('880')) d = d.slice(3);
+  if (d.startsWith('1') && d.length === 10) d = `0${d}`;
+  return /^01\d{9}$/.test(d) ? d : null;
+}
+
+/** Booking refused before anything is sent to the courier (bad/missing contact). */
+export class CourierValidationError extends Error {
+  readonly code = 'COURIER_VALIDATION';
+  constructor(message: string) {
+    super(message);
+    this.name = 'CourierValidationError';
+  }
+}
+
 export class SteadfastCourierProvider implements CourierProvider {
   readonly name: CourierProviderName = 'steadfast';
+
+  private baseUrl(): string {
+    return (config.courier.steadfast.baseUrl || 'https://portal.packzy.com/api/v1').replace(/\/$/, '');
+  }
 
   private assertConfigured(): void {
     if (!config.courier.steadfast.apiKey || !config.courier.steadfast.secretKey) {
@@ -135,16 +192,148 @@ export class SteadfastCourierProvider implements CourierProvider {
     }
   }
 
-  async createBooking(_order: OrderForBooking): Promise<BookingResult> {
-    this.assertConfigured();
-    // TODO: POST {STEADFAST_BASE_URL}/create_order — real booking.
-    throw new Error('Steadfast বুকিং এখনো বাস্তবায়ন হয়নি (TODO) — চাবি থাকলেও এখনো API কল লেখা হয়নি।');
+  private headers(): Record<string, string> {
+    return {
+      'Api-Key': config.courier.steadfast.apiKey,
+      'Secret-Key': config.courier.steadfast.secretKey,
+      'Content-Type': 'application/json',
+    };
   }
 
-  async track(_trackingNumber: string): Promise<TrackResult> {
+  /** One Steadfast call. Throws a plain Error with Steadfast's own message on failure. */
+  private async call(path: string, init: RequestInit = {}): Promise<Record<string, unknown>> {
+    const res = await fetchWithTimeout(
+      `${this.baseUrl()}${path}`,
+      { ...init, headers: { ...this.headers(), ...((init.headers as Record<string, string> | undefined) ?? {}) } },
+      20000,
+    );
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok || !data) {
+      const msg = typeof data?.message === 'string' && data.message ? data.message : `Steadfast API ব্যর্থ হয়েছে (HTTP ${res.status})`;
+      throw new Error(msg);
+    }
+    if (typeof data.status === 'number' && data.status !== 200) {
+      const msg = typeof data.message === 'string' && data.message ? data.message : `Steadfast API ব্যর্থ হয়েছে (status ${data.status})`;
+      throw new Error(msg);
+    }
+    return data;
+  }
+
+  async createBooking(order: OrderForBooking): Promise<BookingResult> {
     this.assertConfigured();
-    // TODO: GET {STEADFAST_BASE_URL}/status_by_tracking_code/{trackingNumber} — real tracking.
-    throw new Error('Steadfast ট্র্যাকিং এখনো বাস্তবায়ন হয়নি (TODO)।');
+    const name = (order.customerName ?? '').trim().slice(0, 100);
+    if (!name) {
+      throw new CourierValidationError('কাস্টমারের নাম পাওয়া যায়নি — নাম ছাড়া কুরিয়ার বুকিং করা যাবে না।');
+    }
+    const phone = normalizeBdPhone(order.customerPhone);
+    if (!phone) {
+      throw new CourierValidationError('কাস্টমারের ফোন নম্বর সঠিক নয় (১১ সংখ্যার মোবাইল নম্বর লাগবে) — নম্বর ঠিক করে আবার চেষ্টা করুন।');
+    }
+    const address = (order.customerAddress ?? '').trim().slice(0, 250);
+    if (!address) {
+      throw new CourierValidationError('ডেলিভারির ঠিকানা পাওয়া যায়নি — ঠিকানা ছাড়া কুরিয়ার বুকিং করা যাবে না।');
+    }
+    const cod = codAmountBdt(order);
+    const data = await this.call('/create_order', {
+      method: 'POST',
+      body: JSON.stringify({
+        invoice: `ASI-${order.id}`,
+        recipient_name: name,
+        recipient_phone: phone,
+        recipient_address: address,
+        cod_amount: cod,
+        note: `AI Sales Inbox order ${order.id.slice(0, 8)}`,
+      }),
+    });
+    const consignment = (data.consignment ?? null) as {
+      consignment_id?: unknown;
+      tracking_code?: unknown;
+      status?: unknown;
+    } | null;
+    const consignmentId = consignment?.consignment_id;
+    const trackingCode = consignment?.tracking_code;
+    if (consignmentId === undefined || consignmentId === null || typeof trackingCode !== 'string' || !trackingCode) {
+      throw new Error('Steadfast বুকিংয়ের উত্তর অসম্পূর্ণ — consignment_id বা tracking_code পাওয়া যায়নি। কোনো বুকিং ধরা হয়নি।');
+    }
+    return {
+      providerBookingId: String(consignmentId),
+      trackingNumber: trackingCode,
+      status: typeof consignment.status === 'string' && consignment.status ? consignment.status : 'in_review',
+    };
+  }
+
+  /** Live status by tracking code. Never fakes data — unavailable is honest. */
+  async track(trackingNumber: string): Promise<TrackResult> {
+    this.assertConfigured();
+    const code = trackingNumber.trim();
+    if (!code) {
+      return { available: false, reason: 'ট্র্যাকিং নম্বর দেওয়া হয়নি।' };
+    }
+    try {
+      const status = await this.getStatusByTrackingCode(code);
+      return { available: true, status };
+    } catch (err) {
+      return { available: false, reason: (err as Error).message };
+    }
+  }
+
+  /** GET /status_by_cid/{id} → delivery_status string. */
+  async getStatusByConsignmentId(consignmentId: string): Promise<string> {
+    this.assertConfigured();
+    const data = await this.call(`/status_by_cid/${encodeURIComponent(consignmentId)}`);
+    const status = data.delivery_status;
+    if (typeof status !== 'string' || !status) {
+      throw new Error('Steadfast থেকে ডেলিভারির অবস্থা পাওয়া যায়নি।');
+    }
+    return status;
+  }
+
+  /** GET /status_by_trackingcode/{code} → delivery_status string. */
+  async getStatusByTrackingCode(trackingCode: string): Promise<string> {
+    this.assertConfigured();
+    const data = await this.call(`/status_by_trackingcode/${encodeURIComponent(trackingCode)}`);
+    const status = data.delivery_status;
+    if (typeof status !== 'string' || !status) {
+      throw new Error('Steadfast থেকে ডেলিভারির অবস্থা পাওয়া যায়নি।');
+    }
+    return status;
+  }
+
+  /** GET /status_by_invoice/{invoice} → delivery_status string. */
+  async getStatusByInvoice(invoice: string): Promise<string> {
+    this.assertConfigured();
+    const data = await this.call(`/status_by_invoice/${encodeURIComponent(invoice)}`);
+    const status = data.delivery_status;
+    if (typeof status !== 'string' || !status) {
+      throw new Error('Steadfast থেকে ডেলিভারির অবস্থা পাওয়া যায়নি।');
+    }
+    return status;
+  }
+
+  /** GET /get_balance → current_balance (BDT). Read-only — the safe first live check. */
+  async getBalance(): Promise<number> {
+    this.assertConfigured();
+    const data = await this.call('/get_balance');
+    const balance = data.current_balance;
+    if (typeof balance !== 'number') {
+      throw new Error('Steadfast থেকে ব্যালেন্স পাওয়া যায়নি।');
+    }
+    return balance;
+  }
+}
+
+/** Provider instance by name — used when a shipment's own courier matters, not the env default. */
+export function providerForName(name: string): CourierProvider {
+  switch (name) {
+    case 'pathao':
+      return new PathaoCourierProvider();
+    case 'steadfast':
+      return new SteadfastCourierProvider();
+    case 'redx':
+      return new RedXCourierProvider();
+    case 'stub':
+    default:
+      return new StubCourierProvider();
   }
 }
 
@@ -179,18 +368,9 @@ export class RedXCourierProvider implements CourierProvider {
 /** Select the courier provider from COURIER_PROVIDER (default: stub). */
 export function getCourierProvider(): CourierProvider {
   const name = (config.courierProvider ?? 'stub') as CourierProviderName;
-  switch (name) {
-    case 'pathao':
-      return new PathaoCourierProvider();
-    case 'steadfast':
-      return new SteadfastCourierProvider();
-    case 'redx':
-      return new RedXCourierProvider();
-    case 'stub':
-    default:
-      if (name !== 'stub') {
-        console.warn(`[courier] unknown COURIER_PROVIDER="${name}" — falling back to stub (no real booking)`);
-      }
-      return new StubCourierProvider();
+  if (name !== 'stub' && !COURIER_PROVIDERS.includes(name)) {
+    console.warn(`[courier] unknown COURIER_PROVIDER="${name}" — falling back to stub (no real booking)`);
+    return new StubCourierProvider();
   }
+  return providerForName(name);
 }

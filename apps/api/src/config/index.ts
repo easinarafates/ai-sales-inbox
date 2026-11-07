@@ -180,7 +180,8 @@ export const config = {
       password: process.env.PATHAO_PASSWORD ?? '',
     },
     steadfast: {
-      baseUrl: optional('STEADFAST_BASE_URL', ''),
+      // Official Steadfast API base (docs: portal.packzy.com/api/v1).
+      baseUrl: optional('STEADFAST_BASE_URL', 'https://portal.packzy.com/api/v1'),
       apiKey: process.env.STEADFAST_API_KEY ?? '',
       secretKey: process.env.STEADFAST_SECRET_KEY ?? '',
     },

@@ -3,6 +3,7 @@ import { processDueScheduledPosts } from '../scheduling/publisher';
 import { processDueFollowups } from '../followups/engine';
 import { processDueHandovers } from '../handover/engine';
 import { processOwnerWalletDeductions } from '../owner/sweep';
+import { processDueShipmentChecks } from '../courier/tracking-check';
 
 /**
  * Vercel cron endpoint — POST/GET /api/cron/sweep.
@@ -43,13 +44,15 @@ cronRouter.all('/cron/sweep', async (req: Request, res: Response) => {
     const followups = await processDueFollowups();
     const handovers = await processDueHandovers();
     const ownerCosts = await processOwnerWalletDeductions();
-    console.log('[cron:sweep] due scheduled posts / follow-ups / handovers / owner AI costs:', {
+    const shipments = await processDueShipmentChecks();
+    console.log('[cron:sweep] due scheduled posts / follow-ups / handovers / owner AI costs / shipments:', {
       posts,
       followups,
       handovers,
       ownerCosts,
+      shipments,
     });
-    res.json({ ok: true, posts, followups, handovers, ownerCosts });
+    res.json({ ok: true, posts, followups, handovers, ownerCosts, shipments });
   } catch (err) {
     console.error('[cron:sweep] failed:', (err as Error).message);
     res.status(500).json({ error: (err as Error).message });

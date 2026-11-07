@@ -62,6 +62,27 @@ export interface TrackResult {
   [key: string]: unknown;
 }
 
+export interface CourierProviderOption {
+  name: string;
+  configured: boolean;
+  needs: string;
+  selected: boolean;
+}
+
+export interface CourierProviderInfo {
+  provider: string;
+  configured: boolean;
+  providers: CourierProviderOption[];
+}
+
+export interface ShipmentCheckSummary {
+  checked: number;
+  changed: number;
+  notified: number;
+  failed: number;
+  errors: string[];
+}
+
 export const courierApi = {
   book: (orderId: string) =>
     api.post<BookCourierResult>("/api/courier/bookings", { orderId }),
@@ -74,5 +95,15 @@ export const courierApi = {
   track: (trackingNumber: string) =>
     api.get<TrackResult>(
       `/api/courier/track/${encodeURIComponent(trackingNumber)}`
+    ),
+  providerInfo: () => api.get<CourierProviderInfo>("/api/courier/provider"),
+  balance: () =>
+    api.get<{ available: boolean; currentBalance?: number; reason?: string }>(
+      "/api/courier/balance"
+    ),
+  checkStatus: () =>
+    api.post<ShipmentCheckSummary & { ok: boolean }>(
+      "/api/courier/check-status",
+      {}
     ),
 };
