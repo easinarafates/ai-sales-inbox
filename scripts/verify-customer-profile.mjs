@@ -7,6 +7,12 @@
  *   GET /v21.0/psid-ok     → Messenger profile (Rina Akter + photo)
  *   GET /v21.0/psid-err    → Graph 400 (profile unavailable)
  *   GET /v21.0/psid-empty  → 200 {} (no profile fields at all)
+ *   GET /v21.0/psid-conv   → Graph 400 (direct PSID read blocked) —
+ *                             the Page conversations endpoint below then
+ *                             returns the real name (Karim Uddin + photo)
+ *   GET /v21.0/page-profile-ok/conversations?user_id=psid-conv
+ *                         → participants incl. Karim Uddin; any other
+ *                           user_id → empty data []
  *   GET /v21.0/igsid-ok    → Instagram profile (name + profile_picture_url)
  *   anything else          → 400 invalid token
  *
@@ -130,15 +136,19 @@ async function main() {
   check('helper fetches Messenger first_name/last_name/profile_pic', profileSrc.includes('first_name,last_name,profile_pic'));
   check('helper fetches IG name/username/profile_picture_url', profileSrc.includes('name,username,profile_picture_url'));
   check('helper uses Graph v21.0 (same base as meta-oauth)', profileSrc.includes("from './meta-oauth'") && profileSrc.includes('GRAPH_BASE'));
-  check('helper never throws (fetch + enrich return null / swallow)', profileSrc.includes('catch {') && profileSrc.includes('return null'));
+  check('helper never throws (fetch + enrich return null / swallow)', (profileSrc.includes('catch {') || profileSrc.includes('catch (err)')) && profileSrc.includes('return null'));
   check('helper sends the Page token as Bearer (never in a URL)', profileSrc.includes('Authorization: `Bearer ${input.pageToken}`') && !profileSrc.includes('access_token=${'));
   check('helper only fills missing name/picture (never overwrites)', profileSrc.includes('input.customerName ?? profile.name') && profileSrc.includes('input.customerPictureUrl ?? profile.pictureUrl'));
   check('helper skips the fetch when name + picture are already known', profileSrc.includes('if (input.customerName && input.customerPictureUrl) return;'));
+  check('helper falls back to the Page conversations endpoint when the direct PSID read is blocked', profileSrc.includes('/conversations?user_id=') && profileSrc.includes('participants'));
+  check('helper takes the participant whose id matches the sender', profileSrc.includes('!== senderId') || profileSrc.includes('=== senderId'));
+  check('helper logs profile failures instead of failing silently', profileSrc.includes('console.warn') && profileSrc.includes('[meta-profile]'));
 
   const whSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/webhooks/routes.ts'), 'utf8');
   check('webhook calls enrichCustomerProfileIfNeeded on Messenger/IG DMs', whSrc.includes('enrichCustomerProfileIfNeeded'));
   check('webhook enrich is best-effort (failure logged, never breaks intake)', whSrc.includes('profile enrich failed'));
   check('webhook reads the channel Page token for the fetch', whSrc.includes('decryptToken(channel.token_encrypted)'));
+  check('webhook passes the Page ID so the conversations fallback can run', whSrc.includes('pageId'));
   check('webhook customer row carries picture_url', whSrc.includes('picture_url'));
 
   const mig16 = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/16-customer-profile-picture.sql'), 'utf8');
@@ -169,6 +179,14 @@ async function main() {
     }
     if (req.method === 'GET' && url.pathname === '/v21.0/igsid-ok') {
       return send(200, { id: 'igsid-ok', name: 'Rongdhonu Fashion', username: 'rongdhonu.fashion', profile_picture_url: 'https://example.com/ig-rina.jpg' });
+    }
+    // Page conversations fallback: direct PSID read is blocked (400 above),
+    // but the Page's conversations endpoint returns the participant's name.
+    if (req.method === 'GET' && url.pathname === '/v21.0/page-profile-ok/conversations') {
+      if (url.searchParams.get('user_id') === 'psid-conv') {
+        return send(200, { data: [{ id: 'conv-1', participants: [{ id: 'psid-conv', name: 'Karim Uddin', picture: { data: { url: 'https://example.com/karim.jpg' } } }, { id: 'page-profile-ok', name: 'Profile Page' }] }] });
+      }
+      return send(200, { data: [] });
     }
     return send(400, { error: { message: 'Invalid OAuth access token.', type: 'OAuthException', code: 190 } });
   });
@@ -210,6 +228,14 @@ async function main() {
     check('repeat message does NOT fetch the profile again', stubHits.filter((h) => h.path === '/v21.0/psid-ok').length === 1, `profile hits=${stubHits.filter((h) => h.path === '/v21.0/psid-ok').length}`);
     const conv1b = await findConvByLastMessage(api, 'আরেকটা মেসেজ');
     check('repeat message lands in the same conversation', !!conv1b && conv1b.id === conv1?.id, `conv=${conv1b?.id ?? ''} vs ${conv1?.id ?? ''}`);
+
+    // ---- Messenger: direct PSID read blocked (400) → conversations fallback ----
+    const hookConv = await sendCustomerMessage(api, 'page-profile-ok', 'psid-conv', `p1-mid-conv-${stamp}`, 'ফলব্যাক টেস্ট');
+    check('webhook accepts the message when the direct profile read is blocked', hookConv.status === 200, `status=${hookConv.status}`);
+    const convConv = await findConvByLastMessage(api, 'ফলব্যাক টেস্ট');
+    check('conversations fallback stores the real name', convConv?.customer_name === 'Karim Uddin', `customer_name=${convConv?.customer_name ?? ''}`);
+    check('conversations fallback stores the real photo URL', convConv?.customer_picture_url === 'https://example.com/karim.jpg', `customer_picture_url=${convConv?.customer_picture_url ?? ''}`);
+    check('fallback hit both the direct read (400) and the conversations endpoint', stubHits.some((h) => h.path === '/v21.0/psid-conv') && stubHits.some((h) => h.path === '/v21.0/page-profile-ok/conversations' && h.auth === 'Bearer tok-profile-page'), `hits=${JSON.stringify(stubHits.filter((h) => h.path.includes('psid-conv') || h.path.includes('conversations')))}`);
 
     // ---- Messenger: Graph error → graceful fallback, message still saved ----
     const hookErr = await sendCustomerMessage(api, 'page-profile-ok', 'psid-err', `p1-mid-err-${stamp}`, 'এরর টেস্ট');

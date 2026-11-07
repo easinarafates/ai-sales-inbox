@@ -158,12 +158,12 @@ async function recordWebhookEvent(
 async function findChannelByExternalId(
   platform: string,
   externalId: string,
-): Promise<{ id: string; workspace_id: string; token_encrypted: string | null } | null> {
+): Promise<{ id: string; workspace_id: string; token_encrypted: string | null; external_id: string; source_id: string | null } | null> {
   const { rows } = await pool.query(
-    'SELECT id, workspace_id, token_encrypted FROM channels WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT 1',
+    'SELECT id, workspace_id, token_encrypted, external_id, source_id FROM channels WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT 1',
     [platform, externalId],
   );
-  return (rows[0] as { id: string; workspace_id: string; token_encrypted: string | null } | undefined) ?? null;
+  return (rows[0] as { id: string; workspace_id: string; token_encrypted: string | null; external_id: string; source_id: string | null } | undefined) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -220,6 +220,10 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
           customerName: customer.name,
           customerPictureUrl: customer.picture_url,
           pageToken,
+          // Messenger: external_id IS the Page ID. Instagram: the Page ID
+          // lives in source_id (external_id is the IG user ID). The Page
+          // ID powers the conversations-endpoint profile fallback.
+          pageId: platform === 'instagram' ? (channel.source_id ?? null) : (channel.external_id ?? recipient?.id ?? null),
         }).catch((err) => console.error('[webhook/meta] profile enrich failed:', (err as Error).message));
       }
       const conversationId = await findOrCreateConversation(channel.workspace_id, channel.id, customer.id);

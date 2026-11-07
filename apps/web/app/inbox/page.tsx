@@ -114,14 +114,36 @@ export default function InboxPage() {
     }
   };
 
-  const refreshThread = async () => {
+  const refreshThread = useCallback(async () => {
     if (!selectedId) return;
     try {
       setSelected(await inboxApi.get(selectedId));
     } catch {
       /* keep current thread visible */
     }
-  };
+  }, [selectedId]);
+
+  // Auto-refresh: new customer messages and AI replies appear without a
+  // manual reload. Polls the list + the open thread every 5s while the
+  // tab is visible; pauses when the tab is hidden, and refreshes once
+  // when it becomes visible again.
+  useEffect(() => {
+    if (!getToken()) return;
+    const tick = () => {
+      if (document.hidden) return;
+      loadList();
+      refreshThread();
+    };
+    const timer = setInterval(tick, 5000);
+    const onVisible = () => {
+      if (!document.hidden) tick();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [loadList, refreshThread]);
 
   const sendReply = async (e: React.FormEvent) => {
     e.preventDefault();
