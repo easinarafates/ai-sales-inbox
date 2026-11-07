@@ -39,7 +39,8 @@ export default function OrdersPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("orders.title", "Orders", "অর্ডার")}</h1>
+      <h1 className="page-title">{t("orders.title", "Orders", "অর্ডার")}</h1>
+      <p className="page-subtitle">{t("orders.subtitle", "Every order, from new to delivered.", "নতুন থেকে ডেলিভারি পর্যন্ত প্রতিটি অর্ডার।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       <div className="flex gap-2 mb-4">
         <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className="border rounded-lg px-3 py-2 bg-white">

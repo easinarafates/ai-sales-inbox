@@ -21,6 +21,7 @@ import { metaRouter } from './webhooks/meta';
 // Phase 2/3 routers (full /api/... paths inside each router — mount at /api).
 import { analyticsRouter } from './analytics/routes';
 import { postsAnalyticsRouter } from './analytics/posts-routes';
+import { pagePostsAnalysisRouter } from './analytics/page-posts-analysis';
 import { bookingsRouter } from './bookings/routes';
 import { broadcastsRouter } from './broadcasts/routes';
 import { commentsRouter } from './comments/routes';
@@ -127,6 +128,7 @@ app.use('/api', knowledgeRouter); // /api/knowledge + /api/unanswered
 // Phase 2/3 (routers carry full /api/... paths).
 app.use('/api', analyticsRouter); // /api/analytics/overview
 app.use('/api', postsAnalyticsRouter); // /api/analytics/posts + /api/analytics/lost-sales
+app.use('/api', pagePostsAnalysisRouter); // /api/analytics/page-posts (real Graph post analysis)
 app.use('/api', bookingsRouter); // /api/bookings (+ receptionist mode)
 app.use('/api', broadcastsRouter); // /api/broadcasts (24h window)
 app.use('/api', commentsRouter); // /api/comments/:postId/carousel

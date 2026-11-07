@@ -143,6 +143,22 @@ customersRouter.post('/customers/merge', async (req: AuthRequest, res: Response)
       mergedIdentities.push(ident);
     }
 
+    // One open chat per customer per channel (migration 16): if both
+    // customers have an OPEN conversation on the same channel, re-pointing
+    // the merged one's would violate the unique index. Close the merged
+    // customer's colliding open chats first (their messages stay in
+    // history as a done chat); the kept customer's open chat stays open.
+    await client.query(
+      `UPDATE conversations c SET status = 'done'
+       WHERE c.workspace_id = $1 AND c.customer_id = $2 AND c.status = 'open'
+         AND EXISTS (
+           SELECT 1 FROM conversations k
+           WHERE k.workspace_id = $1 AND k.customer_id = $3 AND k.status = 'open'
+             AND k.channel_id IS NOT DISTINCT FROM c.channel_id
+         )`,
+      [workspaceId, mergeCustomerId, keepCustomerId],
+    );
+
     for (const table of ['conversations', 'orders', 'tickets', 'leads', 'notes']) {
       await client.query(
         `UPDATE ${table} SET customer_id = $1 WHERE workspace_id = $2 AND customer_id = $3`,

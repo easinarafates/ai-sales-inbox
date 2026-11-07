@@ -21,8 +21,13 @@
  *   message (Graph error 551). That surfaces as windowExpired — callers
  *   must tell the team the customer has to message again first. No message
  *   tags are used.
- * - WhatsApp / TikTok / facebook_comment are NOT sent here (different
- *   APIs); they fail with a clear error instead of silently "sending".
+ * - WhatsApp / TikTok are NOT sent here (different APIs); they fail
+ *   with a clear error instead of silently "sending".
+ * - facebook_comment channels ARE sent here: a reply to a Page-post
+ *   comment is POST /{comment-id}/comments with the Page token (see
+ *   sendFacebookCommentReply). It needs the pages_manage_engagement
+ *   permission; without it Graph answers 200 and the reply is honestly
+ *   marked failed, never pretended sent.
  * - Tokens are never put in a URL or a log line (Bearer header only).
  */
 import { fetchWithTimeout } from '../ai-agent/http';
@@ -43,6 +48,51 @@ export interface MetaSendResult {
 function sendGraphBase(): string {
   const override = (process.env.META_GRAPH_BASE_URL ?? '').replace(/\/$/, '');
   return override || GRAPH_BASE;
+}
+
+/** Graph base for other modules (post analysis). Same override rule. */
+export function graphBaseUrl(): string {
+  return sendGraphBase();
+}
+
+/**
+ * Reply to one Facebook Page-post comment as the Page:
+ * POST /{comment-id}/comments {message}. Needs pages_manage_engagement.
+ * Never throws — every failure is returned as { ok: false, ... }.
+ * Graph answers {id: "<the reply comment's id>"} on success.
+ */
+export async function sendFacebookCommentReply(input: {
+  commentId: string;
+  pageToken: string;
+  text: string;
+}): Promise<MetaSendResult> {
+  const url = `${sendGraphBase()}/${encodeURIComponent(input.commentId)}/comments`;
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${input.pageToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ message: input.text }),
+      },
+      15000,
+    );
+    const data = (await res.json().catch(() => null)) as {
+      id?: string;
+      error?: { message?: string; code?: number };
+    } | null;
+    if (res.ok && typeof data?.id === 'string') {
+      return { ok: true, messageId: data.id };
+    }
+    const code = data?.error?.code;
+    const message = data?.error?.message ?? `Meta Graph comment reply failed (HTTP ${res.status})`;
+    return { ok: false, error: message, code };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
 }
 
 /**
@@ -138,8 +188,14 @@ function recipientForPlatform(identities: unknown, platform: string): string | n
  *   the DB), so it counts as sent with delivery_status='local'.
  * - messenger / instagram — real Graph send with the channel's stored
  *   (encrypted) Page token and the customer's PSID / IG SID.
- * - anything else (whatsapp, tiktok, facebook_comment, no channel, no
- *   token, no recipient) — saved as 'failed' with a clear reason.
+ * - facebook_comment — real Graph comment reply (POST
+ *   /{comment-id}/comments) with the channel's stored Page token. The
+ *   comment replied to is the conversation's latest inbound message
+ *   (its platform_message_id is the comment id the webhook saved).
+ *   This is also how the AI auto-reply reaches a commenter — agent.ts
+ *   already calls this helper, so no agent change was needed.
+ * - anything else (whatsapp, tiktok, no channel, no token, no
+ *   recipient) — saved as 'failed' with a clear reason.
  *
  * Callers must verify the conversation exists first (the INSERT has a
  * foreign key to conversations). Never throws for a delivery failure.
@@ -197,6 +253,41 @@ export async function deliverOutgoingMessage(
   if (channel.platform === 'webchat') {
     await mark('local');
     return { sent: true, delivery: 'local', messageId };
+  }
+  // Facebook comment reply: POST /{comment-id}/comments as the Page.
+  // The comment id is the conversation's latest inbound message —
+  // the webhook saved the comment with platform_message_id = comment id.
+  if (channel.platform === 'facebook_comment') {
+    if (!channel.token_encrypted) {
+      return fail('no_page_token');
+    }
+    const latest = await queryOne<{ platform_message_id: string | null }>(
+      workspaceId,
+      `SELECT platform_message_id FROM messages
+       WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'in'
+         AND platform_message_id IS NOT NULL
+       ORDER BY created_at DESC LIMIT 1`,
+      [workspaceId, conversationId],
+    );
+    if (!latest?.platform_message_id) {
+      return fail('no_comment_to_reply_to');
+    }
+    let pageToken: string;
+    try {
+      pageToken = decryptToken(channel.token_encrypted);
+    } catch {
+      return fail('token_decrypt_failed');
+    }
+    const result = await sendFacebookCommentReply({
+      commentId: latest.platform_message_id,
+      pageToken,
+      text: trimmed,
+    });
+    if (!result.ok) {
+      return fail(result.error ?? 'meta_comment_reply_failed', { code: result.code });
+    }
+    await mark('sent', result.messageId);
+    return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
   }
   if (channel.platform !== 'messenger' && channel.platform !== 'instagram') {
     return fail(`send_not_supported_for_${channel.platform}`);

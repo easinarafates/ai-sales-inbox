@@ -1,8 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { authApi, setToken } from "@/lib/api";
+import { authApi, getToken, setToken } from "@/lib/api";
 import { LanguageToggle, useI18n } from "@/lib/i18n";
 
 export default function LoginPage() {
@@ -12,6 +12,12 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Already signed in? Go straight to the dashboard instead of showing
+  // the login form again.
+  useEffect(() => {
+    if (getToken()) router.replace("/inbox");
+  }, [router]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -52,12 +58,21 @@ export default function LoginPage() {
           <label className="mb-1 block text-sm font-medium text-slate-700">{t("auth.password", "Password", "পাসওয়ার্ড")}</label>
           <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className="w-full" placeholder="••••••••" />
         </div>
+        <div className="text-right">
+          <Link href="/forgot-password" className="text-sm font-medium text-brand-dark underline hover:text-brand">{t("auth.forgotPassword", "Forgot password?", "পাসওয়ার্ড ভুলে গেছো?")}</Link>
+        </div>
         <button disabled={loading} className="w-full rounded-lg bg-brand py-2.5 font-medium text-white shadow-sm transition hover:bg-brand-dark disabled:opacity-50">
           {loading ? t("auth.loggingIn", "Logging in…", "লগইন হচ্ছে…") : t("auth.login", "Log in", "লগইন")}
         </button>
         <p className="text-center text-sm text-slate-500">
           {t("auth.noAccount", "No account yet?", "অ্যাকাউন্ট নেই?")}{" "}
           <Link href="/signup" className="font-medium text-brand-dark underline hover:text-brand">{t("auth.signupLink", "Sign up", "সাইন আপ করুন")}</Link>
+        </p>
+        <p className="text-center text-xs text-slate-400">
+          {t("auth.emailTip", "Use the exact email you signed up with — check the spelling (for example gmail vs gamil).", "সাইন আপের সময়ের হুবহু ইমেইলটা লেখো — বানান দেখে নাও (যেমন gmail নাকি gamil)।")}
+        </p>
+        <p className="text-center text-sm text-slate-500">
+          <Link href="/" className="text-teal-700 underline hover:text-teal-800">← {t("landing.backHome", "Back to home", "হোমে ফিরুন")}</Link>
         </p>
       </form>
     </div>

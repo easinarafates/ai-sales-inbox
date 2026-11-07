@@ -14,6 +14,7 @@ interface ConversationRow {
   customer_id: string | null;
   customer_name: string | null;
   customer_phone: string | null;
+  customer_picture_url: string | null;
   assignee_id: string | null;
   updated_at: string;
   last_message: string | null;
@@ -46,6 +47,7 @@ inboxRouter.get('/', async (req: AuthRequest, res: Response) => {
   const { rows } = await query<ConversationRow>(
     workspaceId,
     `SELECT c.id, c.status, c.mode, c.customer_id, cu.name AS customer_name, cu.phone AS customer_phone,
+            cu.picture_url AS customer_picture_url,
             c.assignee_id, c.updated_at, ch.platform AS channel, ch.display_name AS channel_name,
             (SELECT m.body FROM messages m WHERE m.workspace_id = $1 AND m.conversation_id = c.id
              ORDER BY m.created_at DESC LIMIT 1) AS last_message
@@ -65,6 +67,7 @@ inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   const conversation = await queryOne<ConversationRow>(
     workspaceId,
     `SELECT c.id, c.status, c.mode, c.customer_id, cu.name AS customer_name, cu.phone AS customer_phone,
+            cu.picture_url AS customer_picture_url,
             c.assignee_id, c.updated_at, ch.platform AS channel, ch.display_name AS channel_name, NULL::text AS last_message
      FROM conversations c
      LEFT JOIN customers cu ON cu.id = c.customer_id AND cu.workspace_id = $1
@@ -85,7 +88,7 @@ inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   const customer = conversation.customer_id
     ? await queryOne(
         workspaceId,
-        'SELECT id, name, phone, address, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+        'SELECT id, name, phone, address, picture_url, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
         [workspaceId, conversation.customer_id],
       )
     : null;

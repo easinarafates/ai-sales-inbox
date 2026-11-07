@@ -88,14 +88,31 @@ export function webRedirect(res: Response, channel: OAuthChannel, params: Record
   res.redirect(url.toString());
 }
 
-/** The Meta dialog URL for one channel's login (its own scopes). */
-export function loginUrl(scopes: string[], state: string): string {
+/**
+ * The Meta dialog URL for one channel's login (its own scopes).
+ *
+ * By default Facebook silently re-uses the account currently signed in
+ * on facebook.com — the dialog never appears, no Page picker is shown,
+ * and the user cannot choose a different Facebook account. That is the
+ * exact complaint ("login returns immediately, no page picker").
+ * `reauthenticate: true` adds `auth_type=reauthenticate`, which forces
+ * Facebook to ask for credentials again — on that screen the user can
+ * log in with a DIFFERENT account (or the same one). No code on our
+ * side can pick the Facebook account for the user; this is the only
+ * server-side lever Facebook Login offers, and the user must still type
+ * the other account's credentials on facebook.com.
+ * The Channels page passes reauthenticate only from its explicit
+ * "Use a different Facebook account" action, so a normal connect stays
+ * one click and does not ask for a password every time.
+ */
+export function loginUrl(scopes: string[], state: string, opts?: { reauthenticate?: boolean }): string {
   const url = new URL(DIALOG_BASE);
   url.searchParams.set('client_id', config.meta.appId);
   url.searchParams.set('redirect_uri', config.meta.oauthRedirectUri);
   url.searchParams.set('state', state);
   url.searchParams.set('scope', scopes.join(','));
   url.searchParams.set('response_type', 'code');
+  if (opts?.reauthenticate) url.searchParams.set('auth_type', 'reauthenticate');
   return url.toString();
 }
 
@@ -279,7 +296,11 @@ export async function subscribePageToApp(pageId: string, pageToken: string): Pro
  * INSERT with the token encrypted. The token is stored encrypted and is
  * never returned by any list endpoint. After a Messenger/Instagram
  * channel is created, the Page is subscribed to the app (best-effort —
- * a subscribe failure never fails the connect).
+ * a subscribe failure never fails the connect). A Messenger connect
+ * also creates a companion 'facebook_comment' row for the same Page
+ * (same token) so Page-post comments reach the webhook — it is the
+ * same Page's comment leg, not a second channel, so it does not count
+ * toward the subscription channel limit.
  */
 export async function createOAuthChannel(
   workspaceId: string,
@@ -333,6 +354,42 @@ export async function createOAuthChannel(
     const pageId = input.platform === 'messenger' ? input.externalId : (input.sourceId ?? '');
     if (pageId) {
       await subscribePageToApp(pageId, input.token);
+    }
+  }
+  // Companion comment channel: the Meta webhook delivers Page-post
+  // comments only when a 'facebook_comment' channel row exists for the
+  // Page (webhooks/routes.ts looks it up by Page ID). A Messenger
+  // connect is one Facebook Page, so its comment leg is a second row
+  // with the same Page token — NOT a second billable channel
+  // (countChannels excludes facebook_comment). Best-effort and
+  // idempotent: a failure here never fails the connect, and a
+  // reconnect never duplicates the row. Older Pages connected before
+  // this existed are backfilled by migration 17.
+  if (input.platform === 'messenger') {
+    try {
+      const existing = await query(
+        workspaceId,
+        "SELECT id FROM channels WHERE workspace_id = $1 AND platform = 'facebook_comment' AND external_id = $2",
+        [workspaceId, input.externalId],
+      );
+      if (existing.rows.length === 0) {
+        await query(
+          workspaceId,
+          `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id)
+           VALUES ($1, 'facebook_comment', $2, $3, $4, 'connected', $5, $6, $7)`,
+          [
+            workspaceId,
+            input.externalId,
+            input.displayName,
+            encryptToken(input.token),
+            expiresAt,
+            input.pictureUrl || null,
+            input.sourceId || null,
+          ],
+        );
+      }
+    } catch (err) {
+      console.error('[meta-oauth] companion facebook_comment channel failed:', (err as Error).message);
     }
   }
   return { ok: true, channel: rows[0] };

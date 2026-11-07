@@ -54,7 +54,8 @@ export default function BillingPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("billing.title", "Billing & Wallet", "বিলিং ও ওয়ালেট")}</h1>
+      <h1 className="page-title">{t("billing.title", "Billing & Wallet", "বিলিং ও ওয়ালেট")}</h1>
+      <p className="page-subtitle">{t("billing.subtitle", "Wallet balance, top-ups and transactions.", "ওয়ালেট ব্যালেন্স, টপ-আপ আর লেনদেন।")}</p>
       <SubscriptionSummary />
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}

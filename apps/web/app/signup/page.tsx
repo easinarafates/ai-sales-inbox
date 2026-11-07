@@ -1,8 +1,8 @@
 "use client";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { authApi, setToken } from "@/lib/api";
+import { authApi, getToken, setToken } from "@/lib/api";
 import { LanguageToggle, useI18n } from "@/lib/i18n";
 
 export default function SignupPage() {
@@ -14,6 +14,12 @@ export default function SignupPage() {
   const [workspaceName, setWorkspaceName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+
+  // Already signed in? Go straight to the dashboard instead of showing
+  // the signup form again.
+  useEffect(() => {
+    if (getToken()) router.replace("/inbox");
+  }, [router]);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -68,6 +74,9 @@ export default function SignupPage() {
         <p className="text-center text-sm text-slate-500">
           {t("auth.hasAccount", "Already have an account?", "ইতিমধ্যে অ্যাকাউন্ট আছে?")}{" "}
           <Link href="/login" className="font-medium text-brand-dark underline hover:text-brand">{t("auth.loginLink", "Log in", "লগইন করুন")}</Link>
+        </p>
+        <p className="text-center text-sm text-slate-500">
+          <Link href="/" className="text-teal-700 underline hover:text-teal-800">← {t("landing.backHome", "Back to home", "হোমে ফিরুন")}</Link>
         </p>
       </form>
     </div>

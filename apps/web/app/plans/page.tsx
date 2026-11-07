@@ -95,8 +95,8 @@ export default function PlansPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-2">{t("plans.title", "Plans", "প্ল্যান")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+      <h1 className="page-title">{t("plans.title", "Plans", "প্ল্যান")}</h1>
+      <p className="page-subtitle">
         <span className="font-bold text-amber-700">{t("common.suggestedPrice", "Suggested price", "প্রস্তাবিত দাম")}</span>{" — "}
         {t("plans.suggestedNote", "The prices below are suggested prices — not final prices. When you buy a plan, the monthly price is deducted from the wallet (see transactions on the Billing page).", "নিচের দামগুলো প্রস্তাবিত দাম — চূড়ান্ত দাম নয়। প্ল্যান কিনলে মাসের দাম ওয়ালেট থেকে কাটে (বিলিং পেজে লেনদেন দেখা যায়)।")}
       </p>

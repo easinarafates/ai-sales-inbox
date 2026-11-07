@@ -26,6 +26,14 @@
  * the AI auto-reply + manual reply delivery can be tested offline —
  * success (message_id), 24h-window 551, webchat-local, no-token 502 —
  * plus the no-charge-on-failed-send rule via the billing ledger.
+ * Phase D (one customer = one chat, migration 16): the same PSID
+ * sending twice → 1 conversation + 1 customer; 10 different messages
+ * sent concurrently → still 1 conversation (race guard); the same
+ * mid delivered twice → 1 stored message (webhook dedup); marking a
+ * chat done then messaging again REOPENS the same chat (no new chat);
+ * the same PSID on a different Page → a separate conversation;
+ * Facebook comments from one user → 1 conversation; a postback with
+ * no text creates no conversation.
  *
  * Run from the repo root:  node scripts/verify-channels-oauth.mjs
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
@@ -200,10 +208,10 @@ async function main() {
   check('channels page has one card per OAuth channel (facebook/instagram/whatsapp)', pageSrc.includes('OAUTH_KINDS') && ['facebook', 'instagram', 'whatsapp'].every((k) => pageSrc.includes(`"${k}"`)));
   check('channels page shows TikTok + YouTube as coming soon', pageSrc.includes('SOON_CARDS') && pageSrc.includes('comingSoon') && pageSrc.includes('"tiktok"') && pageSrc.includes('"youtube"'));
   check('channels page has NO fake TikTok/YouTube connect calls', !pageSrc.includes('tiktokLogin') && !pageSrc.includes('youtubeLogin') && !pageSrc.includes('tiktokConnect') && !pageSrc.includes('youtubeConnect'));
-  check('channels page calls instagramLogin + whatsappLogin', pageSrc.includes('instagramLogin()') && pageSrc.includes('whatsappLogin()'));
+  check('channels page calls instagramLogin + whatsappLogin', pageSrc.includes('salesChannelsApi.instagramLogin') && pageSrc.includes('salesChannelsApi.whatsappLogin'));
   check('channels page shows which account was used (loggedInAs + {account})', pageSrc.includes('loggedInAs') && pageSrc.includes("{account}"));
   check('channels page has instagram + whatsapp pickers', pageSrc.includes('instagramPickTitle') && pageSrc.includes('whatsappPickTitle') && pageSrc.includes('instagramConnect(') && pageSrc.includes('whatsappConnect('));
-  check('channels page still has Facebook card + picker (no regression)', pageSrc.includes('Login with Facebook') && pageSrc.includes('facebookLogin()') && pageSrc.includes('facebookPickTitle') && pageSrc.includes('facebookConnect('));
+  check('channels page still has Facebook card + picker (no regression)', pageSrc.includes('Login with Facebook') && pageSrc.includes('salesChannelsApi.facebookLogin') && pageSrc.includes('facebookPickTitle') && pageSrc.includes('salesChannelsApi.facebookConnect'));
 
   const apiClientSrc = fs.readFileSync(path.join(ROOT, 'apps/web/lib/api.ts'), 'utf8');
   check('api client has instagram/whatsapp login+list+connect', ['instagramLogin', 'instagramPages', 'instagramConnect', 'whatsappLogin', 'whatsappAccounts', 'whatsappConnect'].every((f) => apiClientSrc.includes(f)));
@@ -548,6 +556,124 @@ async function main() {
   } finally {
     runC.stop();
     try { graphStub.close(); } catch { /* already closed */ }
+    await sleep(2000);
+  }
+
+  // ================= Phase D: one customer = one chat (migration 16) =================
+  const mig16 = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/16-one-chat-per-customer.sql'), 'utf8');
+  check('migration 16 exists with the one-open-chat index', mig16.includes('idx_conversations_one_open_per_customer_channel') && mig16.includes("WHERE status = 'open'"));
+  check('migration 16 adds the customer primary_identity guard', mig16.includes('primary_identity') && mig16.includes('idx_customers_one_primary_identity'));
+  check('migration 16 closes pre-existing duplicate open chats first', mig16.includes("SET status = 'done'") && mig16.includes('IS NOT DISTINCT FROM'));
+  check('findOrCreateConversation is scoped by channel_id', whSrc.includes('channel_id IS NOT DISTINCT FROM $3') || whSrc.includes('channel_id IS NOT DISTINCT FROM'));
+  check('findOrCreateConversation reopens done/snoozed chats', whSrc.includes("snooze_until = NULL") && whSrc.includes("SET status = 'open'"));
+  check('findOrCreateConversation retries on a lost race (ON CONFLICT DO NOTHING)', whSrc.includes('ON CONFLICT DO NOTHING'));
+  check('findOrCreateCustomer retries on a lost race (ON CONFLICT DO NOTHING)', whSrc.includes('INSERT INTO customers') && whSrc.includes('ON CONFLICT DO NOTHING'));
+
+  const stampD = Date.now();
+  const portD = 4009;
+  const apiD = makeApi(`http://localhost:${portD}`);
+  const runD = startApi(portD, '.pglite-data-ch-d', { META_APP_ID: 'dummy-app-id', META_APP_SECRET: 'dummy-secret', META_VERIFY_TOKEN: 'test-verify-token-123' });
+  process.on('exit', runD.stop);
+  try {
+    const up = await waitForHealth(`http://localhost:${portD}`);
+    check('Phase D API starts (health)', up, up ? '' : runD.log().slice(-500));
+    if (!up) return;
+
+    const inboxList = async (api) => (await api('/api/inbox')).data?.conversations ?? [];
+    const customerList = async (api) => (await api('/api/customers')).data?.customers ?? [];
+    const sendMsg = (api, pageId, senderId, mid, text, object = 'page') =>
+      api('/api/webhooks/meta', {
+        method: 'POST', auth: false,
+        body: { object, entry: [{ id: pageId, messaging: [{ sender: { id: senderId }, recipient: { id: pageId }, message: { mid, text } }] }] },
+      });
+    const sendComment = (api, pageId, commentId, fromId, fromName, text) =>
+      api('/api/webhooks/meta', {
+        method: 'POST', auth: false,
+        body: { object: 'page', entry: [{ id: pageId, changes: [{ field: 'feed', value: { item: 'comment', message: text, comment_id: commentId, post_id: 'post-d6', from: { id: fromId, name: fromName } } }] }] },
+      });
+    const inboundCount = async (api, convId) => {
+      const d = await api(`/api/inbox/${convId}`);
+      return (d.data?.messages ?? []).filter((m) => m.direction === 'in').length;
+    };
+
+    // ---- D1: same PSID sends twice → 1 conversation, 1 customer ----
+    await setupWorkspace(apiD, stampD);
+    const chD1 = await apiD('/api/channels', { method: 'POST', body: { platform: 'messenger', externalId: 'page-d1', displayName: 'D1 Page', token: 'tok-d1' } });
+    check('D1 messenger channel → 201', chD1.status === 201, `status=${chD1.status}`);
+    const hD1a = await sendMsg(apiD, 'page-d1', 'psid-d1', `d1-m1-${stampD}`, 'Bi');
+    const hD1b = await sendMsg(apiD, 'page-d1', 'psid-d1', `d1-m2-${stampD}`, 'Hi');
+    check('D1 both webhooks accepted', hD1a.status === 200 && hD1b.status === 200, `status=${hD1a.status}/${hD1b.status}`);
+    const convsD1 = await inboxList(apiD);
+    const custsD1 = await customerList(apiD);
+    check('D1 repeated messages → exactly 1 conversation', convsD1.length === 1, `conversations=${convsD1.length}`);
+    check('D1 repeated messages → exactly 1 customer', custsD1.length === 1, `customers=${custsD1.length}`);
+    const convD1 = convsD1[0];
+    check('D1 the one conversation holds both messages', convD1 ? (await inboundCount(apiD, convD1.id)) === 2 : false, `inbound=${convD1 ? await inboundCount(apiD, convD1.id) : 'none'}`);
+
+    // ---- D2: 10 different messages concurrently → still 1 conversation ----
+    const burst = await Promise.all(
+      Array.from({ length: 10 }, (_, i) => sendMsg(apiD, 'page-d1', 'psid-d1', `d1-burst-${i}-${stampD}`, `burst ${i}`)),
+    );
+    check('D2 all 10 concurrent webhooks accepted', burst.every((r) => r.status === 200), `statuses=${burst.map((r) => r.status).join(',')}`);
+    const convsD2 = await inboxList(apiD);
+    const custsD2 = await customerList(apiD);
+    check('D2 concurrent messages → still exactly 1 conversation', convsD2.length === 1, `conversations=${convsD2.length}`);
+    check('D2 concurrent messages → still exactly 1 customer', custsD2.length === 1, `customers=${custsD2.length}`);
+    check('D2 all 12 inbound messages are in that one conversation', convD1 && convsD2[0]?.id === convD1.id && (await inboundCount(apiD, convD1.id)) === 12, `inbound=${convD1 ? await inboundCount(apiD, convD1.id) : 'none'}`);
+
+    // ---- D3: identical redelivery (same mid twice at once) → 1 message ----
+    const redeliver = await Promise.all([
+      sendMsg(apiD, 'page-d1', 'psid-d1', `d1-dup-${stampD}`, 'same message twice'),
+      sendMsg(apiD, 'page-d1', 'psid-d1', `d1-dup-${stampD}`, 'same message twice'),
+    ]);
+    check('D3 duplicate delivery accepted (200)', redeliver.every((r) => r.status === 200), `statuses=${redeliver.map((r) => r.status).join(',')}`);
+    check('D3 duplicate mid stored only once (12 + 1 = 13 inbound)', convD1 ? (await inboundCount(apiD, convD1.id)) === 13 : false, `inbound=${convD1 ? await inboundCount(apiD, convD1.id) : 'none'}`);
+    check('D3 duplicate delivery → still 1 conversation', (await inboxList(apiD)).length === 1, `conversations=${(await inboxList(apiD)).length}`);
+
+    // ---- D4: done chat reopens on the next message (no new chat) ----
+    const done = await apiD(`/api/inbox/${convD1.id}/done`, { method: 'POST' });
+    check('D4 mark done → 200 + status done', done.status === 200 && done.data?.conversation?.status === 'done', `status=${done.status}, conv=${JSON.stringify(done.data?.conversation)}`);
+    const hD4 = await sendMsg(apiD, 'page-d1', 'psid-d1', `d1-after-done-${stampD}`, 'আবার মেসেজ');
+    check('D4 webhook after done accepted', hD4.status === 200, `status=${hD4.status}`);
+    const convsD4 = await inboxList(apiD);
+    check('D4 message after done → still exactly 1 conversation', convsD4.length === 1, `conversations=${convsD4.length}`);
+    check('D4 the same conversation reopened (same id, open again)', convsD4[0]?.id === convD1.id && convsD4[0]?.status === 'open', `id=${convsD4[0]?.id}, status=${convsD4[0]?.status}`);
+    check('D4 reopened conversation holds all 14 inbound messages', convD1 ? (await inboundCount(apiD, convD1.id)) === 14 : false, `inbound=${convD1 ? await inboundCount(apiD, convD1.id) : 'none'}`);
+
+    // ---- D7 (same workspace): a postback with no text creates no chat ----
+    const beforePostback = await inboxList(apiD);
+    const postback = await apiD('/api/webhooks/meta', {
+      method: 'POST', auth: false,
+      body: { object: 'page', entry: [{ id: 'page-d1', messaging: [{ sender: { id: 'psid-d1' }, recipient: { id: 'page-d1' }, postback: { payload: 'GET_STARTED' } }] }] },
+    });
+    check('D7 postback webhook accepted (200)', postback.status === 200, `status=${postback.status}`);
+    const afterPostback = await inboxList(apiD);
+    check('D7 postback creates no new conversation', afterPostback.length === beforePostback.length, `before=${beforePostback.length}, after=${afterPostback.length}`);
+
+    // ---- D5: same PSID on a different Page → a separate conversation ----
+    await setupWorkspace(apiD, stampD + 1);
+    const chD5 = await apiD('/api/channels', { method: 'POST', body: { platform: 'messenger', externalId: 'page-d2', displayName: 'D2 Page', token: 'tok-d2' } });
+    check('D5 second Page channel → 201', chD5.status === 201, `status=${chD5.status}`);
+    const hD5 = await sendMsg(apiD, 'page-d2', 'psid-d1', `d5-m1-${stampD}`, 'Hi from the other page');
+    check('D5 webhook accepted', hD5.status === 200, `status=${hD5.status}`);
+    const convsD5 = await inboxList(apiD);
+    check('D5 same PSID, other Page → its own single conversation', convsD5.length === 1, `conversations=${convsD5.length}`);
+    check('D5 the other Page conversation is a different chat (not the D1 id)', convsD5[0]?.id !== convD1.id, `id=${convsD5[0]?.id}`);
+
+    // ---- D6: Facebook comments from one user → 1 conversation ----
+    await setupWorkspace(apiD, stampD + 2);
+    const chD6 = await apiD('/api/channels', { method: 'POST', body: { platform: 'facebook_comment', externalId: 'page-d6', displayName: 'D6 Page', token: 'tok-d6' } });
+    check('D6 facebook_comment channel → 201', chD6.status === 201, `status=${chD6.status}`);
+    const cD6a = await sendComment(apiD, 'page-d6', `d6-c1-${stampD}`, 'fbuser-1', 'Commenter', 'দাম কত?');
+    const cD6b = await sendComment(apiD, 'page-d6', `d6-c2-${stampD}`, 'fbuser-1', 'Commenter', 'ডেলিভারি হবে?');
+    check('D6 both comment webhooks accepted', cD6a.status === 200 && cD6b.status === 200, `status=${cD6a.status}/${cD6b.status}`);
+    const convsD6 = await inboxList(apiD);
+    const custsD6 = await customerList(apiD);
+    check('D6 repeated comments → exactly 1 conversation', convsD6.length === 1, `conversations=${convsD6.length}`);
+    check('D6 repeated comments → exactly 1 customer', custsD6.length === 1, `customers=${custsD6.length}`);
+    check('D6 the comment conversation holds both comments', convsD6[0] ? (await inboundCount(apiD, convsD6[0].id)) === 2 : false, `inbound=${convsD6[0] ? await inboundCount(apiD, convsD6[0].id) : 'none'}`);
+  } finally {
+    runD.stop();
     await sleep(2000);
   }
 }

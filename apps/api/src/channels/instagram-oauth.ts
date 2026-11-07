@@ -179,6 +179,8 @@ function verifyIgSession(token: string): IgSession | null {
 /**
  * GET /api/channels/instagram/login — returns the Meta dialog URL.
  * 503 while no Meta app is configured (META_APP_ID unset).
+ * ?reauthenticate=1 forces Facebook to ask for credentials again so the
+ * user can log in with a DIFFERENT Facebook account (see loginUrl).
  */
 instagramOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response) => {
   if (!config.meta.appId) {
@@ -188,7 +190,7 @@ instagramOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response
     return;
   }
   const state = signStateToken(req.userId as string, getWorkspaceId(req), 'instagram');
-  res.json({ url: loginUrl(SCOPES, state) });
+  res.json({ url: loginUrl(SCOPES, state, { reauthenticate: req.query.reauthenticate === '1' }) });
 });
 
 /**

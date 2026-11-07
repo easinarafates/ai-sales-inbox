@@ -149,7 +149,7 @@ async function main() {
   const migSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/13-facebook-oauth.sql'), 'utf8');
   check('migration 13 adds token_expires_at + picture_url', migSrc.includes('token_expires_at') && migSrc.includes('picture_url') && migSrc.includes('IF NOT EXISTS'));
   const pageSrc = fs.readFileSync(path.join(ROOT, 'apps/web/app/channels/page.tsx'), 'utf8');
-  check('channels page has Login with Facebook button', pageSrc.includes('Login with Facebook') && pageSrc.includes('facebookLogin()'));
+  check('channels page has Login with Facebook button', pageSrc.includes('Login with Facebook') && pageSrc.includes('salesChannelsApi.facebookLogin'));
   check('channels page has a page picker', pageSrc.includes('facebookPickTitle') && pageSrc.includes('facebookConnect('));
   check('channels page no longer sends facebook_page (no option / mapping for it)', !pageSrc.includes('value: "facebook_page"') && !pageSrc.includes('facebook_page:') && !pageSrc.includes("api: \"facebook_page\""));
   check('manual form maps website → webchat', pageSrc.includes("api: \"webchat\""));

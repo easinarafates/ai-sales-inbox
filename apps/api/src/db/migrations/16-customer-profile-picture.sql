@@ -1,0 +1,13 @@
+-- 16-customer-profile-picture.sql — customer name + photo from Meta.
+--
+-- The Meta webhook saves only the sender PSID, so the Inbox showed
+-- "Unknown" for every customer. The webhook now fetches the profile
+-- (Messenger: first_name/last_name/profile_pic; Instagram:
+-- name/username/profile_picture_url) on first sight of a sender and
+-- stores it here (apps/api/src/channels/meta-profile.ts).
+-- Idempotent: safe to re-run on every start (same pattern as the other
+-- migrations). Loads on local PGlite (auto-run on boot) and on Neon
+-- Postgres with psql.
+-- NOTE: this migration has NOT been loaded into Neon yet — the
+-- coordinator loads it before the next deploy.
+ALTER TABLE customers ADD COLUMN IF NOT EXISTS picture_url TEXT;

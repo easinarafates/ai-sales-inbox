@@ -62,9 +62,12 @@ channelsRouter.post('/', async (req: AuthRequest, res: Response) => {
   // without approval) consumes no slot — enforcing the limit before the
   // approval decision broke the e2e verifier (Messenger already uses the
   // trial's 1 slot, yet WhatsApp/TikTok must still save as pending).
+  // facebook_comment is the same exception: it is the comment leg of an
+  // already-connected Facebook Page (same Page, same token), not a new
+  // channel, so it never consumes a subscription slot either.
   const approved = isApproved(platform);
   const status = approved ? 'connected' : 'pending_approval';
-  if (approved) {
+  if (approved && platform !== 'facebook_comment') {
     const channelLimit = await checkChannelLimit(workspaceId);
     if (!channelLimit.canAdd) {
       res.status(402).json({ error: channelLimit.message });

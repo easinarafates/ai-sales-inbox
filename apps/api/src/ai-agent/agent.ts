@@ -119,8 +119,105 @@ function parseGeminiReply(text: string): GeminiReply | null {
   return { reply: text.trim(), confidence: 0.7, toolCalls: [] };
 }
 
-async function recordUnanswered(workspaceId: string, question: string): Promise<void> {
-  const q = question.trim().slice(0, 500);
+// ---------------------------------------------------------------------------
+// Anti-hallucination guard (deterministic, prompt-independent).
+//
+// The system prompt tells the model never to invent a price, but a model
+// can still ignore the prompt — and a plain-text (non-JSON) reply bypasses
+// tool grounding entirely. So before ANY live reply is sent, the reply
+// text itself is checked: every currency-marked amount in it (৳…, …টাকা,
+// "price/dam …123") must match a real number from the DB — a product
+// price, an open-order total, a knowledge-book amount, or an amount from
+// a tool result this turn (e.g. a just-created order's bill total).
+// If any amount is invented:
+//  - empty catalog → the safe Bengali empty-catalog reply (never a price);
+//  - products exist → a reply listing the REAL catalog prices, so the
+//    customer still gets a true answer instead of a made-up one.
+// Returns the (possibly replaced) reply. Only currency-marked amounts
+// are checked — bare numbers (quantities, phone digits) are untouched.
+// ---------------------------------------------------------------------------
+
+/** Reply sent when the shop has no products and the customer asks a price. */
+export const EMPTY_CATALOG_REPLY =
+  'আসসালামু আলাইকুম! কোন প্রোডাক্টের দাম জানতে চান, নামটা লিখে জানাবেন? দোকানে এখনো কোনো প্রোডাক্ট যোগ করা হয়নি, তাই এখন কোনো দাম বলতে পারছি না — প্রোডাক্টের নাম জানালে দোকানের মালিক দাম জানিয়ে দেবেন। ধন্যবাদ!';
+
+function bnDigitsToAscii(s: string): string {
+  return s.replace(/[০-৯]/g, (d) => String('০১২৩৪৫৬৭৮৯'.indexOf(d)));
+}
+
+/** All currency-marked amounts in a text, as taka numbers (৳1500 → 1500). */
+export function extractPriceAmounts(text: string): number[] {
+  const amounts: number[] = [];
+  const patterns = [
+    /৳\s*([০-৯0-9][০-৯0-9,]*\.?[০-৯0-9]*)/g,
+    /([০-৯0-9][০-৯0-9,]*\.?[০-৯0-9]*)\s*টাকা/g,
+    /(?:price|দাম)[^০-৯0-9\n]{0,25}([০-৯0-9][০-৯0-9,]*\.?[০-৯0-9]*)/gi,
+    /\b(?:tk|bdt)\s*\.?\s*([০-৯0-9][০-৯0-9,]*\.?[০-৯0-9]*)/gi,
+  ];
+  for (const re of patterns) {
+    for (const m of text.matchAll(re)) {
+      const n = Number(bnDigitsToAscii(m[1]).replace(/,/g, ''));
+      if (Number.isFinite(n) && n > 0) amounts.push(n);
+    }
+  }
+  return amounts;
+}
+
+/**
+ * Real amounts a tool returned this turn (bill totals in billText, numeric
+ * totalPaisa/pricePaisa fields in paisa → taka). Walked structurally, NOT
+ * by stringifying the JSON — a raw stringify would also match the key
+ * name "pricePaisa" followed by the raw paisa number (150000), which
+ * would wrongly allow a ৳150,000 reply.
+ */
+function toolResultAmountsFrom(results: { tool: string; result: unknown }[]): number[] {
+  const amounts: number[] = [];
+  const walk = (v: unknown): void => {
+    if (typeof v === 'string') amounts.push(...extractPriceAmounts(v));
+    else if (Array.isArray(v)) v.forEach(walk);
+    else if (v && typeof v === 'object') {
+      for (const [k, val] of Object.entries(v as Record<string, unknown>)) {
+        if ((k === 'totalPaisa' || k === 'pricePaisa') && typeof val === 'number') amounts.push(val / 100);
+        else walk(val);
+      }
+    }
+  };
+  results.forEach((r) => walk(r.result));
+  return amounts;
+}
+
+export function guardReplyAgainstHallucination(
+  reply: string,
+  ctx: AgentContext,
+  toolResultAmounts: number[] = [],
+): { reply: string; replaced: boolean; invented: number[] } {
+  const amounts = extractPriceAmounts(reply);
+  if (amounts.length === 0) return { reply, replaced: false, invented: [] };
+  const allowed = new Set<number>();
+  for (const p of ctx.products) allowed.add(p.pricePaisa / 100);
+  for (const o of ctx.openOrders) allowed.add(o.totalPaisa / 100);
+  for (const k of ctx.knowledge) {
+    for (const a of extractPriceAmounts(`${k.title ?? ''} ${k.body}`)) allowed.add(a);
+  }
+  for (const a of toolResultAmounts) allowed.add(a);
+  const invented = amounts.filter((a) => ![...allowed].some((x) => Math.abs(x - a) < 0.01));
+  if (invented.length === 0) return { reply, replaced: false, invented: [] };
+  if (ctx.products.length === 0) {
+    return { reply: EMPTY_CATALOG_REPLY, replaced: true, invented };
+  }
+  const list = ctx.products
+    .slice(0, 5)
+    .map((p) => `• ${p.name} — ৳${(p.pricePaisa / 100).toLocaleString('en-IN')}`)
+    .join('\n');
+  return {
+    reply:
+      `দামের ব্যাপারে নিশ্চিত তথ্য দিচ্ছি — আমাদের প্রোডাক্টগুলো:\n${list}\nকোনটি সম্পর্কে জানতে চান? নামটি লিখে জানান।`,
+    replaced: true,
+    invented,
+  };
+}
+
+async function recordUnanswered(workspaceId: string, question: string): Promise<void> {  const q = question.trim().slice(0, 500);
   if (!q) return;
   // No unique constraint on (workspace_id, question) in schema.sql, so
   // upsert manually instead of ON CONFLICT.
@@ -294,7 +391,12 @@ async function runDemoReply(
   let reply: string;
   let confidence = 0.9;
 
-  if (ORDER_INTENT.test(text) && matched.length === 1 && customerId) {
+  if (products.length === 0 && /দাম|price|কত|টাকা/i.test(text)) {
+    // Empty catalog + price question: never invent a price, even in demo
+    // mode — say plainly (in Bengali) that no products are added yet and
+    // ask which product the customer means, so the owner can answer.
+    reply = `${DEMO_LABEL}${EMPTY_CATALOG_REPLY}`;
+  } else if (ORDER_INTENT.test(text) && matched.length === 1 && customerId) {
     const product = matched[0];
     const created = await runTool(toolDb, workspaceId, 'create_order', {
       customerId,
@@ -535,6 +637,9 @@ export async function processBatch(
 
   // Execute any tool calls, then ask the SAME provider once more with the
   // tool results (the provider that answered first answers again).
+  // Amounts the tools returned (e.g. a just-created order's bill total)
+  // are real DB numbers, so the hallucination guard below must allow them.
+  let toolResultAmounts: number[] = [];
   if (parsed && parsed.toolCalls.length > 0) {
     const results: { tool: string; result: unknown }[] = [];
     for (const call of parsed.toolCalls) {
@@ -542,6 +647,7 @@ export async function processBatch(
       const result = await runTool(toolDb, workspaceId, call.tool, args);
       results.push({ tool: call.tool, result });
     }
+    toolResultAmounts = toolResultAmountsFrom(results);
     const secondPrompt =
       `${prompt}\n\nটুলের ফলাফল (শুধু এখানকার তথ্য ব্যবহার করো, বানিয়ে কিছু বলো না):\n` +
       JSON.stringify(results, null, 2) +
@@ -580,6 +686,19 @@ export async function processBatch(
     });
     await recordUnanswered(workspaceId, batchedMessages.map((m) => m.body).join(' '));
     return { replied: false, reason: 'low_confidence_ticket_created', confidence: parsed.confidence };
+  }
+
+  // Deterministic anti-hallucination guard (prompt-independent): any
+  // currency-marked amount in the reply that is not a real DB number is
+  // replaced with a truthful reply before it can reach the customer.
+  // This is what stops "Product price" + empty catalog from ever
+  // producing an invented price, even if the model ignores the prompt.
+  const guarded = guardReplyAgainstHallucination(parsed.reply, ctx, toolResultAmounts);
+  if (guarded.replaced) {
+    console.error(
+      `[agent] hallucination guard: invented amounts [${guarded.invented.join(', ')}] — reply replaced before send`,
+    );
+    parsed = { ...parsed, reply: guarded.reply };
   }
 
   // Send the reply for real (Meta Graph API). Only a delivered reply is

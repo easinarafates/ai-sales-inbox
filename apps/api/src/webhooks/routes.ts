@@ -4,6 +4,8 @@ import { pool, query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { enqueueMessage } from '../queue/client';
 import { recordAttributionForPlatformPost } from '../analytics/attribution';
+import { enrichCustomerProfileIfNeeded } from '../channels/meta-profile';
+import { decryptToken } from '../db/crypto';
 
 export const webhooksRouter = Router();
 
@@ -15,6 +17,7 @@ interface CustomerRow {
   id: string;
   name: string | null;
   phone: string | null;
+  picture_url: string | null;
   channel_identities: unknown;
 }
 
@@ -27,19 +30,30 @@ async function findOrCreateCustomer(
 ): Promise<CustomerRow> {
   const identity = JSON.stringify([{ platform, senderId, name: name ?? null }]);
   // Match if any stored identity has this platform+senderId.
-  const existing = await queryOne<CustomerRow>(
-    workspaceId,
-    `SELECT id, name, phone, channel_identities FROM customers
-     WHERE workspace_id = $1 AND channel_identities @> $2::jsonb LIMIT 1`,
-    [workspaceId, JSON.stringify([{ platform, senderId }])],
-  );
-  if (existing) return existing;
-  const { rows } = await query<CustomerRow>(
-    workspaceId,
-    'INSERT INTO customers (workspace_id, name, channel_identities) VALUES ($1, $2, $3::jsonb) RETURNING id, name, phone, channel_identities',
-    [workspaceId, name ?? null, identity],
-  );
-  return rows[0];
+  const lookup = () =>
+    queryOne<CustomerRow>(
+      workspaceId,
+      `SELECT id, name, phone, picture_url, channel_identities FROM customers
+       WHERE workspace_id = $1 AND channel_identities @> $2::jsonb LIMIT 1`,
+      [workspaceId, JSON.stringify([{ platform, senderId }])],
+    );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const existing = await lookup();
+    if (existing) return existing;
+    // Race guard: the unique index on customers.primary_identity
+    // (migration 16) makes a concurrent duplicate INSERT lose with
+    // ON CONFLICT DO NOTHING, and the next loop pass re-reads the
+    // winner instead of returning a second row for the same PSID.
+    const { rows } = await query<CustomerRow>(
+      workspaceId,
+      'INSERT INTO customers (workspace_id, name, channel_identities) VALUES ($1, $2, $3::jsonb) ON CONFLICT DO NOTHING RETURNING id, name, phone, picture_url, channel_identities',
+      [workspaceId, name ?? null, identity],
+    );
+    if (rows[0]) return rows[0];
+  }
+  const found = await lookup();
+  if (found) return found;
+  throw new Error('findOrCreateCustomer: could not create or find a customer');
 }
 
 async function findOrCreateConversation(
@@ -47,20 +61,60 @@ async function findOrCreateConversation(
   channelId: string | null,
   customerId: string,
 ): Promise<string> {
-  const existing = await queryOne<{ id: string }>(
-    workspaceId,
-    `SELECT id FROM conversations WHERE workspace_id = $1 AND customer_id = $2
-     AND status = 'open' ORDER BY updated_at DESC LIMIT 1`,
-    [workspaceId, customerId],
-  );
-  if (existing) return existing.id;
-  const { rows } = await query<{ id: string }>(
-    workspaceId,
-    `INSERT INTO conversations (workspace_id, channel_id, customer_id, status, mode)
-     VALUES ($1, $2, $3, 'open', 'ai') RETURNING id`,
-    [workspaceId, channelId, customerId],
-  );
-  return rows[0].id;
+  // One customer + one channel = one chat. Scoped by channel_id, so a
+  // Messenger chat and an Instagram chat for the same person stay
+  // separate (replies must go out on the platform they came in on).
+  const lookupLatest = () =>
+    queryOne<{ id: string; status: string }>(
+      workspaceId,
+      `SELECT id, status FROM conversations
+       WHERE workspace_id = $1 AND customer_id = $2 AND channel_id IS NOT DISTINCT FROM $3
+       ORDER BY updated_at DESC LIMIT 1`,
+      [workspaceId, customerId, channelId],
+    );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const latest = await lookupLatest();
+    if (latest?.status === 'open') return latest.id;
+    if (latest) {
+      // A new message REOPENS a done/snoozed chat instead of spawning
+      // a second chat for the same customer. The NOT EXISTS guard +
+      // the partial unique index (migration 16) keep two open chats
+      // from ever existing; a lost race just re-reads the winner.
+      try {
+        const { rows } = await query<{ id: string }>(
+          workspaceId,
+          `UPDATE conversations SET status = 'open', snooze_until = NULL, updated_at = now()
+           WHERE workspace_id = $1 AND id = $2 AND status <> 'open'
+             AND NOT EXISTS (
+               SELECT 1 FROM conversations
+               WHERE workspace_id = $1 AND customer_id = $3
+                 AND channel_id IS NOT DISTINCT FROM $4 AND status = 'open'
+             )
+           RETURNING id`,
+          [workspaceId, latest.id, customerId, channelId],
+        );
+        if (rows[0]) return rows[0].id;
+      } catch (err) {
+        // 23505 = a concurrent insert reopened/created the open chat
+        // first; anything else is a real error and must surface.
+        const code = (err as { code?: string }).code ?? '';
+        const msg = (err as Error).message ?? '';
+        if (code !== '23505' && !msg.includes('duplicate key')) throw err;
+      }
+      continue;
+    }
+    const { rows } = await query<{ id: string }>(
+      workspaceId,
+      `INSERT INTO conversations (workspace_id, channel_id, customer_id, status, mode)
+       VALUES ($1, $2, $3, 'open', 'ai') ON CONFLICT DO NOTHING RETURNING id`,
+      [workspaceId, channelId, customerId],
+    );
+    if (rows[0]) return rows[0].id;
+    // Lost the race to a concurrent insert — loop re-reads the winner.
+  }
+  const fallback = await lookupLatest();
+  if (fallback) return fallback.id;
+  throw new Error('findOrCreateConversation: could not create or find a conversation');
 }
 
 async function saveIncomingMessage(
@@ -104,12 +158,12 @@ async function recordWebhookEvent(
 async function findChannelByExternalId(
   platform: string,
   externalId: string,
-): Promise<{ id: string; workspace_id: string } | null> {
+): Promise<{ id: string; workspace_id: string; token_encrypted: string | null } | null> {
   const { rows } = await pool.query(
-    'SELECT id, workspace_id FROM channels WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT 1',
+    'SELECT id, workspace_id, token_encrypted FROM channels WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT 1',
     [platform, externalId],
   );
-  return (rows[0] as { id: string; workspace_id: string } | undefined) ?? null;
+  return (rows[0] as { id: string; workspace_id: string; token_encrypted: string | null } | undefined) ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -148,6 +202,26 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       const eventId = message.mid ?? `${sender.id}-${Date.now()}`;
       if (!(await recordWebhookEvent(channel.workspace_id, platform, eventId, event))) continue; // duplicate
       const customer = await findOrCreateCustomer(channel.workspace_id, platform, sender.id);
+      // First sight of this sender: fetch the real name + photo from
+      // Graph with the Page token (best-effort — a failed fetch never
+      // blocks the message or the AI reply).
+      if (channel.token_encrypted) {
+        let pageToken: string | null = null;
+        try {
+          pageToken = decryptToken(channel.token_encrypted);
+        } catch {
+          pageToken = null;
+        }
+        await enrichCustomerProfileIfNeeded({
+          workspaceId: channel.workspace_id,
+          platform: platform as 'messenger' | 'instagram',
+          senderId: sender.id,
+          customerId: customer.id,
+          customerName: customer.name,
+          customerPictureUrl: customer.picture_url,
+          pageToken,
+        }).catch((err) => console.error('[webhook/meta] profile enrich failed:', (err as Error).message));
+      }
       const conversationId = await findOrCreateConversation(channel.workspace_id, channel.id, customer.id);
       await saveIncomingMessage(channel.workspace_id, conversationId, message.text, message.mid);
       await enqueueMessage(channel.workspace_id, conversationId, message.text).catch((err) =>

@@ -26,6 +26,27 @@ function convChannel(c: Conversation): string {
   return c.channel || c.channelType || c.channel_type || "Messenger";
 }
 
+function convPicture(c: Conversation): string {
+  const fromCustomer =
+    (typeof c.customer === "object" && c.customer
+      ? (c.customer.picture_url as string | undefined) || (c.customer.pictureUrl as string | undefined)
+      : "") || "";
+  return fromCustomer || c.customer_picture_url || c.customerPictureUrl || "";
+}
+
+/** Customer avatar: real photo when Meta gave us one, initials otherwise. */
+function CustomerAvatar({ name, pictureUrl, sizeClass }: { name: string; pictureUrl?: string; sizeClass?: string }) {
+  const cls = sizeClass ?? "h-10 w-10";
+  if (pictureUrl) {
+    return <img src={pictureUrl} alt={name} className={`${cls} shrink-0 rounded-full object-cover`} />;
+  }
+  return (
+    <span className={`${cls} flex shrink-0 items-center justify-center rounded-full bg-brand/10 font-bold text-brand-dark`}>
+      {name.trim().charAt(0) || "?"}
+    </span>
+  );
+}
+
 function msgText(m: Message): string {
   return m.body || m.text || m.content || "";
 }
@@ -136,7 +157,8 @@ export default function InboxPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("inbox.title", "Inbox", "ইনবক্স")}</h1>
+      <h1 className="page-title">{t("inbox.title", "Inbox", "ইনবক্স")}</h1>
+      <p className="page-subtitle">{t("inbox.subtitle", "All your customer chats in one place.", "সব কাস্টমারের চ্যাট এক জায়গায়।")}</p>
 
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
@@ -175,9 +197,7 @@ export default function InboxPage() {
               onClick={() => openThread(c.id)}
               className={`flex w-full gap-3 p-4 text-left transition-colors hover:bg-orange-50 ${selectedId === c.id ? "bg-orange-50 ring-1 ring-inset ring-orange-200" : ""}`}
             >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-brand/10 font-bold text-brand-dark">
-                {convName(c, unknownLabel).trim().charAt(0) || "?"}
-              </span>
+              <CustomerAvatar name={convName(c, unknownLabel)} pictureUrl={convPicture(c)} />
               <span className="min-w-0 flex-1">
                 <span className="flex justify-between gap-2">
                   <span className="truncate font-medium">{convName(c, unknownLabel)}</span>
@@ -204,12 +224,21 @@ export default function InboxPage() {
             <>
               <div className="card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
-                  <div>
-                    <h2 className="font-bold text-lg">{selected.customer?.name || convName(selected.conversation, unknownLabel)}</h2>
-                    <p className="text-sm text-slate-500">
-                      {convChannel(selected.conversation)}
-                      {selected.customer?.phone ? ` • ${selected.customer.phone}` : ""}
-                    </p>
+                  <div className="flex items-center gap-3">
+                    <CustomerAvatar
+                      name={selected.customer?.name || convName(selected.conversation, unknownLabel)}
+                      pictureUrl={
+                        selected.customer?.picture_url || selected.customer?.pictureUrl || convPicture(selected.conversation)
+                      }
+                      sizeClass="h-12 w-12"
+                    />
+                    <div>
+                      <h2 className="font-bold text-lg">{selected.customer?.name || convName(selected.conversation, unknownLabel)}</h2>
+                      <p className="text-sm text-slate-500">
+                        {convChannel(selected.conversation)}
+                        {selected.customer?.phone ? ` • ${selected.customer.phone}` : ""}
+                      </p>
+                    </div>
                   </div>
                   <span
                     className={`text-xs font-medium px-3 py-1 rounded-full ${
@@ -282,6 +311,14 @@ export default function InboxPage() {
               {/* Customer profile + open orders */}
               <div className="card p-4">
                 <h3 className="font-bold mb-2">{t("inbox.profile", "Customer profile", "কাস্টমার প্রোফাইল")}</h3>
+                <div className="mb-2 flex items-center gap-3">
+                  <CustomerAvatar
+                    name={selected.customer?.name || unknownLabel}
+                    pictureUrl={selected.customer?.picture_url || selected.customer?.pictureUrl}
+                    sizeClass="h-14 w-14"
+                  />
+                  <p className="font-medium">{selected.customer?.name || "—"}</p>
+                </div>
                 <p className="text-sm"><span className="text-slate-500">{t("common.name", "Name", "নাম")}:</span> {selected.customer?.name || "—"}</p>
                 <p className="text-sm"><span className="text-slate-500">{t("common.phone", "Phone", "ফোন")}:</span> {selected.customer?.phone || "—"}</p>
                 <p className="text-sm"><span className="text-slate-500">{t("common.address", "Address", "ঠিকানা")}:</span> {selected.customer?.address || "—"}</p>

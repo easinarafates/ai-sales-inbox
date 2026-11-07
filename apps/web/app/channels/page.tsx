@@ -232,17 +232,22 @@ export default function ChannelsPage() {
 
   const loginWithFacebook = async () => loginWith("facebook");
 
-  const loginWith = async (kind: OAuthKind) => {
+  // reauthenticate: force Facebook to ask for credentials again so the
+  // user can log in with a DIFFERENT Facebook account. Without it
+  // Facebook silently re-uses the account signed in on facebook.com and
+  // the Page picker never appears.
+  const loginWith = async (kind: OAuthKind, reauthenticate = false) => {
     setError("");
     setNotice("");
     setOauthBusy(kind);
     try {
+      const opts = reauthenticate ? { reauthenticate: true } : undefined;
       const { url } =
         kind === "facebook"
-          ? await salesChannelsApi.facebookLogin()
+          ? await salesChannelsApi.facebookLogin(opts)
           : kind === "instagram"
-            ? await salesChannelsApi.instagramLogin()
-            : await salesChannelsApi.whatsappLogin();
+            ? await salesChannelsApi.instagramLogin(opts)
+            : await salesChannelsApi.whatsappLogin(opts);
       window.location.href = url;
     } catch (err) {
       setError(err instanceof Error ? err.message : oauthError(kind, ""));
@@ -360,7 +365,8 @@ export default function ChannelsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("channels.title", "Channels", "চ্যানেল")}</h1>
+      <h1 className="page-title">{t("channels.title", "Channels", "চ্যানেল")}</h1>
+      <p className="page-subtitle">{t("channels.subtitle", "Connect your Facebook Page, Instagram and WhatsApp.", "ফেসবুক পেজ, ইনস্টাগ্রাম আর WhatsApp যুক্ত করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {notice && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
@@ -394,6 +400,16 @@ export default function ChannelsPage() {
                 {oauthBusy === kind
                   ? t(card.opening, "Opening Facebook…", "Facebook খুলছে…")
                   : t(card.button, kind === "facebook" ? "Login with Facebook" : kind === "instagram" ? "Connect Instagram" : "Connect WhatsApp", kind === "facebook" ? "Facebook দিয়ে লগইন করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : "WhatsApp যুক্ত করুন")}
+              </button>
+              <p className="text-xs text-slate-500 mt-3">
+                {t("channels.switchAccountHint", "Facebook always uses the account signed in on facebook.com. To use another account, tap below — Facebook will ask you to log in again — or log out / switch accounts on facebook.com first.", "Facebook সবসময় facebook.com-এ যে অ্যাকাউন্টে লগইন করা আছে সেটাই ব্যবহার করে। অন্য অ্যাকাউন্ট ব্যবহার করতে নিচে চাপ দাও — Facebook আবার লগইন চাইবে — অথবা আগে facebook.com-এ গিয়ে লগআউট / অ্যাকাউন্ট বদলে নাও।")}
+              </p>
+              <button
+                onClick={() => loginWith(kind, true)}
+                disabled={oauthBusy !== ""}
+                className="mt-1 text-xs font-medium text-brand-dark underline hover:text-brand disabled:opacity-50"
+              >
+                {t("channels.switchAccount", "Use a different Facebook account", "অন্য Facebook অ্যাকাউন্ট ব্যবহার করো")}
               </button>
             </div>
           );

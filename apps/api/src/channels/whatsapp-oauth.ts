@@ -213,6 +213,8 @@ function verifyWaSession(token: string): WaSession | null {
 /**
  * GET /api/channels/whatsapp/login — returns the Meta dialog URL.
  * 503 while no Meta app is configured (META_APP_ID unset).
+ * ?reauthenticate=1 forces Facebook to ask for credentials again so the
+ * user can log in with a DIFFERENT Facebook account (see loginUrl).
  */
 whatsappOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response) => {
   if (!config.meta.appId) {
@@ -222,7 +224,7 @@ whatsappOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response)
     return;
   }
   const state = signStateToken(req.userId as string, getWorkspaceId(req), 'whatsapp');
-  res.json({ url: loginUrl(SCOPES, state) });
+  res.json({ url: loginUrl(SCOPES, state, { reauthenticate: req.query.reauthenticate === '1' }) });
 });
 
 /**

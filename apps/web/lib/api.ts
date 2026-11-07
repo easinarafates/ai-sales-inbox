@@ -121,6 +121,9 @@ export interface Customer {
   name?: string;
   phone?: string;
   address?: string;
+  /** Profile photo URL fetched from Meta (Messenger/Instagram) on first sight. */
+  picture_url?: string;
+  pictureUrl?: string;
   facebookId?: string;
   facebook_id?: string;
   [key: string]: unknown;
@@ -150,6 +153,8 @@ export interface Conversation {
   customer?: Customer;
   customerName?: string;
   customer_name?: string;
+  customer_picture_url?: string;
+  customerPictureUrl?: string;
   channel?: string;
   channelType?: string;
   channel_type?: string;
@@ -346,6 +351,12 @@ export const authApi = {
       workspace: res.workspace ?? (res.workspaceId ? { id: res.workspaceId } : undefined),
     } as AuthResponse;
   },
+  /** Ask for a password-reset link (always the same generic reply). */
+  forgotPassword: (body: { email: string }) =>
+    api.post<{ message: string }>("/api/auth/forgot-password", body),
+  /** Finish a reset with the token from the emailed link. */
+  resetPassword: (body: { token: string; password: string }) =>
+    api.post<{ message: string }>("/api/auth/reset-password", body),
   me: () => api.get<{ user: User; workspace: Workspace }>("/api/auth/me"),
 };
 
@@ -551,8 +562,11 @@ export const salesChannelsApi = {
     api.get<SalesChannel[] | { channels: SalesChannel[] }>("/api/channels"),
   create: (body: { platform: string; externalId: string; displayName?: string; token?: string }) =>
     api.post<{ channel: SalesChannel } | SalesChannel>("/api/channels", body),
-  /** "Login with Facebook" — returns the Meta dialog URL to redirect to. */
-  facebookLogin: () => api.get<{ url: string }>("/api/channels/facebook/login"),
+  /** "Login with Facebook" — returns the Meta dialog URL to redirect to.
+   *  reauthenticate: force Facebook to ask for credentials again so the
+   *  user can log in with a DIFFERENT Facebook account. */
+  facebookLogin: (opts?: { reauthenticate?: boolean }) =>
+    api.get<{ url: string }>(`/api/channels/facebook/login${opts?.reauthenticate ? "?reauthenticate=1" : ""}`),
   /** Pages to pick from, for a ?facebook=pick&session=... redirect. */
   facebookPages: (session: string) =>
     api.get<{ pages: FacebookPage[] }>(`/api/channels/facebook/pages?session=${encodeURIComponent(session)}`),
@@ -560,7 +574,8 @@ export const salesChannelsApi = {
   facebookConnect: (body: { session: string; pageId: string }) =>
     api.post<{ channel: SalesChannel }>("/api/channels/facebook/connect", body),
   /** "Connect Instagram" — returns the Meta dialog URL to redirect to. */
-  instagramLogin: () => api.get<{ url: string }>("/api/channels/instagram/login"),
+  instagramLogin: (opts?: { reauthenticate?: boolean }) =>
+    api.get<{ url: string }>(`/api/channels/instagram/login${opts?.reauthenticate ? "?reauthenticate=1" : ""}`),
   /** Pages (with linked Instagram account) to pick from, for a ?instagram=pick&session=... redirect. */
   instagramPages: (session: string) =>
     api.get<{ pages: InstagramPage[] }>(`/api/channels/instagram/pages?session=${encodeURIComponent(session)}`),
@@ -568,7 +583,8 @@ export const salesChannelsApi = {
   instagramConnect: (body: { session: string; pageId: string }) =>
     api.post<{ channel: SalesChannel }>("/api/channels/instagram/connect", body),
   /** "Connect WhatsApp" — returns the Meta dialog URL to redirect to. */
-  whatsappLogin: () => api.get<{ url: string }>("/api/channels/whatsapp/login"),
+  whatsappLogin: (opts?: { reauthenticate?: boolean }) =>
+    api.get<{ url: string }>(`/api/channels/whatsapp/login${opts?.reauthenticate ? "?reauthenticate=1" : ""}`),
   /** WhatsApp Business accounts + numbers to pick from, for a ?whatsapp=pick&session=... redirect. */
   whatsappAccounts: (session: string) =>
     api.get<{ wabas: WhatsappAccount[] }>(`/api/channels/whatsapp/accounts?session=${encodeURIComponent(session)}`),
@@ -810,12 +826,40 @@ export interface LostSaleReason {
   [key: string]: unknown;
 }
 
+export interface PagePostSummary {
+  id: string;
+  message: string;
+  createdTime: string | null;
+  permalinkUrl: string | null;
+  likes: number;
+  comments: number;
+  shares: number;
+  engagement: number;
+  commentsInInbox: number;
+  unansweredInInbox: number;
+}
+
+export interface PagePostAnalysis {
+  page: { id: string; name: string } | null;
+  channelId: string | null;
+  posts: PagePostSummary[];
+  totals: { posts: number; likes: number; comments: number; shares: number; engagement: number };
+  topPostId: string | null;
+  topComments: { postId: string; author: string; text: string; createdTime: string | null }[];
+  suggestions: { en: string; bn: string }[];
+  fetchedAt: string;
+  message?: string;
+}
+
 export const analyticsApi = {
   overview: (range: "today" | "yesterday" | "7d" | "30d") =>
     api.get<AnalyticsOverview>(`/api/analytics/overview?range=${range}`),
   posts: () => api.get<AnalyticsPost[] | { posts: AnalyticsPost[] }>("/api/analytics/posts"),
   lostSales: () =>
     api.get<{ reasons: LostSaleReason[]; total: number }>("/api/analytics/lost-sales"),
+  // Real Facebook Page post analysis (Graph data, never invented).
+  pagePosts: (channelId?: string) =>
+    api.get<PagePostAnalysis>(`/api/analytics/page-posts${channelId ? `?channelId=${encodeURIComponent(channelId)}` : ""}`),
 };
 
 export interface UnansweredQuestion {

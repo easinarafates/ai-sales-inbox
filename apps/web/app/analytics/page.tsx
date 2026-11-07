@@ -93,7 +93,8 @@ export default function AnalyticsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("analytics.title", "Analytics", "অ্যানালিটিক্স")}</h1>
+      <h1 className="page-title">{t("analytics.title", "Analytics", "অ্যানালিটিক্স")}</h1>
+      <p className="page-subtitle">{t("analytics.subtitle", "Replies, orders and what is selling.", "রিপ্লাই, অর্ডার আর কী বিক্রি হচ্ছে।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
       <div className="flex gap-2 mb-4">

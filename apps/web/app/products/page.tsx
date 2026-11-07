@@ -69,7 +69,8 @@ export default function ProductsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("products.title", "Products", "প্রোডাক্ট")}</h1>
+      <h1 className="page-title">{t("products.title", "Products", "প্রোডাক্ট")}</h1>
+      <p className="page-subtitle">{t("products.subtitle", "Products the AI shows and sells for you.", "AI যে প্রোডাক্টগুলো দেখায় আর বিক্রি করে।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
       <div className="flex gap-2 mb-4">

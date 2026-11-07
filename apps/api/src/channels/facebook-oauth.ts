@@ -33,7 +33,11 @@ import { completeWhatsappOAuth } from './whatsapp-oauth';
  * The connected channel is ONE row: platform 'messenger',
  * external_id = Page ID, token_encrypted = Page access token — so
  * incoming Messenger messages keep resolving through the existing
- * findChannelByExternalId('messenger', pageId) webhook lookup.
+ * findChannelByExternalId('messenger', pageId) webhook lookup. A
+ * companion 'facebook_comment' row for the same Page (same token) is
+ * created alongside it by createOAuthChannel, so Page-post comments
+ * reach the webhook too — it is the same Page's comment leg, not a
+ * second channel, and does not count toward the channel limit.
  *
  * This callback is the SHARED Meta OAuth callback: all three logins
  * (Facebook, Instagram, WhatsApp) use the same registered redirect URI,
@@ -51,7 +55,10 @@ import { completeWhatsappOAuth } from './whatsapp-oauth';
  */
 export const facebookOAuthRouter = Router();
 
-const SCOPES = ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement'];
+// pages_manage_engagement: replying to Page-post comments as the Page
+// (POST /{comment-id}/comments). Needs App Review for public shops —
+// the app admin can grant it in dev/Live mode for his own Pages.
+const SCOPES = ['pages_show_list', 'pages_messaging', 'pages_manage_metadata', 'pages_read_engagement', 'pages_manage_engagement'];
 
 /** Complete the Facebook flow after the code exchange. */
 export async function completeFacebookOAuth(
@@ -108,6 +115,8 @@ function verifyFbSession(token: string): { workspaceId: string; pages: FbPickPag
 /**
  * GET /api/channels/facebook/login — returns the Meta dialog URL.
  * 503 while no Meta app is configured (META_APP_ID unset).
+ * ?reauthenticate=1 forces Facebook to ask for credentials again so the
+ * user can log in with a DIFFERENT Facebook account (see loginUrl).
  */
 facebookOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response) => {
   if (!config.meta.appId) {
@@ -117,7 +126,7 @@ facebookOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response)
     return;
   }
   const state = signStateToken(req.userId as string, getWorkspaceId(req), 'facebook');
-  res.json({ url: loginUrl(SCOPES, state) });
+  res.json({ url: loginUrl(SCOPES, state, { reauthenticate: req.query.reauthenticate === '1' }) });
 });
 
 /**

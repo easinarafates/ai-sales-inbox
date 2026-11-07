@@ -61,19 +61,29 @@ async function findOrCreateCustomer(
   name?: string,
 ): Promise<CustomerRow> {
   const identity = JSON.stringify([{ platform, senderId, name: name ?? null }]);
-  const existing = await queryOne<CustomerRow>(
-    workspaceId,
-    `SELECT id, name, phone, channel_identities FROM customers
-     WHERE workspace_id = $1 AND channel_identities @> $2::jsonb LIMIT 1`,
-    [workspaceId, JSON.stringify([{ platform, senderId }])],
-  );
-  if (existing) return existing;
-  const { rows } = await query<CustomerRow>(
-    workspaceId,
-    'INSERT INTO customers (workspace_id, name, channel_identities) VALUES ($1, $2, $3::jsonb) RETURNING id, name, phone, channel_identities',
-    [workspaceId, name ?? null, identity],
-  );
-  return rows[0];
+  const lookup = () =>
+    queryOne<CustomerRow>(
+      workspaceId,
+      `SELECT id, name, phone, channel_identities FROM customers
+       WHERE workspace_id = $1 AND channel_identities @> $2::jsonb LIMIT 1`,
+      [workspaceId, JSON.stringify([{ platform, senderId }])],
+    );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const existing = await lookup();
+    if (existing) return existing;
+    // Race guard: unique index on customers.primary_identity
+    // (migration 16) — a concurrent duplicate INSERT loses with
+    // ON CONFLICT DO NOTHING and the next pass re-reads the winner.
+    const { rows } = await query<CustomerRow>(
+      workspaceId,
+      'INSERT INTO customers (workspace_id, name, channel_identities) VALUES ($1, $2, $3::jsonb) ON CONFLICT DO NOTHING RETURNING id, name, phone, channel_identities',
+      [workspaceId, name ?? null, identity],
+    );
+    if (rows[0]) return rows[0];
+  }
+  const found = await lookup();
+  if (found) return found;
+  throw new Error('findOrCreateCustomer: could not create or find a customer');
 }
 
 async function findOrCreateConversation(
@@ -81,20 +91,53 @@ async function findOrCreateConversation(
   channelId: string | null,
   customerId: string,
 ): Promise<string> {
-  const existing = await queryOne<{ id: string }>(
-    workspaceId,
-    `SELECT id FROM conversations WHERE workspace_id = $1 AND customer_id = $2
-     AND status = 'open' ORDER BY updated_at DESC LIMIT 1`,
-    [workspaceId, customerId],
-  );
-  if (existing) return existing.id;
-  const { rows } = await query<{ id: string }>(
-    workspaceId,
-    `INSERT INTO conversations (workspace_id, channel_id, customer_id, status, mode)
-     VALUES ($1, $2, $3, 'open', 'ai') RETURNING id`,
-    [workspaceId, channelId, customerId],
-  );
-  return rows[0].id;
+  // One customer + one channel = one chat (same fix as
+  // webhooks/routes.ts): scoped by channel_id, reopens done/snoozed
+  // chats, and retries on a lost race (migration 16 unique index).
+  const lookupLatest = () =>
+    queryOne<{ id: string; status: string }>(
+      workspaceId,
+      `SELECT id, status FROM conversations
+       WHERE workspace_id = $1 AND customer_id = $2 AND channel_id IS NOT DISTINCT FROM $3
+       ORDER BY updated_at DESC LIMIT 1`,
+      [workspaceId, customerId, channelId],
+    );
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const latest = await lookupLatest();
+    if (latest?.status === 'open') return latest.id;
+    if (latest) {
+      try {
+        const { rows } = await query<{ id: string }>(
+          workspaceId,
+          `UPDATE conversations SET status = 'open', snooze_until = NULL, updated_at = now()
+           WHERE workspace_id = $1 AND id = $2 AND status <> 'open'
+             AND NOT EXISTS (
+               SELECT 1 FROM conversations
+               WHERE workspace_id = $1 AND customer_id = $3
+                 AND channel_id IS NOT DISTINCT FROM $4 AND status = 'open'
+             )
+           RETURNING id`,
+          [workspaceId, latest.id, customerId, channelId],
+        );
+        if (rows[0]) return rows[0].id;
+      } catch (err) {
+        const code = (err as { code?: string }).code ?? '';
+        const msg = (err as Error).message ?? '';
+        if (code !== '23505' && !msg.includes('duplicate key')) throw err;
+      }
+      continue;
+    }
+    const { rows } = await query<{ id: string }>(
+      workspaceId,
+      `INSERT INTO conversations (workspace_id, channel_id, customer_id, status, mode)
+       VALUES ($1, $2, $3, 'open', 'ai') ON CONFLICT DO NOTHING RETURNING id`,
+      [workspaceId, channelId, customerId],
+    );
+    if (rows[0]) return rows[0].id;
+  }
+  const fallback = await lookupLatest();
+  if (fallback) return fallback.id;
+  throw new Error('findOrCreateConversation: could not create or find a conversation');
 }
 
 async function saveIncomingMessage(

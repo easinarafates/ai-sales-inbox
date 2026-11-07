@@ -231,7 +231,12 @@ export async function countUsedReplies(workspaceId: string, periodStart: string)
 export async function countChannels(workspaceId: string): Promise<number> {
   const row = await queryOne<{ n: string }>(
     workspaceId,
-    `SELECT COUNT(*)::text AS n FROM channels WHERE workspace_id = $1 AND status = 'connected'`,
+    // facebook_comment is the comment leg of a connected Facebook Page
+    // (same Page, same token — the Channels page shows it under the one
+    // Facebook card), not a second channel the shop connected, so it
+    // never consumes a subscription channel slot.
+    `SELECT COUNT(*)::text AS n FROM channels
+     WHERE workspace_id = $1 AND status = 'connected' AND platform <> 'facebook_comment'`,
     [workspaceId],
   );
   return Number(row?.n ?? 0);

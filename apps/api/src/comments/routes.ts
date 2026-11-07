@@ -2,6 +2,7 @@ import { Router, type Response } from 'express';
 import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
+import { deliverOutgoingMessage } from '../channels/meta-send';
 import { recordAttributionForPlatformPost } from '../analytics/attribution';
 
 /**
@@ -72,9 +73,13 @@ commentsRouter.post('/comments', async (req: AuthRequest, res: Response) => {
 
 /**
  * POST /api/comments/:id/answer {text} — answer without needing a linked
- * chat: marks the comment answered and stores the reply. When a linked
- * conversation exists (webhook-saved message), the reply is also posted
- * there as an outbound message, as before.
+ * chat. When a linked conversation exists, the reply is delivered for
+ * real via deliverOutgoingMessage (a Facebook comment reply on
+ * facebook_comment conversations, a Messenger/IG DM otherwise); a failed
+ * delivery returns 502 and the comment is NOT marked answered, so the
+ * inbox never pretends a reply went out. Hand-logged comments with no
+ * linked Facebook comment are saved in the inbox only (delivered: false
+ * says so honestly).
  */
 commentsRouter.post('/comments/:id/answer', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -102,17 +107,29 @@ commentsRouter.post('/comments/:id/answer', async (req: AuthRequest, res: Respon
       )
     : null;
   if (msg) {
-    await query(
+    const delivery = await deliverOutgoingMessage(workspaceId, msg.conversation_id, text.trim());
+    if (!delivery.sent) {
+      res.status(502).json({
+        error: `Reply could not be delivered: ${delivery.error ?? 'unknown error'}`,
+        reason: delivery.error ?? 'send_failed',
+        comment,
+        conversationId: msg.conversation_id,
+      });
+      return;
+    }
+    const { rows } = await query<CommentRow>(
       workspaceId,
-      `INSERT INTO messages (workspace_id, conversation_id, direction, type, body, platform_message_id)
-       VALUES ($1, $2, 'out', 'text', $3, NULL)`,
-      [workspaceId, msg.conversation_id, text.trim()],
+      `UPDATE comments SET replied = TRUE, status = 'answered', reply_text = $1, updated_at = now()
+       WHERE workspace_id = $2 AND id = $3 RETURNING ${COMMENT_COLUMNS}`,
+      [text.trim(), workspaceId, req.params.id],
     );
-    await query(
-      workspaceId,
-      'UPDATE conversations SET updated_at = now() WHERE workspace_id = $1 AND id = $2',
-      [workspaceId, msg.conversation_id],
-    );
+    res.json({
+      comment: rows[0],
+      conversationId: msg.conversation_id,
+      delivered: true,
+      platformMessageId: delivery.platformMessageId ?? null,
+    });
+    return;
   }
   const { rows } = await query<CommentRow>(
     workspaceId,
@@ -120,7 +137,12 @@ commentsRouter.post('/comments/:id/answer', async (req: AuthRequest, res: Respon
      WHERE workspace_id = $2 AND id = $3 RETURNING ${COMMENT_COLUMNS}`,
     [text.trim(), workspaceId, req.params.id],
   );
-  res.json({ comment: rows[0], conversationId: msg?.conversation_id ?? null });
+  res.json({
+    comment: rows[0],
+    conversationId: null,
+    delivered: false,
+    deliveryNote: 'এই কমেন্টের সাথে Facebook-এ কোনো কমেন্ট যুক্ত নেই — উত্তরটি শুধু ইনবক্সে সংরক্ষণ করা হয়েছে।',
+  });
 });
 
 /** POST /api/comments/:id/hide — hide the comment (status 'hidden'). */
@@ -202,9 +224,12 @@ commentsRouter.get('/comments/:postId/carousel', async (req: AuthRequest, res: R
 });
 
 /**
- * POST /api/comments/:id/reply {text} — mark the comment replied and post
- * the reply as an 'out' message in the linked conversation. The comment's
- * conversation is found via the inbound message saved with
+ * POST /api/comments/:id/reply {text} — reply to the comment for real.
+ * The reply is delivered via deliverOutgoingMessage (a Facebook comment
+ * reply on facebook_comment conversations); a failed delivery returns
+ * 502 and the comment is NOT marked answered, so the inbox never
+ * pretends a reply went out.
+ * The comment's conversation is found via the inbound message saved with
  * platform_message_id = the comment's platform_comment_id (see webhooks).
  */
 commentsRouter.post('/comments/:id/reply', async (req: AuthRequest, res: Response) => {
@@ -250,17 +275,22 @@ commentsRouter.post('/comments/:id/reply', async (req: AuthRequest, res: Respons
     conversationId,
     'comment',
   ).catch((err) => console.error('[comments/reply] post attribution failed:', (err as Error).message));
+  // Deliver for real first — only mark answered when Graph accepted it.
+  const delivery = await deliverOutgoingMessage(workspaceId, conversationId, text.trim());
+  if (!delivery.sent) {
+    res.status(502).json({
+      error: `Reply could not be delivered: ${delivery.error ?? 'unknown error'}`,
+      reason: delivery.error ?? 'send_failed',
+      comment,
+      conversationId,
+    });
+    return;
+  }
   await query(
     workspaceId,
     `UPDATE comments SET replied = TRUE, status = 'answered', reply_text = $1, updated_at = now()
      WHERE workspace_id = $2 AND id = $3`,
     [text.trim(), workspaceId, req.params.id],
-  );
-  await query(
-    workspaceId,
-    `INSERT INTO messages (workspace_id, conversation_id, direction, type, body, platform_message_id)
-     VALUES ($1, $2, 'out', 'text', $3, NULL)`,
-    [workspaceId, conversationId, text.trim()],
   );
   await query(
     workspaceId,
@@ -272,5 +302,10 @@ commentsRouter.post('/comments/:id/reply', async (req: AuthRequest, res: Respons
     `SELECT ${COMMENT_COLUMNS} FROM comments WHERE workspace_id = $1 AND id = $2`,
     [workspaceId, req.params.id],
   );
-  res.json({ comment: updated ?? comment, conversationId });
+  res.json({
+    comment: updated ?? comment,
+    conversationId,
+    delivered: true,
+    platformMessageId: delivery.platformMessageId ?? null,
+  });
 });

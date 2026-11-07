@@ -78,8 +78,8 @@ export default function SetupPage() {
 
   return (
     <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("setupTitle", "Setup wizard", "সেটআপ উইজার্ড")}</h1>
-      <p className="text-sm text-slate-500 mb-4">{t("setupSub", "Seven steps to get your shop live.", "দোকান লাইভ করতে সাতটি ধাপ।")}</p>
+      <h1 className="page-title">{t("setupTitle", "Setup wizard", "সেটআপ উইজার্ড")}</h1>
+      <p className="page-subtitle">{t("setupSub", "Seven steps to get your shop live.", "দোকান লাইভ করতে সাতটি ধাপ।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {loading ? (
         <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>

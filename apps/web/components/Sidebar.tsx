@@ -28,6 +28,7 @@ const NAV: NavItem[] = [
   { href: "/schedule", key: "nav.schedule", labelEn: "Schedule", labelBn: "শিডিউল" },
   { href: "/leads", key: "nav.leads", labelEn: "Leads", labelBn: "লিড" },
   { href: "/analytics", key: "nav.analytics", labelEn: "Analytics", labelBn: "অ্যানালিটিক্স" },
+  { href: "/post-analysis", key: "nav.postAnalysis", labelEn: "Post analysis", labelBn: "পোস্ট বিশ্লেষণ" },
   { href: "/teach", key: "nav.teach", labelEn: "Teach AI", labelBn: "শেখানো" },
   { href: "/broadcasts", key: "nav.broadcasts", labelEn: "Broadcasts", labelBn: "ব্রডকাস্ট" },
   { href: "/bookings", key: "nav.bookings", labelEn: "Bookings", labelBn: "বুকিং" },
