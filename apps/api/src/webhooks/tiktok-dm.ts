@@ -185,8 +185,10 @@ async function findChannelByExternalId(
   platform: string,
   externalId: string,
 ): Promise<{ id: string; workspace_id: string } | null> {
+  // Only a CONNECTED channel may receive webhooks (same reason as
+  // webhooks/routes.ts: a disconnected duplicate must not win).
   const { rows } = await pool.query(
-    'SELECT id, workspace_id FROM channels WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT 1',
+    "SELECT id, workspace_id FROM channels WHERE platform = $1 AND external_id = $2 AND status = 'connected' ORDER BY created_at DESC LIMIT 1",
     [platform, externalId],
   );
   return (rows[0] as { id: string; workspace_id: string } | undefined) ?? null;

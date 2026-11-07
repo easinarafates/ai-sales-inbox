@@ -185,8 +185,12 @@ async function findChannelByExternalId(
   platform: string,
   externalId: string,
 ): Promise<{ id: string; workspace_id: string; token_encrypted: string | null; user_token_encrypted: string | null; external_id: string; source_id: string | null } | null> {
+  // Only a CONNECTED channel may receive webhooks: a workspace whose
+  // channel was disconnected (e.g. the same Page connected in two
+  // workspaces — Halal Chic) must stop receiving that Page's events,
+  // otherwise the newest row wins and messages split across workspaces.
   const { rows } = await pool.query(
-    'SELECT id, workspace_id, token_encrypted, user_token_encrypted, external_id, source_id FROM channels WHERE platform = $1 AND external_id = $2 ORDER BY created_at DESC LIMIT 1',
+    "SELECT id, workspace_id, token_encrypted, user_token_encrypted, external_id, source_id FROM channels WHERE platform = $1 AND external_id = $2 AND status = 'connected' ORDER BY created_at DESC LIMIT 1",
     [platform, externalId],
   );
   return (rows[0] as { id: string; workspace_id: string; token_encrypted: string | null; user_token_encrypted: string | null; external_id: string; source_id: string | null } | undefined) ?? null;
@@ -378,6 +382,14 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       const pageId = String(entry.id ?? '');
       const channel = await findChannelByExternalId('facebook_comment', pageId);
       if (!channel || !commentId) continue;
+      // The Page's own comments/replies come back through this same feed
+      // webhook (from.id == the Page id): the AI's reply to a comment is
+      // delivered as a new comment event from the Page itself. It must
+      // never become a customer ("Halal Chic" talking to itself) or a
+      // conversation — skip it entirely, before the dedup record and
+      // before the comments table, so it can never trigger an AI reply
+      // to the Page's own words.
+      if (senderId === pageId) continue;
       if (!(await recordWebhookEvent(channel.workspace_id, 'facebook_comment', commentId, value))) continue;
       await query(
         channel.workspace_id,
