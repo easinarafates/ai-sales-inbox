@@ -80,6 +80,33 @@ export const en: Record<string, string> = {
   "nav.ai-providers": "AI Providers",
   "nav.logout": "Log out",
 
+  // ---- Sidebar sections ----
+  "nav.sectionShop": "Shop",
+  "nav.sectionPosts": "Posts & Analytics",
+  "nav.sectionTeach": "Teach AI",
+  "nav.sectionHelp": "Help",
+  "nav.sectionSettings": "Settings",
+  "nav.postAnalysis": "Post analysis",
+  "nav.owner": "Owner Panel",
+
+  // ---- Header Profile menu ----
+  "profile.title": "Profile",
+  "profile.shop": "Shop",
+  "profile.plan": "Plan",
+  "profile.trial": "Trial",
+  "profile.trialEnds": "Trial ends",
+  "profile.balance": "Balance",
+  "profile.changePhoto": "Change photo",
+  "profile.removePhoto": "Remove photo",
+  "profile.uploading": "Uploading…",
+  "profile.photoTooLarge": "Each photo must be 25 MB or smaller.",
+  "profile.photoUploadFailed": "Could not upload the photo.",
+  "profile.photoRemoveFailed": "Could not remove the photo.",
+  "profile.login": "Log in",
+  "profile.logout": "Log out",
+  "profile.openMenu": "Open profile menu",
+  "profile.notLoggedIn": "Not logged in",
+
   // ---- AI Providers ----
   "aiProvConnected": "Connected",
   "aiProvBlocked": "Blocked",
@@ -1246,6 +1273,33 @@ export const bn: Record<string, string> = {
   "nav.guide": "গাইড",
   "nav.ai-providers": "AI প্রোভাইডার",
   "nav.logout": "লগআউট",
+
+  // ---- Sidebar sections ----
+  "nav.sectionShop": "দোকান",
+  "nav.sectionPosts": "পোস্ট ও বিশ্লেষণ",
+  "nav.sectionTeach": "AI শেখানো",
+  "nav.sectionHelp": "সাহায্য",
+  "nav.sectionSettings": "সেটিংস",
+  "nav.postAnalysis": "পোস্ট বিশ্লেষণ",
+  "nav.owner": "ওনার প্যানেল",
+
+  // ---- Header Profile menu ----
+  "profile.title": "প্রোফাইল",
+  "profile.shop": "দোকান",
+  "profile.plan": "প্ল্যান",
+  "profile.trial": "ট্রায়াল",
+  "profile.trialEnds": "ট্রায়াল শেষ",
+  "profile.balance": "ব্যালেন্স",
+  "profile.changePhoto": "ছবি বদলান",
+  "profile.removePhoto": "ছবি সরান",
+  "profile.uploading": "আপলোড হচ্ছে…",
+  "profile.photoTooLarge": "ছবি ২৫ MB-এর বেশি হতে পারবে না।",
+  "profile.photoUploadFailed": "ছবি আপলোড করা যায়নি।",
+  "profile.photoRemoveFailed": "ছবি সরানো যায়নি।",
+  "profile.login": "লগইন",
+  "profile.logout": "লগআউট",
+  "profile.openMenu": "প্রোফাইল মেনু খুলুন",
+  "profile.notLoggedIn": "লগইন করা নেই",
 
   // ---- AI Providers ----
   "aiProvConnected": "যুক্ত আছে",

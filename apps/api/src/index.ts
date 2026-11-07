@@ -4,7 +4,7 @@ import cors from 'cors';
 import express from 'express';
 import { config } from './config';
 import { isPgliteMode } from './db/pglite';
-import { authRouter, workspacesRouter } from './auth/routes';
+import { authRouter, profileRouter, workspacesRouter } from './auth/routes';
 import { billingRouter } from './billing/routes';
 import { channelsRouter } from './channels/routes';
 import { facebookOAuthRouter } from './channels/facebook-oauth';
@@ -109,6 +109,7 @@ app.use('/api', websiteChatRouter); // /api/website-chat/* (widget.js + message 
 app.use('/api/owner', ownerRouter); // /api/owner/* (Owner Panel — platform owner only)
 
 app.use('/api/auth', authRouter);
+app.use('/api/profile', profileRouter); // /api/profile/{upload-token,photo} (header Profile menu photo)
 app.use('/api/workspaces', workspacesRouter); // POST /api/workspaces/:id/go-live
 // Facebook OAuth MUST mount before the /api/channels router below: the
 // channels router applies requireAuth to every path, which would 401 the

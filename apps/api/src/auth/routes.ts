@@ -1,8 +1,12 @@
 import bcrypt from 'bcryptjs';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
 import { Router, type Response } from 'express';
+import { del, put } from '@vercel/blob';
+import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { config } from '../config';
-import { pool, queryOne } from '../db/pool';
+import { pool, query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth, signToken } from './auth';
 
@@ -243,9 +247,9 @@ authRouter.post('/reset-password', async (req: AuthRequest, res: Response) => {
 
 authRouter.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
-  const user = await queryOne<{ id: string; email: string; name: string | null }>(
+  const user = await queryOne<{ id: string; email: string; name: string | null; avatar_url: string | null }>(
     workspaceId,
-    'SELECT id, email, name FROM users WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, email, name, avatar_url FROM users WHERE workspace_id = $1 AND id = $2',
     [workspaceId, req.userId],
   );
   const workspace = await queryOne<{
@@ -263,7 +267,32 @@ authRouter.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
     res.status(404).json({ error: 'User or workspace not found' });
     return;
   }
-  res.json({ user, workspace });
+  // Current plan / trial (if any) — the header Profile menu shows it.
+  // A workspace without a subscription row simply gets subscription: null.
+  const subscription = await queryOne<{
+    plan_name: string | null;
+    plan_slug: string | null;
+    status: string | null;
+    current_period_end: string | null;
+  }>(
+    workspaceId,
+    `SELECT p.name_bn AS plan_name, p.slug AS plan_slug, s.status, s.current_period_end
+     FROM workspace_subscriptions s JOIN plans p ON p.id = s.plan_id
+     WHERE s.workspace_id = $1 ORDER BY s.created_at DESC LIMIT 1`,
+    [workspaceId],
+  );
+  res.json({
+    user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatar_url ?? null },
+    workspace,
+    subscription: subscription
+      ? {
+          planName: subscription.plan_name,
+          planSlug: subscription.plan_slug,
+          status: subscription.status,
+          periodEnd: subscription.current_period_end,
+        }
+      : null,
+  });
 });
 
 /**
@@ -282,4 +311,214 @@ workspacesRouter.post('/:id/go-live', requireAuth, async (req: AuthRequest, res:
     [workspaceId],
   );
   res.json({ workspace: rows[0] });
+});
+
+/**
+ * Profile photo — the header Profile menu (POST /api/profile/photo).
+ *
+ * Storage follows the product-photo pattern (no new storage path):
+ * - Vercel: the browser uploads straight to Vercel Blob via a client
+ *   token (POST /api/profile/upload-token + @vercel/blob/client), then
+ *   registers the Blob URL with POST /api/profile/photo {url}. This
+ *   bypasses the API function's 4.5 MB request-body cap.
+ * - Fallback (local dev / no Blob token): POST /api/profile/photo also
+ *   accepts a base64 file ({fileBase64, fileName, mimeType}); on Vercel
+ *   it goes to Blob, locally to disk under uploads/ (same limitation as
+ *   scheduled-post media: local disk URLs need an auth token to view).
+ * - The URL is stored on users.avatar_url (migration 21). NULL means
+ *   "no photo yet" and the header shows the user's initials instead —
+ *   a photo is never invented.
+ * - Limits: one photo per user, images only, at most 25 MB.
+ */
+const MAX_PROFILE_PHOTO_BYTES = 25 * 1024 * 1024; // 25 MB
+const PROFILE_IMAGE_MIMES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+const PROFILE_IMAGE_MIME_EXT: Record<string, string> = {
+  'image/jpeg': '.jpg',
+  'image/png': '.png',
+  'image/gif': '.gif',
+  'image/webp': '.webp',
+};
+const PROFILE_IMAGE_URL_EXT = /\.(jpe?g|png|gif|webp)(\?.*)?$/i;
+
+const PROFILE_UPLOAD_DIR = path.resolve(process.cwd(), 'uploads');
+if (!process.env.VERCEL) {
+  fs.mkdirSync(PROFILE_UPLOAD_DIR, { recursive: true });
+}
+
+export const profileRouter = Router();
+profileRouter.use(requireAuth);
+
+/**
+ * POST /api/profile/upload-token — client token for direct
+ * browser→Vercel Blob upload (Vercel only). Same shape as the
+ * product-photo token route, images only. Locally (no
+ * BLOB_READ_WRITE_TOKEN) this returns 503 and the web falls back to
+ * the base64 /api/profile/photo endpoint.
+ */
+profileRouter.post('/upload-token', async (req: AuthRequest, res: Response) => {
+  if (!process.env.BLOB_READ_WRITE_TOKEN) {
+    res.status(503).json({ error: 'Blob storage is not configured (BLOB_READ_WRITE_TOKEN missing)' });
+    return;
+  }
+  try {
+    const jsonResponse = await handleUpload({
+      body: req.body as HandleUploadBody,
+      request: req as unknown as Request,
+      onBeforeGenerateToken: async () => ({
+        allowedContentTypes: PROFILE_IMAGE_MIMES,
+        maximumSizeInBytes: MAX_PROFILE_PHOTO_BYTES,
+        addRandomSuffix: true,
+      }),
+      onUploadCompleted: async ({ blob }) => {
+        console.log('[blob] profile photo upload completed:', blob.url);
+      },
+    });
+    res.status(200).json(jsonResponse);
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+/**
+ * POST /api/profile/photo — set the logged-in user's profile photo.
+ * Body (one of the two):
+ * - { url } — an already-uploaded image URL (e.g. a public Blob URL
+ *   from the direct browser→Blob upload via POST /api/profile/upload-token).
+ * - { fileBase64, fileName?, mimeType? } — a base64 image (data: URL or
+ *   raw base64); stored in Blob on Vercel, on disk locally.
+ * Images only (jpeg/png/gif/webp), at most 25 MB. Returns the user
+ * with the new avatarUrl.
+ */
+profileRouter.post('/photo', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { url, fileBase64, fileName, mimeType } = (req.body ?? {}) as {
+    url?: string;
+    fileBase64?: string;
+    fileName?: string;
+    mimeType?: string;
+  };
+
+  let finalUrl: string | null = null;
+
+  if (typeof url === 'string' && url.trim()) {
+    const trimmed = url.trim();
+    if (trimmed.length > 2048) {
+      res.status(400).json({ error: 'ছবির লিংকটি অনেক বড়' });
+      return;
+    }
+    let parsed: URL;
+    try {
+      parsed = new URL(trimmed);
+    } catch {
+      res.status(400).json({ error: 'ছবির লিংকটি সঠিক নয় (invalid URL)' });
+      return;
+    }
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+      res.status(400).json({ error: 'ছবির লিংক http(s) হতে হবে' });
+      return;
+    }
+    const declaredMime = typeof mimeType === 'string' ? mimeType.trim() : '';
+    if (!PROFILE_IMAGE_URL_EXT.test(parsed.pathname) && !PROFILE_IMAGE_MIMES.includes(declaredMime)) {
+      res.status(400).json({ error: 'শুধু ছবির লিংক (jpg/png/gif/webp) দেওয়া যায়' });
+      return;
+    }
+    finalUrl = parsed.toString();
+  } else if (typeof fileBase64 === 'string' && fileBase64.trim() !== '') {
+    let mime = typeof mimeType === 'string' ? mimeType.trim() : '';
+    let b64 = fileBase64.trim();
+    const dataUrlMatch = b64.match(/^data:([^;,]+);base64,(.+)$/);
+    if (dataUrlMatch) {
+      mime = dataUrlMatch[1];
+      b64 = dataUrlMatch[2];
+    }
+    if (!PROFILE_IMAGE_MIMES.includes(mime)) {
+      res.status(400).json({ error: 'শুধু ছবি (jpg/png/gif/webp) আপলোড করা যায়' });
+      return;
+    }
+    const ext = PROFILE_IMAGE_MIME_EXT[mime];
+    if (!/^[A-Za-z0-9+/=\s]+$/.test(b64)) {
+      res.status(400).json({ error: 'fileBase64 সঠিক base64 নয়' });
+      return;
+    }
+    const buf = Buffer.from(b64.replace(/\s/g, ''), 'base64');
+    if (buf.length === 0) {
+      res.status(400).json({ error: 'খালি ফাইল আপলোড করা যাবে না' });
+      return;
+    }
+    if (buf.length > MAX_PROFILE_PHOTO_BYTES) {
+      res.status(400).json({ error: 'ছবি 25 MB-এর বেশি হতে পারবে না (max 25 MB)' });
+      return;
+    }
+    const stored = `profile-${crypto.randomUUID()}${ext}`;
+    // Vercel: store in Blob (public URL). The API function has a 4.5 MB
+    // request-body cap, so large files should use the direct
+    // browser→Blob path (/api/profile/upload-token) instead.
+    if (process.env.BLOB_READ_WRITE_TOKEN) {
+      try {
+        const blob = await put(stored, buf, { access: 'public', contentType: mime });
+        finalUrl = blob.url;
+      } catch (err) {
+        res.status(500).json({ error: `ছবি সংরক্ষণ করা যায়নি: ${(err as Error).message}` });
+        return;
+      }
+    } else {
+      // Local / cPanel fallback: disk storage under uploads/.
+      try {
+        fs.writeFileSync(path.join(PROFILE_UPLOAD_DIR, stored), buf);
+      } catch (err) {
+        res.status(500).json({ error: `ছবি সংরক্ষণ করা যায়নি: ${(err as Error).message}` });
+        return;
+      }
+      finalUrl = `/api/uploads/${stored}`;
+    }
+    void fileName; // original name is not kept (random UUID name instead)
+  } else {
+    res.status(400).json({ error: 'url বা fileBase64 — একটি দিতে হবে' });
+    return;
+  }
+
+  const { rows } = await query<{ id: string; email: string; name: string | null; avatar_url: string | null }>(
+    workspaceId,
+    `UPDATE users SET avatar_url = $1, updated_at = now()
+     WHERE workspace_id = $2 AND id = $3
+     RETURNING id, email, name, avatar_url`,
+    [finalUrl, workspaceId, req.userId],
+  );
+  const user = rows[0];
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  res.json({ user: { id: user.id, email: user.email, name: user.name, avatarUrl: user.avatar_url ?? null } });
+});
+
+/**
+ * DELETE /api/profile/photo — remove the logged-in user's profile
+ * photo (back to the initials avatar). The DB row is always cleared;
+ * the Blob object is deleted best-effort (a Blob failure never fails
+ * the request).
+ */
+profileRouter.delete('/photo', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { rows } = await query<{ id: string; email: string; name: string | null; avatar_url: string | null }>(
+    workspaceId,
+    `UPDATE users SET avatar_url = NULL, updated_at = now()
+     WHERE workspace_id = $1 AND id = $2
+     RETURNING id, email, name, avatar_url`,
+    [workspaceId, req.userId],
+  );
+  const user = rows[0];
+  if (!user) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  const oldUrl = (req.body as { url?: string } | undefined)?.url;
+  if (process.env.BLOB_READ_WRITE_TOKEN && typeof oldUrl === 'string' && oldUrl.includes('blob.vercel-storage.com')) {
+    try {
+      await del(oldUrl);
+    } catch (err) {
+      console.warn('[profile] Blob delete failed (avatar already cleared):', (err as Error).message);
+    }
+  }
+  res.json({ user: { id: user.id, email: user.email, name: user.name, avatarUrl: null } });
 });

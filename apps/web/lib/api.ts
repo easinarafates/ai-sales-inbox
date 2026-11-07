@@ -100,6 +100,16 @@ export interface User {
   name?: string;
   email: string;
   role?: string;
+  /** Profile photo URL (users.avatar_url) — null means "no photo yet". */
+  avatarUrl?: string | null;
+}
+
+/** Current plan / trial for the workspace (GET /api/auth/me). */
+export interface SubscriptionInfo {
+  planName?: string | null;
+  planSlug?: string | null;
+  status?: string | null;
+  periodEnd?: string | null;
 }
 
 export interface Workspace {
@@ -370,7 +380,48 @@ export const authApi = {
   /** Finish a reset with the token from the emailed link. */
   resetPassword: (body: { token: string; password: string }) =>
     api.post<{ message: string }>("/api/auth/reset-password", body),
-  me: () => api.get<{ user: User; workspace: Workspace }>("/api/auth/me"),
+  me: () => api.get<{ user: User; workspace: Workspace; subscription: SubscriptionInfo | null }>("/api/auth/me"),
+};
+
+/** Header Profile menu — the logged-in user's photo (users.avatar_url). */
+export const profileApi = {
+  /** Set the profile photo. Same Blob pattern as product photos. */
+  uploadPhoto: async (file: File) => {
+    let blobUrl: string | null = null;
+    try {
+      const { upload } = await import("@vercel/blob/client");
+      const token = getToken();
+      const blob = await upload(file.name, file, {
+        access: "public",
+        handleUploadUrl: `${API_URL}/api/profile/upload-token`,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      blobUrl = blob.url;
+    } catch {
+      // Blob unavailable (no Blob token locally) — fall through to base64.
+    }
+    if (blobUrl) {
+      const data = await api.post<{ user: User }>("/api/profile/photo", { url: blobUrl });
+      return data.user;
+    }
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("Could not read the file."));
+      reader.readAsDataURL(file);
+    });
+    const data = await api.post<{ user: User }>("/api/profile/photo", {
+      fileBase64: dataUrl,
+      fileName: file.name,
+      mimeType: file.type,
+    });
+    return data.user;
+  },
+  /** Remove the profile photo (back to the initials avatar). */
+  removePhoto: async () => {
+    const data = await api.del<{ user: User }>("/api/profile/photo");
+    return data.user;
+  },
 };
 
 export const inboxApi = {

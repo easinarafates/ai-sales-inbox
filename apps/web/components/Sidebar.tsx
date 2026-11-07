@@ -7,34 +7,69 @@ import { ownerApi } from "@/lib/api-owner";
 import { useI18n } from "@/lib/i18n";
 import { EXTRA_NAV, type ExtraNavItem } from "@/components/NavExtra";
 
+type SectionId = "shop" | "posts" | "teach" | "help" | "settings";
+
 type NavItem = {
   href: string;
   key: string;
   labelEn: string;
   labelBn: string;
+  section: SectionId;
 };
 
+/**
+ * Sidebar sections — every menu item lives in exactly one section, and
+ * each section has its own accent colour (dot + label) so the menu is
+ * scannable at a glance instead of one flat coral list. The coral
+ * #ff6a4d brand stays the active-item colour; the section colours only
+ * mark the groups. No page was removed or renamed — this is regrouping
+ * + visual distinction only.
+ *
+ * - Shop (দোকান, teal): the daily shop work — inbox, products, orders,
+ *   customers, channels, coupons, leads, bookings, courier.
+ * - Posts & Analytics (পোস্ট ও বিশ্লেষণ, coral): schedule, post analysis,
+ *   analytics, comments, broadcasts, reviews.
+ * - Teach AI (AI শেখানো, violet): teach, saved replies, agent desk,
+ *   AI providers, website chat.
+ * - Help (সাহায্য, sky): tickets, billing, plans, guide, feature requests.
+ * - Settings (সেটিংস, amber): setup, team, migration, owner panel.
+ */
+const SECTIONS: {
+  id: SectionId;
+  key: string;
+  labelEn: string;
+  labelBn: string;
+  labelClass: string;
+  dotClass: string;
+}[] = [
+  { id: "shop", key: "nav.sectionShop", labelEn: "Shop", labelBn: "দোকান", labelClass: "text-teal-700", dotClass: "bg-teal-500" },
+  { id: "posts", key: "nav.sectionPosts", labelEn: "Posts & Analytics", labelBn: "পোস্ট ও বিশ্লেষণ", labelClass: "text-brand", dotClass: "bg-brand" },
+  { id: "teach", key: "nav.sectionTeach", labelEn: "Teach AI", labelBn: "AI শেখানো", labelClass: "text-violet-700", dotClass: "bg-violet-500" },
+  { id: "help", key: "nav.sectionHelp", labelEn: "Help", labelBn: "সাহায্য", labelClass: "text-sky-700", dotClass: "bg-sky-500" },
+  { id: "settings", key: "nav.sectionSettings", labelEn: "Settings", labelBn: "সেটিংস", labelClass: "text-amber-700", dotClass: "bg-amber-500" },
+];
+
 const NAV: NavItem[] = [
-  { href: "/inbox", key: "nav.inbox", labelEn: "Inbox", labelBn: "ইনবক্স" },
-  { href: "/products", key: "nav.products", labelEn: "Products", labelBn: "প্রোডাক্ট" },
-  { href: "/orders", key: "nav.orders", labelEn: "Orders", labelBn: "অর্ডার" },
-  { href: "/tickets", key: "nav.tickets", labelEn: "Tickets", labelBn: "টিকেট" },
-  { href: "/billing", key: "nav.billing", labelEn: "Billing", labelBn: "বিলিং" },
-  { href: "/plans", key: "nav.plans", labelEn: "Plans", labelBn: "প্ল্যান" },
-  { href: "/courier", key: "nav.courier", labelEn: "Courier", labelBn: "কুরিয়ার" },
-  { href: "/channels", key: "nav.channels", labelEn: "Channels", labelBn: "চ্যানেল" },
-  { href: "/coupons", key: "nav.coupons", labelEn: "Coupons", labelBn: "কুপন" },
-  { href: "/customers", key: "nav.customers", labelEn: "Customers", labelBn: "কাস্টমার" },
-  { href: "/schedule", key: "nav.schedule", labelEn: "Schedule", labelBn: "শিডিউল" },
-  { href: "/leads", key: "nav.leads", labelEn: "Leads", labelBn: "লিড" },
-  { href: "/analytics", key: "nav.analytics", labelEn: "Analytics", labelBn: "অ্যানালিটিক্স" },
-  { href: "/post-analysis", key: "nav.postAnalysis", labelEn: "Post analysis", labelBn: "পোস্ট বিশ্লেষণ" },
-  { href: "/teach", key: "nav.teach", labelEn: "Teach AI", labelBn: "শেখানো" },
-  { href: "/broadcasts", key: "nav.broadcasts", labelEn: "Broadcasts", labelBn: "ব্রডকাস্ট" },
-  { href: "/bookings", key: "nav.bookings", labelEn: "Bookings", labelBn: "বুকিং" },
-  { href: "/reviews", key: "nav.reviews", labelEn: "Reviews", labelBn: "রিভিউ" },
-  { href: "/migration", key: "nav.migration", labelEn: "Migration", labelBn: "মাইগ্রেশন" },
-  { href: "/feature-requests", key: "nav.feature-requests", labelEn: "Feature Requests", labelBn: "অনুরোধ" },
+  { href: "/inbox", key: "nav.inbox", labelEn: "Inbox", labelBn: "ইনবক্স", section: "shop" },
+  { href: "/products", key: "nav.products", labelEn: "Products", labelBn: "প্রোডাক্ট", section: "shop" },
+  { href: "/orders", key: "nav.orders", labelEn: "Orders", labelBn: "অর্ডার", section: "shop" },
+  { href: "/customers", key: "nav.customers", labelEn: "Customers", labelBn: "কাস্টমার", section: "shop" },
+  { href: "/channels", key: "nav.channels", labelEn: "Channels", labelBn: "চ্যানেল", section: "shop" },
+  { href: "/coupons", key: "nav.coupons", labelEn: "Coupons", labelBn: "কুপন", section: "shop" },
+  { href: "/leads", key: "nav.leads", labelEn: "Leads", labelBn: "লিড", section: "shop" },
+  { href: "/bookings", key: "nav.bookings", labelEn: "Bookings", labelBn: "বুকিং", section: "shop" },
+  { href: "/courier", key: "nav.courier", labelEn: "Courier", labelBn: "কুরিয়ার", section: "shop" },
+  { href: "/schedule", key: "nav.schedule", labelEn: "Schedule", labelBn: "শিডিউল", section: "posts" },
+  { href: "/post-analysis", key: "nav.postAnalysis", labelEn: "Post analysis", labelBn: "পোস্ট বিশ্লেষণ", section: "posts" },
+  { href: "/analytics", key: "nav.analytics", labelEn: "Analytics", labelBn: "অ্যানালিটিক্স", section: "posts" },
+  { href: "/broadcasts", key: "nav.broadcasts", labelEn: "Broadcasts", labelBn: "ব্রডকাস্ট", section: "posts" },
+  { href: "/reviews", key: "nav.reviews", labelEn: "Reviews", labelBn: "রিভিউ", section: "posts" },
+  { href: "/teach", key: "nav.teach", labelEn: "Teach AI", labelBn: "শেখানো", section: "teach" },
+  { href: "/tickets", key: "nav.tickets", labelEn: "Tickets", labelBn: "টিকেট", section: "help" },
+  { href: "/billing", key: "nav.billing", labelEn: "Billing", labelBn: "বিলিং", section: "help" },
+  { href: "/plans", key: "nav.plans", labelEn: "Plans", labelBn: "প্ল্যান", section: "help" },
+  { href: "/feature-requests", key: "nav.feature-requests", labelEn: "Feature Requests", labelBn: "অনুরোধ", section: "help" },
+  { href: "/migration", key: "nav.migration", labelEn: "Migration", labelBn: "মাইগ্রেশন", section: "settings" },
 ];
 
 /** Slug for an extra nav item, used as its dictionary key: nav.<slug>. */
@@ -44,6 +79,11 @@ function extraSlug(item: ExtraNavItem): string {
     .filter(Boolean)
     .join("-");
   return slug || "home";
+}
+
+/** Extra items without an explicit section fall back to Settings. */
+function extraSection(item: ExtraNavItem): SectionId {
+  return item.section ?? "settings";
 }
 
 export default function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: boolean; onClose?: () => void }) {
@@ -61,6 +101,33 @@ export default function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: 
   const logout = () => {
     clearToken();
     router.push("/login");
+  };
+
+  const isActive = (href: string) => pathname === href || pathname.startsWith(href + "/");
+
+  const renderItem = (
+    href: string,
+    label: string,
+    section: (typeof SECTIONS)[number],
+    key: string,
+  ) => {
+    const active = isActive(href);
+    return (
+      <Link
+        key={key}
+        href={href}
+        aria-current={active ? "page" : undefined}
+        className={`block rounded-lg px-4 py-2.5 transition-colors ${active ? "bg-brand font-medium text-white shadow-sm" : "text-slate-700 hover:bg-orange-50"}`}
+      >
+        <span className="flex items-center gap-2.5">
+          <span
+            className={`h-1.5 w-1.5 shrink-0 rounded-full ${active ? "bg-white" : `${section.dotClass} opacity-80`}`}
+            aria-hidden="true"
+          />
+          <span className="font-medium">{label}</span>
+        </span>
+      </Link>
+    );
   };
 
   return (
@@ -93,33 +160,35 @@ export default function Sidebar({ mobileOpen = false, onClose }: { mobileOpen?: 
           ×
         </button>
       </div>
-      <nav className="flex-1 space-y-1 overflow-y-auto p-3" onClick={onClose}>
-        {NAV.map((item) => {
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={`block rounded-lg px-4 py-2.5 transition-colors ${active ? "bg-brand font-medium text-white shadow-sm" : "text-slate-700 hover:bg-orange-50"}`}
-            >
-              <span className="font-medium">{t(item.key, item.labelEn, item.labelBn)}</span>
-            </Link>
+      <nav className="flex-1 space-y-4 overflow-y-auto p-3" onClick={onClose}>
+        {SECTIONS.map((section) => {
+          const core = NAV.filter((item) => item.section === section.id);
+          const extras = EXTRA_NAV.filter(
+            (item) => extraSection(item) === section.id && (item.href !== "/owner" || isOwner),
           );
-        })}
-        {EXTRA_NAV.filter((item) => item.href !== "/owner" || isOwner).map((item) => {
-          const active = pathname === item.href || pathname.startsWith(item.href + "/");
+          if (core.length === 0 && extras.length === 0) return null;
           return (
-            <Link
-              key={item.href}
-              href={item.href}
-              aria-current={active ? "page" : undefined}
-              className={`block rounded-lg px-4 py-2.5 transition-colors ${active ? "bg-brand font-medium text-white shadow-sm" : "text-slate-700 hover:bg-orange-50"}`}
-            >
-              <span className="font-medium">
-                {t(`nav.${extraSlug(item)}`, item.labelEn, item.labelBn)}
-              </span>
-            </Link>
+            <div key={section.id}>
+              <p
+                className={`flex items-center gap-2 px-2 pb-1.5 pt-1 text-[11px] font-bold uppercase tracking-wider ${section.labelClass}`}
+              >
+                <span className={`h-2 w-2 shrink-0 rounded-full ${section.dotClass}`} aria-hidden="true" />
+                {t(section.key, section.labelEn, section.labelBn)}
+              </p>
+              <div className="space-y-1">
+                {core.map((item) =>
+                  renderItem(item.href, t(item.key, item.labelEn, item.labelBn), section, item.href),
+                )}
+                {extras.map((item) =>
+                  renderItem(
+                    item.href,
+                    t(`nav.${extraSlug(item)}`, item.labelEn, item.labelBn),
+                    section,
+                    item.href,
+                  ),
+                )}
+              </div>
+            </div>
           );
         })}
       </nav>

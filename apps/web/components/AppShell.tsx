@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { usePathname } from "next/navigation";
 import Sidebar from "@/components/Sidebar";
+import ProfileMenu from "@/components/ProfileMenu";
 import { LanguageToggle, useI18n } from "@/lib/i18n";
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -29,7 +30,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               {t("app.name", "AI Sales Inbox", "AI সেলস ইনবক্স")}
             </p>
           </div>
-          <LanguageToggle />
+          <div className="flex items-center gap-2">
+            <LanguageToggle />
+            <ProfileMenu />
+          </div>
         </header>
         <main className="mx-auto w-full max-w-6xl flex-1 p-4 sm:p-6">{children}</main>
       </div>
