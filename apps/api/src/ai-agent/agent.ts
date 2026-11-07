@@ -623,9 +623,9 @@ export async function processBatch(
 
   const [customer, channel, allowance] = await Promise.all([
     conversation.customer_id
-      ? queryOne<{ id: string; name: string | null; phone: string | null; gender: string | null; channel_identities: unknown }>(
+      ? queryOne<{ id: string; name: string | null; phone: string | null; address: string | null; gender: string | null; channel_identities: unknown }>(
           workspaceId,
-          'SELECT id, name, phone, gender, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+          'SELECT id, name, phone, address, gender, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
           [workspaceId, conversation.customer_id],
         )
       : Promise.resolve(null),
@@ -695,6 +695,7 @@ export async function processBatch(
   const ctx: AgentContext = {
     customerName: customer?.name ?? null,
     customerPhone: customer?.phone ?? null,
+    customerAddress: customer?.address ?? null,
     customerGender,
     history: [...historyRows].reverse(),
     openOrders: openOrders.map((o) => ({ id: o.id, status: o.status, totalPaisa: Number(o.total_paisa) })),

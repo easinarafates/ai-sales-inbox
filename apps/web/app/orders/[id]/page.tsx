@@ -3,8 +3,9 @@ import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
 import { getToken, ordersApi, orderItemsOf, orderTotalPaisa, reviewsApi, type Order } from "@/lib/api";
-import { ORDER_STATUSES, orderStatusLabel, statusBadge } from "@/lib/orderStatus";
+import { ORDER_STATUSES, orderSourceLabel, orderStatusLabel, statusBadge } from "@/lib/orderStatus";
 import { useI18n } from "@/lib/i18n";
+import CustomerAvatar from "@/components/CustomerAvatar";
 
 // Allowed forward flow (Phase 1): pending -> approved -> processing -> ready_to_ship -> in_transit -> delivered
 // on_hold can be set from pending/approved/processing and released back.
@@ -77,6 +78,17 @@ export default function OrderDetailPage() {
   const items = orderItemsOf(order);
   const next = order.status ? NEXT_STEP[order.status] : undefined;
   const pay = order.paymentStatus || order.payment_status;
+  // A-to-Z delivery details: the snapshot taken when the order was created
+  // first (what the customer gave at order time), then the live customer
+  // row. Older orders have neither — show an honest "not provided".
+  const notProvided = t("orders.notProvided", "Not provided", "দেওয়া হয়নি");
+  const custName = order.customer?.name || order.customerName || order.customer_name || "—";
+  const custPhone = order.customer?.phone || order.customerPhone || order.customer_phone || "";
+  const deliveryAddress = order.deliveryAddress || order.delivery_address || order.customer?.address || "";
+  const convId = order.conversationId || order.conversation_id || "";
+  const lineTotal = (it: { quantity?: number; qty?: number; pricePaisa?: number; price_paisa?: number; price?: number }) =>
+    (it.quantity ?? it.qty ?? 1) * (it.pricePaisa ?? it.price_paisa ?? it.price ?? 0);
+  const linesSum = items.reduce((s, it) => s + lineTotal(it), 0);
 
   return (
     <div>
@@ -84,29 +96,51 @@ export default function OrderDetailPage() {
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mt-3">{error}</p>}
       {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mt-3">{notice}</p>}
 
+      {/* Customer & delivery — who ordered, when, how to reach them, where to deliver. */}
+      <div className="card p-6 mt-3">
+        <div className="flex flex-wrap items-start gap-4">
+          <CustomerAvatar name={custName === "—" ? "?" : custName} pictureUrl={order.customer?.picture_url || order.customer?.pictureUrl} sizeClass="h-14 w-14" />
+          <div className="flex-1 min-w-[220px]">
+            <h1 className="text-xl font-bold">{custName}</h1>
+            <p className="text-sm mt-1"><span className="text-slate-500">{t("orders.phoneLabel", "Phone:", "ফোন:")}</span> {custPhone || <span className="text-slate-400">{notProvided}</span>}</p>
+            <p className="text-sm mt-1"><span className="text-slate-500">{t("orders.addressLabel", "Delivery address:", "ডেলিভারি ঠিকানা:")}</span> {deliveryAddress || <span className="text-slate-400">{notProvided}</span>}</p>
+          </div>
+          <div className="text-sm text-slate-600 space-y-1">
+            <p><span className="text-slate-500">{t("orders.orderIdLabel", "Order ID:", "অর্ডার আইডি:")}</span> <span className="font-mono text-xs">{order.id}</span></p>
+            <p><span className="text-slate-500">{t("orders.dateLabel", "Ordered:", "অর্ডারের সময়:")}</span> {fmtDate(order.createdAt || order.created_at)}</p>
+            <p><span className="text-slate-500">{t("orders.sourceLabel", "Channel:", "মাধ্যম:")}</span> {orderSourceLabel(order.source, lang)}</p>
+            {convId && <p><Link href={`/inbox?conversation=${convId}`} className="text-brand-dark underline">{t("orders.viewChat", "View chat in Inbox →", "ইনবক্সে চ্যাট দেখুন →")}</Link></p>}
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
         {/* Bill view */}
         <div className="card p-6">
           <h1 className="text-xl font-bold">{t("orders.bill", "Bill", "বিল")} — {order.orderNumber || order.order_number || order.id.slice(0, 8)}</h1>
           <p className="text-sm text-slate-500 mt-1">{t("orders.billDate", "Date:", "তারিখ:")} {fmtDate(order.createdAt || order.created_at)}</p>
-          <p className="text-sm mt-1">{t("orders.customerLabel", "Customer:", "কাস্টমার:")} {order.customer?.name || "—"}{order.customer?.phone ? ` • ${order.customer.phone}` : ""}</p>
+          <p className="text-sm mt-1">{t("orders.customerLabel", "Customer:", "কাস্টমার:")} {custName}{custPhone ? ` • ${custPhone}` : ` • ${notProvided}`}</p>
           <div className="flex gap-2 mt-3">{statusBadge(order.status, lang)}
             <span className={`text-xs px-2 py-0.5 rounded ${pay === "paid" ? "bg-teal-100 text-teal-800" : "bg-red-100 text-red-800"}`}>{pay === "paid" ? t("orders.paymentPaid", "Paid", "পরিশোধিত") : t("orders.paymentUnpaid", "Unpaid", "অপরিশোধিত")}</span>
           </div>
           <table className="w-full text-sm mt-4">
-            <thead><tr className="table-head border-b text-left text-slate-500"><th className="py-2">{t("orders.thItem", "Item", "আইটেম")}</th><th className="py-2 text-right">{t("orders.thQty", "Quantity", "পরিমাণ")}</th><th className="py-2 text-right">{t("orders.thPrice", "Price", "দাম")}</th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="py-2">{t("orders.thItem", "Item", "আইটেম")}</th><th className="py-2 text-right">{t("orders.thQty", "Quantity", "পরিমাণ")}</th><th className="py-2 text-right">{t("orders.thPrice", "Price", "দাম")}</th><th className="py-2 text-right">{t("orders.thLineTotal", "Line total", "লাইন মোট")}</th></tr></thead>
             <tbody>
-              {items.length === 0 && <tr><td colSpan={3} className="py-3 text-slate-500">{t("orders.noItems", "No item details found.", "কোনো আইটেমের বিবরণ পাওয়া যায়নি।")}</td></tr>}
+              {items.length === 0 && <tr><td colSpan={4} className="py-3 text-slate-500">{t("orders.noItems", "No item details found.", "কোনো আইটেমের বিবরণ পাওয়া যায়নি।")}</td></tr>}
               {items.map((it, i) => (
                 <tr key={it.id || i} className="border-b">
                   <td className="py-2">{it.productName || it.product_name || it.name || it.productId || it.product_id || t("orders.itemFallback", "Item", "আইটেম")}</td>
                   <td className="py-2 text-right">{fmtNum(it.quantity ?? it.qty ?? 1)}</td>
                   <td className="py-2 text-right">{fmtTaka(it.pricePaisa ?? it.price_paisa ?? it.price ?? 0)}</td>
+                  <td className="py-2 text-right">{fmtTaka(lineTotal(it))}</td>
                 </tr>
               ))}
             </tbody>
           </table>
           <p className="text-right font-bold text-lg mt-3">{t("common.total", "Total", "মোট")}: {fmtTaka(orderTotalPaisa(order))}</p>
+          {items.length > 0 && linesSum !== orderTotalPaisa(order) && (
+            <p className="text-right text-xs text-red-600 mt-1">{t("orders.totalMismatch", "Line items add up to a different total — please check.", "আইটেমগুলোর যোগফল মোটের সাথে মিলছে না — দেখে নিন।")}</p>
+          )}
         </div>
 
         {/* Actions */}

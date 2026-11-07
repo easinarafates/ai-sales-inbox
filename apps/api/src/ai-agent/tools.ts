@@ -5,6 +5,7 @@
  * level, discount or delivery time — values come only from the tables.
  */
 import { buildBillText } from '../orders/bill';
+import { resolveOrderContact } from '../orders/contact';
 import { decrementStockForOrderItems } from '../products/stock';
 import { matchProductByImage } from './tools-image-match';
 import { linkOrderToAttribution } from '../analytics/attribution';
@@ -57,12 +58,29 @@ const sendProductCards: ToolFn = async (db, workspaceId, args) => {
   };
 };
 
-/** 3. Create an order. Prices come ONLY from the products table. */
+/** 3. Create an order. Prices come ONLY from the products table.
+ * Delivery contact is REQUIRED: the tool refuses when the customer's phone
+ * or delivery address is missing (it must ask the customer first — never
+ * create the order and never claim the contact is already known). When the
+ * contact is given, it is stored on the customer row AND snapshotted onto
+ * the order (orders.customer_name / customer_phone / delivery_address),
+ * so the Orders page shows A-to-Z who ordered, when, and where to deliver.
+ */
 const createOrder: ToolFn = async (db, workspaceId, args) => {
   const customerId = asString(args.customerId);
   const conversationId = asString(args.conversationId) || null;
   const items = Array.isArray(args.items) ? args.items : [];
   if (!customerId || items.length === 0) return { error: 'create_order needs customerId and items' };
+  // Who is this order for? Refuse without a phone + delivery address.
+  const { contact, error, missingPhone, missingAddress } = await resolveOrderContact(db, workspaceId, customerId, {
+    customerName: args.customerName,
+    customerPhone: args.customerPhone,
+    deliveryAddress: args.deliveryAddress,
+    name: args.name,
+    phone: args.phone,
+    address: args.address,
+  });
+  if (!contact) return { error: error ?? 'create_order needs the customer phone number and delivery address', missingPhone: missingPhone ?? false, missingAddress: missingAddress ?? false };
   let totalPaisa = 0;
   const lines: { name: string; quantity: number; pricePaisa: number }[] = [];
   const priced: { productId: string; quantity: number; pricePaisa: number }[] = [];
@@ -80,9 +98,10 @@ const createOrder: ToolFn = async (db, workspaceId, args) => {
     priced.push({ productId: rows[0].id, quantity, pricePaisa: Number(rows[0].price_paisa) });
   }
   const { rows: orderRows } = await db.query<{ id: string }>(
-    `INSERT INTO orders (workspace_id, customer_id, conversation_id, source, status, payment_status, total_paisa)
-     VALUES ($1, $2, $3, 'ai', 'pending', 'unpaid', $4) RETURNING id`,
-    [workspaceId, customerId, conversationId, totalPaisa],
+    `INSERT INTO orders (workspace_id, customer_id, conversation_id, source, status, payment_status, total_paisa,
+                        customer_name, customer_phone, delivery_address)
+     VALUES ($1, $2, $3, 'ai', 'pending', 'unpaid', $4, $5, $6, $7) RETURNING id`,
+    [workspaceId, customerId, conversationId, totalPaisa, contact.customerName, contact.customerPhone, contact.deliveryAddress],
   );
   const orderId = orderRows[0].id;
   // Post attribution (05-post-attribution.sql): if this conversation
@@ -114,7 +133,19 @@ const createOrder: ToolFn = async (db, workspaceId, args) => {
   } catch (err) {
     console.error('[tool:create_order] stock decrement failed:', (err as Error).message);
   }
-  return { orderId, totalPaisa, billText: buildBillText(orderId, lines, totalPaisa), outOfStock };
+  return {
+    orderId,
+    totalPaisa,
+    billText: buildBillText(orderId, lines, totalPaisa, {
+      name: contact.customerName,
+      phone: contact.customerPhone,
+      address: contact.deliveryAddress,
+    }),
+    outOfStock,
+    customerName: contact.customerName,
+    customerPhone: contact.customerPhone,
+    deliveryAddress: contact.deliveryAddress,
+  };
 };
 
 /**

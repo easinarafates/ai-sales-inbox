@@ -262,6 +262,15 @@ export interface Order {
   customerId?: string;
   customer_id?: string;
   customer?: Customer;
+  /** Delivery snapshot taken when the order was created (migration 24) — what the customer gave at order time. Null for older orders. */
+  customerName?: string;
+  customer_name?: string;
+  customerPhone?: string;
+  customer_phone?: string;
+  deliveryAddress?: string;
+  delivery_address?: string;
+  /** Where the order came from: 'ai' (AI chat), 'team' (created by the team), or a channel platform. */
+  source?: string;
   conversationId?: string;
   conversation_id?: string;
   status?: string;

@@ -29,3 +29,12 @@ export function statusBadge(status?: string, lang: Lang = "en") {
     </span>
   );
 }
+
+/** Where the order came from — 'ai' (AI chat), 'team' (created by the team), or a channel name. */
+export function orderSourceLabel(source: string | undefined, lang: Lang = "en"): string {
+  const s = (source ?? "").toLowerCase();
+  if (s === "ai") return lang === "bn" ? "এআই" : "AI";
+  if (s === "team") return lang === "bn" ? "দল" : "Team";
+  if (!s) return "—";
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}

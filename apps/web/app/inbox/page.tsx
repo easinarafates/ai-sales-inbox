@@ -1,6 +1,6 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   asArray,
   customersApi,
@@ -106,8 +106,9 @@ function aiModeOf(c: Conversation): boolean | null {
   return null;
 }
 
-export default function InboxPage() {
+function InboxPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const { t, fmtDate, fmtTaka } = useI18n();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState<ConversationDetail | null>(null);
@@ -148,6 +149,18 @@ export default function InboxPage() {
       setError(err instanceof Error ? err.message : t("inbox.openFailed", "Could not open the chat.", "চ্যাট খোলা যায়নি।"));
     }
   };
+
+  // Deep link from an order ("View chat in Inbox"): /inbox?conversation=<id>
+  // opens that thread directly. Guarded so it runs once per link, not on
+  // every render (openThread is re-created each render).
+  const openedParamRef = useRef<string | null>(null);
+  const conversationParam = searchParams.get("conversation");
+  useEffect(() => {
+    if (conversationParam && openedParamRef.current !== conversationParam) {
+      openedParamRef.current = conversationParam;
+      void openThread(conversationParam);
+    }
+  }, [conversationParam, openThread]);
 
   const refreshThread = useCallback(async () => {
     if (!selectedId) return;
@@ -571,5 +584,14 @@ export default function InboxPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+/** useSearchParams needs a Suspense boundary (Next.js App Router rule). */
+export default function InboxPageWrapper() {
+  return (
+    <Suspense fallback={<p className="text-slate-500">Loading…</p>}>
+      <InboxPage />
+    </Suspense>
   );
 }
