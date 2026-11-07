@@ -184,6 +184,12 @@ export interface ConversationDetail {
   [key: string]: unknown;
 }
 
+export interface ProductImage {
+  id: string;
+  url: string;
+  created_at?: string;
+}
+
 export interface Product {
   id: string;
   name: string;
@@ -195,6 +201,8 @@ export interface Product {
   description?: string;
   imageUrl?: string;
   image_url?: string;
+  /** Photos uploaded for this product (multiple allowed). */
+  images?: ProductImage[];
   createdAt?: string;
   created_at?: string;
   [key: string]: unknown;
@@ -392,6 +400,56 @@ export const productsApi = {
     api.get<Product[] | { products: Product[] }>(
       `/api/products/search?q=${encodeURIComponent(q)}`
     ),
+  /** List a product's photos. */
+  listImages: async (id: string) => {
+    const data = await api.get<{ images: ProductImage[] }>(`/api/products/${id}/images`);
+    return data.images ?? [];
+  },
+  /** Register one photo (an already-uploaded URL, or a base64 file). */
+  addImage: async (
+    id: string,
+    body: { url: string } | { fileBase64: string; fileName?: string; mimeType?: string }
+  ) => {
+    const data = await api.post<{ image: ProductImage }>(`/api/products/${id}/images`, body);
+    return data.image;
+  },
+  /** Remove one photo (DB row always; Blob object best-effort). */
+  deleteImage: (id: string, imageId: string) =>
+    api.del<{ deleted: { id: string } }>(`/api/products/${id}/images/${imageId}`),
+  /**
+   * Upload one photo file for a product. Preferred path: direct
+   * browser→Vercel Blob upload (bypasses the API 4.5 MB body cap), then
+   * register the Blob URL. If Blob is unavailable (local dev / no Blob
+   * token), falls back to a base64 upload through the API. Returns the
+   * created image row.
+   */
+  uploadImage: async (id: string, file: File) => {
+    let blobUrl: string | null = null;
+    try {
+      const { upload } = await import("@vercel/blob/client");
+      const token = getToken();
+      const blob = await upload(file.name, file, {
+        access: "public",
+        handleUploadUrl: `${API_URL}/api/products/upload-token`,
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      blobUrl = blob.url;
+    } catch {
+      // Blob unavailable (no Blob token locally) — fall through to base64.
+    }
+    if (blobUrl) return await productsApi.addImage(id, { url: blobUrl });
+    const dataUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result));
+      reader.onerror = () => reject(new Error("Could not read the file."));
+      reader.readAsDataURL(file);
+    });
+    return await productsApi.addImage(id, {
+      fileBase64: dataUrl,
+      fileName: file.name,
+      mimeType: file.type,
+    });
+  },
 };
 
 export const ordersApi = {

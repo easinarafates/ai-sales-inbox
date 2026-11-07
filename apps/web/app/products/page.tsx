@@ -1,9 +1,17 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { asArray, getToken, productsApi, productPricePaisa, type Product } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+
+const MAX_PHOTOS = 10;
+const MAX_PHOTO_BYTES = 25 * 1024 * 1024; // 25 MB
+
+interface SelectedPhoto {
+  file: File;
+  preview: string;
+}
 
 export default function ProductsPage() {
   const router = useRouter();
@@ -18,6 +26,10 @@ export default function ProductsPage() {
   const [stock, setStock] = useState("");
   const [description, setDescription] = useState("");
   const [saving, setSaving] = useState(false);
+  const [photos, setPhotos] = useState<SelectedPhoto[]>([]);
+  const [photoError, setPhotoError] = useState("");
+  const [uploadingPhotos, setUploadingPhotos] = useState(0);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const load = useCallback(async () => {
     try {
@@ -35,6 +47,11 @@ export default function ProductsPage() {
     load();
   }, [load, router]);
 
+  // Revoke preview URLs only when the component unmounts.
+  const photosRef = useRef<SelectedPhoto[]>([]);
+  photosRef.current = photos;
+  useEffect(() => () => { photosRef.current.forEach((p) => URL.revokeObjectURL(p.preview)); }, []);
+
   const search = async () => {
     if (!q.trim()) { load(); return; }
     setError("");
@@ -46,24 +63,88 @@ export default function ProductsPage() {
     }
   };
 
+  const onPickPhotos = (files: FileList | null) => {
+    if (!files) return;
+    setPhotoError("");
+    const picked = Array.from(files);
+    const valid: SelectedPhoto[] = [];
+    for (const file of picked) {
+      if (!file.type.startsWith("image/")) {
+        setPhotoError(t("products.invalidPhotoType", "Only image files (jpg / png / gif / webp) are allowed.", "শুধু ছবির ফাইল (jpg / png / gif / webp) দেওয়া যায়।"));
+        continue;
+      }
+      if (file.size > MAX_PHOTO_BYTES) {
+        setPhotoError(`${file.name}: ${t("products.photoTooLarge", "Each photo must be 25 MB or smaller.", "প্রতিটি ছবি ২৫ MB বা তার ছোট হতে হবে।")}`);
+        continue;
+      }
+      valid.push({ file, preview: URL.createObjectURL(file) });
+    }
+    if (valid.length === 0) return;
+    setPhotos((prev) => {
+      const room = MAX_PHOTOS - prev.length;
+      if (room <= 0) {
+        setPhotoError(t("products.photosHint", "Up to 10 photos (jpg / png / gif / webp, max 25 MB each).", "সর্বোচ্চ ১০টি ছবি (jpg / png / gif / webp, প্রতিটি সর্বোচ্চ ২৫ MB)।"));
+        valid.forEach((v) => URL.revokeObjectURL(v.preview));
+        return prev;
+      }
+      const kept = valid.slice(0, room);
+      valid.slice(room).forEach((v) => URL.revokeObjectURL(v.preview));
+      return [...prev, ...kept];
+    });
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
+  const removePickedPhoto = (index: number) => {
+    setPhotos((prev) => {
+      URL.revokeObjectURL(prev[index].preview);
+      return prev.filter((_, i) => i !== index);
+    });
+  };
+
+  const clearPickedPhotos = () => {
+    photos.forEach((p) => URL.revokeObjectURL(p.preview));
+    setPhotos([]);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const addProduct = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+    setPhotoError("");
     setSaving(true);
     try {
-      await productsApi.create({
+      const created = await productsApi.create({
         name: name.trim(),
         pricePaisa: Math.round(parseFloat(priceTaka || "0") * 100),
         size: size || undefined,
         stock: stock ? parseInt(stock, 10) : undefined,
         description: description || undefined,
       });
+      const productId = (created as { product?: Product }).product?.id ?? (created as Product).id;
+      // Upload the picked photos one by one (multiple photos per product).
+      const failed: string[] = [];
+      if (productId && photos.length > 0) {
+        for (let i = 0; i < photos.length; i++) {
+          setUploadingPhotos(i + 1);
+          try {
+            await productsApi.uploadImage(productId, photos[i].file);
+          } catch (err) {
+            failed.push(photos[i].file.name);
+          }
+        }
+        setUploadingPhotos(0);
+      }
       setName(""); setPriceTaka(""); setSize(""); setStock(""); setDescription("");
+      clearPickedPhotos();
       await load();
+      if (failed.length > 0) {
+        setPhotoError(`${t("products.photoUploadFailed", "Some photos could not be uploaded.", "কিছু ছবি আপলোড হয়নি।")} ${failed.join(", ")}`);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t("products.addFailed", "Could not add the product.", "প্রোডাক্ট যোগ করা যায়নি।"));
     } finally {
       setSaving(false);
+      setUploadingPhotos(0);
     }
   };
 
@@ -85,6 +166,41 @@ export default function ProductsPage() {
         <input value={size} onChange={(e) => setSize(e.target.value)} placeholder={t("products.sizePlaceholder", "Size (e.g. M / 1kg)", "সাইজ (যেমন: M / 1kg)")} className="border rounded-lg px-3 py-2" />
         <input type="number" min="0" value={stock} onChange={(e) => setStock(e.target.value)} placeholder={t("products.stockPlaceholder", "Stock", "স্টক")} className="border rounded-lg px-3 py-2" />
         <textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("products.descPlaceholder", "Description", "বিবরণ")} className="border rounded-lg px-3 py-2 md:col-span-2" />
+
+        <div className="md:col-span-2">
+          <label className="font-medium text-sm">{t("products.photosLabel", "Product photos", "প্রোডাক্টের ছবি")}</label>
+          <p className="text-xs text-slate-500 mb-2">{t("products.photosHint", "Up to 10 photos (jpg / png / gif / webp, max 25 MB each).", "সর্বোচ্চ ১০টি ছবি (jpg / png / gif / webp, প্রতিটি সর্বোচ্চ ২৫ MB)।")}</p>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/gif,image/webp"
+            multiple
+            onChange={(e) => onPickPhotos(e.target.files)}
+            className="block w-full text-sm border rounded-lg px-3 py-2 bg-white"
+          />
+          {photos.length > 0 && (
+            <div className="flex flex-wrap gap-2 mt-2">
+              {photos.map((p, i) => (
+                <div key={`${p.file.name}-${i}`} className="relative w-20 h-20">
+                  <img src={p.preview} alt={p.file.name} className="w-20 h-20 object-cover rounded-lg border" />
+                  <button
+                    type="button"
+                    onClick={() => removePickedPhoto(i)}
+                    aria-label={t("products.removePhoto", "Remove photo", "ছবি সরান")}
+                    className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full w-5 h-5 text-xs leading-none"
+                  >×</button>
+                </div>
+              ))}
+            </div>
+          )}
+          {uploadingPhotos > 0 && (
+            <p className="text-sm text-slate-500 mt-2">
+              {t("products.uploadingPhotos", "Uploading photos…", "ছবি আপলোড হচ্ছে…")} {uploadingPhotos}/{photos.length}
+            </p>
+          )}
+          {photoError && <p className="text-sm text-red-700 mt-2">{photoError}</p>}
+        </div>
+
         <button disabled={saving} className="bg-brand text-white py-2 rounded-lg md:col-span-2 hover:bg-brand-dark disabled:opacity-50">{saving ? t("products.adding", "Adding…", "যোগ হচ্ছে…") : t("products.addButton", "Add product", "প্রোডাক্ট যোগ করুন")}</button>
       </form>
 
@@ -93,10 +209,17 @@ export default function ProductsPage() {
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("products.thName", "Name", "নাম")}</th><th className="p-3">{t("products.thPrice", "Price", "দাম")}</th><th className="p-3">{t("products.thSize", "Size", "সাইজ")}</th><th className="p-3">{t("products.thStock", "Stock", "স্টক")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("products.thPhoto", "Photo", "ছবি")}</th><th className="p-3">{t("products.thName", "Name", "নাম")}</th><th className="p-3">{t("products.thPrice", "Price", "দাম")}</th><th className="p-3">{t("products.thSize", "Size", "সাইজ")}</th><th className="p-3">{t("products.thStock", "Stock", "স্টক")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {products.map((p) => (
                 <tr key={p.id} className="border-b transition-colors hover:bg-orange-50">
+                  <td className="p-3">
+                    {p.images && p.images.length > 0 ? (
+                      <img src={p.images[0].url} alt={p.name} className="w-12 h-12 object-cover rounded-lg border" />
+                    ) : (
+                      <span className="text-slate-400">—</span>
+                    )}
+                  </td>
                   <td className="p-3 font-medium">{p.name}</td>
                   <td className="p-3">{fmtTaka(productPricePaisa(p))}</td>
                   <td className="p-3">{p.size || "—"}</td>
