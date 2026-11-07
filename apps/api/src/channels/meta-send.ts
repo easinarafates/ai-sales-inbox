@@ -96,6 +96,240 @@ export async function sendFacebookCommentReply(input: {
 }
 
 /**
+ * One generic JSON POST to Graph. Never throws — every failure is
+ * returned as { ok: false, error, code } with Meta's own message.
+ */
+async function graphPostJson(
+  url: string,
+  pageToken: string,
+  body: Record<string, unknown>,
+  timeoutMs = 30000,
+): Promise<{ ok: boolean; data: unknown; error?: string; code?: number }> {
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${pageToken}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+      },
+      timeoutMs,
+    );
+    const data = (await res.json().catch(() => null)) as {
+      id?: string;
+      post_id?: string;
+      success?: boolean;
+      error?: { message?: string; code?: number };
+    } | null;
+    if (!res.ok) {
+      return {
+        ok: false,
+        data,
+        error: data?.error?.message ?? `Meta Graph request failed (HTTP ${res.status})`,
+        code: data?.error?.code,
+      };
+    }
+    return { ok: true, data };
+  } catch (err) {
+    return { ok: false, data: null, error: (err as Error).message };
+  }
+}
+
+export interface PageChannelRow {
+  id: string;
+  platform: string;
+  external_id: string;
+  token_encrypted: string | null;
+}
+
+/**
+ * The workspace's connected Facebook Page channel (platform
+ * 'messenger', status 'connected', with a stored Page token), most
+ * recent first. Null when no Page is connected — callers must fail
+ * honestly instead of pretending a publish/like happened.
+ */
+export async function getWorkspacePageChannel(workspaceId: string): Promise<PageChannelRow | null> {
+  const channel = await queryOne<PageChannelRow>(
+    workspaceId,
+    `SELECT id, platform, external_id, token_encrypted FROM channels
+     WHERE workspace_id = $1 AND platform = 'messenger' AND status = 'connected'
+       AND token_encrypted IS NOT NULL
+     ORDER BY created_at DESC LIMIT 1`,
+    [workspaceId],
+  );
+  return channel;
+}
+
+/** Decrypt a channel's stored Page token; null when it cannot be read. */
+export function decryptPageToken(channel: PageChannelRow): string | null {
+  if (!channel.token_encrypted) return null;
+  try {
+    return decryptToken(channel.token_encrypted);
+  } catch {
+    return null;
+  }
+}
+
+export interface PagePostInput {
+  /** Facebook Page ID. */
+  pageId: string;
+  /** Page access token (Bearer). */
+  pageToken: string;
+  caption: string | null;
+  mediaUrls: string[];
+  mediaType: string | null;
+}
+
+export interface PagePostResult extends MetaSendResult {
+  /** Graph's real post/photo/video id — never a stub id. */
+  platformPostId?: string;
+}
+
+/**
+ * Publish one post to a Facebook Page for real (Graph v21.0, Page token).
+ * Needs pages_manage_posts on the token.
+ *
+ * - text (or no media) → POST /{page-id}/feed {message}
+ * - one image → POST /{page-id}/photos {url, caption}
+ * - several images → each uploaded unpublished, then one feed post with
+ *   attached_media (so the Page shows one post, not one per photo)
+ * - video → POST /{page-id}/videos {file_url, description} (Graph
+ *   processes the video after accepting it; the returned id is the video)
+ * Media URLs must be publicly reachable (Vercel Blob URLs are; local
+ * /api/uploads URLs are NOT — they need an auth token).
+ * A post counts as published ONLY when Graph returns an id.
+ */
+export async function sendPagePost(input: PagePostInput): Promise<PagePostResult> {
+  const caption = (input.caption ?? '').trim();
+  const urls = input.mediaUrls ?? [];
+  const mediaType = input.mediaType ?? (urls.length > 0 ? 'image' : 'text');
+  const base = sendGraphBase();
+  const pageId = encodeURIComponent(input.pageId);
+
+  const idOf = (data: unknown): string | null => {
+    const d = data as { id?: string; post_id?: string } | null;
+    return typeof d?.post_id === 'string' ? d.post_id : typeof d?.id === 'string' ? d.id : null;
+  };
+
+  if (mediaType === 'text' || urls.length === 0) {
+    const r = await graphPostJson(`${base}/${pageId}/feed`, input.pageToken, { message: caption });
+    if (!r.ok) return { ok: false, error: r.error, code: r.code };
+    const id = idOf(r.data);
+    if (!id) return { ok: false, error: 'Facebook did not return a post id' };
+    return { ok: true, messageId: id, platformPostId: id };
+  }
+
+  if (mediaType === 'image' && urls.length === 1) {
+    const r = await graphPostJson(`${base}/${pageId}/photos`, input.pageToken, {
+      url: urls[0],
+      caption,
+    });
+    if (!r.ok) return { ok: false, error: r.error, code: r.code };
+    const id = idOf(r.data);
+    if (!id) return { ok: false, error: 'Facebook did not return a photo id' };
+    return { ok: true, messageId: id, platformPostId: id };
+  }
+
+  if (mediaType === 'image') {
+    const fbids: string[] = [];
+    for (const u of urls) {
+      const r = await graphPostJson(`${base}/${pageId}/photos`, input.pageToken, {
+        url: u,
+        published: false,
+      });
+      if (!r.ok) return { ok: false, error: r.error, code: r.code };
+      const d = r.data as { id?: string } | null;
+      if (typeof d?.id !== 'string') return { ok: false, error: 'Facebook did not return a photo id' };
+      fbids.push(d.id);
+    }
+    const r = await graphPostJson(`${base}/${pageId}/feed`, input.pageToken, {
+      message: caption,
+      attached_media: fbids.map((id) => ({ media_fbid: id })),
+    });
+    if (!r.ok) return { ok: false, error: r.error, code: r.code };
+    const id = idOf(r.data);
+    if (!id) return { ok: false, error: 'Facebook did not return a post id' };
+    return { ok: true, messageId: id, platformPostId: id };
+  }
+
+  if (mediaType === 'video') {
+    const r = await graphPostJson(
+      `${base}/${pageId}/videos`,
+      input.pageToken,
+      { file_url: urls[0], description: caption },
+      60000,
+    );
+    if (!r.ok) return { ok: false, error: r.error, code: r.code };
+    const id = idOf(r.data);
+    if (!id) return { ok: false, error: 'Facebook did not return a video id' };
+    return { ok: true, messageId: id, platformPostId: id };
+  }
+
+  return { ok: false, error: `Unsupported media type: ${mediaType}` };
+}
+
+/**
+ * Like one Facebook object (a Page post or a comment) as the Page:
+ * POST /{object-id}/likes with the Page token. Needs
+ * pages_manage_engagement on the token. Graph answers {success: true};
+ * an already-liked object is reported as ok with alreadyLiked=true
+ * instead of an error.
+ */
+export async function likeGraphObject(input: {
+  objectId: string;
+  pageToken: string;
+}): Promise<{ ok: boolean; alreadyLiked?: boolean; error?: string; code?: number }> {
+  const r = await graphPostJson(
+    `${sendGraphBase()}/${encodeURIComponent(input.objectId)}/likes`,
+    input.pageToken,
+    {},
+  );
+  if (r.ok) return { ok: true };
+  if (r.error && /already/i.test(r.error)) return { ok: true, alreadyLiked: true };
+  return { ok: false, error: r.error, code: r.code };
+}
+
+export interface MarkSeenResult {
+  ok: boolean;
+  error?: string;
+  /** Graph error code (e.g. 190 = bad token). */
+  code?: number;
+}
+
+/**
+ * Mark one incoming Messenger/Instagram message as SEEN — a real Graph
+ * read receipt: POST /{node-id}/messages
+ * {recipient:{id}, sender_action:'mark_seen'} with the Page token.
+ * Graph answers 200 {recipient_id} on success.
+ *
+ * This is what the customer sees as the "Seen" tick under their message.
+ * Never throws — every failure is returned as { ok: false, ... }.
+ * Callers must fire-and-forget it (see webhooks/routes.ts): a failed
+ * read receipt must never block the message save or the AI reply.
+ */
+export async function sendMarkSeen(input: {
+  platform: 'messenger' | 'instagram';
+  /** Messenger: Page ID. Instagram: IG user ID (channel external_id). */
+  nodeId: string;
+  /** Page access token (Bearer). */
+  pageToken: string;
+  /** Messenger: customer PSID. Instagram: IG-scoped user ID. */
+  recipientId: string;
+}): Promise<MarkSeenResult> {
+  const r = await graphPostJson(
+    `${sendGraphBase()}/${encodeURIComponent(input.nodeId)}/messages`,
+    input.pageToken,
+    { recipient: { id: input.recipientId }, sender_action: 'mark_seen' },
+    10000,
+  );
+  if (r.ok) return { ok: true };
+  return { ok: false, error: r.error, code: r.code };
+}
+
+/**
  * Send one text message via the Meta Graph API. Never throws — every
  * failure is returned as { ok: false, error, code?, windowExpired? }.
  */

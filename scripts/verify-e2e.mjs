@@ -114,10 +114,13 @@ async function main() {
   check('login', login.status === 200 && !!login.data?.token, `status=${login.status}`);
   if (login.data?.token) token = login.data.token;
 
-  // 4. Connect a Messenger channel (fake page id — no Meta call)
+  // 4. Connect a Messenger channel (fake page id — no Meta call).
+  // A fake token is stored so the real-publish path can be tested
+  // against the local fake Graph server (META_GRAPH_BASE_URL); nothing
+  // here reaches real Facebook.
   const channel = await api('/api/channels', {
     method: 'POST',
-    body: { platform: 'messenger', externalId: 'page-verify-1', displayName: 'Verify Page' },
+    body: { platform: 'messenger', externalId: 'page-verify-1', displayName: 'Verify Page', token: 'fake-e2e-token' },
   });
   check('connect messenger channel', channel.status === 201, `status=${channel.status}`);
 
@@ -169,7 +172,7 @@ async function main() {
   });
   check('webhook accepts Messenger message', hook.status === 200, `status=${hook.status}`);
 
-  // 9. Wait for the AI reply (queue fallback: 3s debounce + processing)
+  // 9. Wait for the AI reply (queue fallback: 1s debounce + processing)
   const detail = await waitFor(async () => {
     const list = await api('/api/inbox');
     const conv = list.data?.conversations?.[0];
@@ -423,7 +426,7 @@ async function main() {
   check('calendar view contains the scheduled post', cal.status === 200 && calHas, `month=${cal.data?.month}`);
   const pub = await api(`/api/scheduled-posts/${postId}/publish-now`, { method: 'POST' });
   const platformPostId = pub.data?.post?.platform_post_id ?? '';
-  check('publish-now → published (stub platform id)', pub.status === 200 && pub.data?.post?.status === 'published' && String(platformPostId).startsWith('stub-'), `status=${pub.data?.post?.status}, platform_post_id=${platformPostId}`);
+  check('publish-now → published with a real Graph post id (never stub-)', pub.status === 200 && pub.data?.post?.status === 'published' && String(platformPostId) === 'page-verify-1_67890', `status=${pub.data?.post?.status}, platform_post_id=${platformPostId}`);
   const carousel = await api(`/api/comments/${encodeURIComponent(platformPostId)}/carousel`);
   check('comment carousel shows the linked শাড়ি card', carousel.status === 200 && (carousel.data?.cards ?? []).some((c) => c.name === 'শাড়ি'), `cards=${(carousel.data?.cards ?? []).map((c) => c.name).join(',')}`);
 

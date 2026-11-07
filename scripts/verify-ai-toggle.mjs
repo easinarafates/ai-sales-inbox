@@ -273,17 +273,20 @@ async function main() {
     check('mark-owner response never contains the raw PSID', !JSON.stringify(mark.data ?? {}).includes('psid-owner'));
 
     // ---- Owner dot commands over Messenger ----
-    const sendsBefore = stubHits.filter((h) => h.path.endsWith('/messages')).length;
+    // Text sends only: POST /messages hits include the mark_seen read
+    // receipts (sender_action, no message body) — those are not sends.
+    const textSends = () => stubHits.filter((h) => h.path.endsWith('/messages') && h.body && typeof h.body.message === 'object');
+    const sendsBefore = textSends().length;
     const dotOff = await sendCustomerMessage(api, 'page-toggle', 'psid-owner', `t-mid-2-${stamp}`, '.');
     check("owner '.' accepted (200)", dotOff.status === 200, `status=${dotOff.status}`);
     check("owner '.' flips ai → human", (await getMode(api, convId)) === 'human');
     const msgsAfterDot = await getMessages(api, convId);
     check("the '.' itself is never saved as a customer message", !msgsAfterDot.some((m) => m.direction === 'in' && m.body === '.'));
-    const sendsAfterDot = stubHits.filter((h) => h.path.endsWith('/messages'));
+    const sendsAfterDot = textSends();
     check('OFF confirmation sent to Messenger (Bengali)', sendsAfterDot.length === sendsBefore + 1 && (sendsAfterDot[sendsAfterDot.length - 1]?.body?.message?.text ?? '').includes('AI উত্তর বন্ধ হয়েছে'), JSON.stringify(sendsAfterDot[sendsAfterDot.length - 1]?.body ?? null));
     const dotOn = await sendCustomerMessage(api, 'page-toggle', 'psid-owner', `t-mid-3-${stamp}`, '.on');
     check("owner '.on' → AI on", (await getMode(api, convId)) === 'ai');
-    const sendsAfterOn = stubHits.filter((h) => h.path.endsWith('/messages'));
+    const sendsAfterOn = textSends();
     check('ON confirmation sent to Messenger (Bengali)', (sendsAfterOn[sendsAfterOn.length - 1]?.body?.message?.text ?? '').includes('AI উত্তর চালু হয়েছে'));
     const dotAiOff = await sendCustomerMessage(api, 'page-toggle', 'psid-owner', `t-mid-4-${stamp}`, '.ai off');
     check("owner '.ai off' → human", (await getMode(api, convId)) === 'human');
@@ -296,13 +299,13 @@ async function main() {
 
     // ---- Stranger dot commands are ignored silently ----
     const outsBeforeStranger = (await getMessages(api, convId)).filter((m) => m.direction === 'out').length;
-    const sendsBeforeStranger = stubHits.filter((h) => h.path.endsWith('/messages')).length;
+    const sendsBeforeStranger = textSends().length;
     const stranger = await sendCustomerMessage(api, 'page-toggle', 'psid-stranger', `t-mid-7-${stamp}`, '.off');
     check("stranger '.off' accepted (200, no error to the customer)", stranger.status === 200, `status=${stranger.status}`);
     check("stranger '.off' does NOT change the mode", (await getMode(api, convId)) === 'ai');
-    const sendsAfterStranger = stubHits.filter((h) => h.path.endsWith('/messages')).length;
+    const sendsAfterStranger = textSends().length;
     check('stranger dot sends NO confirmation', sendsAfterStranger === sendsBeforeStranger, `sends=${sendsAfterStranger} vs ${sendsBeforeStranger}`);
-    await sleep(4500); // past the 3s debounce: the AI must not answer the stranger's dot
+    await sleep(4500); // past the 1s debounce: the AI must not answer the stranger's dot
     const msgsAfterWait = await getMessages(api, convId);
     check("stranger's '.' gets NO AI reply", msgsAfterWait.filter((m) => m.direction === 'out').length === outsBeforeStranger,
       `out before=${outsBeforeStranger}, after=${msgsAfterWait.filter((m) => m.direction === 'out').length}`);
@@ -311,7 +314,7 @@ async function main() {
     const echoDot = await sendEcho(api, 'page-toggle', 'psid-owner', `t-echo-1-${stamp}`, '.');
     check('echo dot accepted (200)', echoDot.status === 200, `status=${echoDot.status}`);
     check("echo '.' flips ai → human", (await getMode(api, convId)) === 'human');
-    const sendsAfterEcho = stubHits.filter((h) => h.path.endsWith('/messages'));
+    const sendsAfterEcho = textSends();
     check('echo dot sends the OFF confirmation', (sendsAfterEcho[sendsAfterEcho.length - 1]?.body?.message?.text ?? '').includes('AI উত্তর বন্ধ হয়েছে'));
     const echoApp = await sendEcho(api, 'page-toggle', 'psid-owner', `t-echo-2-${stamp}`, '.on', '959927956839086');
     check('echo WITH app_id is ignored (mode unchanged)', (await getMode(api, convId)) === 'human');

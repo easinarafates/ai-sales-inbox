@@ -1,4 +1,5 @@
 import { Router, type Response } from 'express';
+import { waitUntil } from '@vercel/functions';
 import { config } from '../config';
 import { pool, query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
@@ -6,6 +7,7 @@ import { enqueueMessage } from '../queue/client';
 import { recordAttributionForPlatformPost } from '../analytics/attribution';
 import { enrichCustomerProfileIfNeeded } from '../channels/meta-profile';
 import { decryptToken } from '../db/crypto';
+import { sendMarkSeen } from '../channels/meta-send';
 import {
   applyDotCommand,
   getWorkspaceOwnerPsid,
@@ -238,6 +240,38 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       if (!channel) continue; // Unknown page — not connected to any workspace.
       const eventId = message.mid ?? `${sender.id}-${Date.now()}`;
       if (!(await recordWebhookEvent(channel.workspace_id, platform, eventId, event))) continue; // duplicate
+
+      // --- Seen FIRST: the customer sees the Page read their message ---
+      // A real Graph read receipt (POST /{page-id}/messages
+      // {recipient, sender_action:'mark_seen'}), fired immediately —
+      // before the dot-command check, the profile enrich, the save, and
+      // the AI debounce — so the Seen tick shows within ~a second of the
+      // customer sending, while the AI is still thinking. Fire-and-forget
+      // via waitUntil (keeps the serverless function alive for it on
+      // Vercel; a no-op locally): a failed receipt is logged and never
+      // blocks the message or the reply.
+      if (channel.token_encrypted) {
+        let pageToken: string | null = null;
+        try {
+          pageToken = decryptToken(channel.token_encrypted);
+        } catch {
+          pageToken = null;
+        }
+        if (pageToken) {
+          waitUntil(
+            sendMarkSeen({
+              platform: platform as 'messenger' | 'instagram',
+              nodeId: channel.external_id,
+              pageToken,
+              recipientId: sender.id,
+            })
+              .then((r) => {
+                if (!r.ok) console.error('[webhook/meta] mark_seen failed:', r.error ?? 'unknown');
+              })
+              .catch((err) => console.error('[webhook/meta] mark_seen failed:', (err as Error).message)),
+          );
+        }
+      }
 
       // --- Dot commands from a personal account ---
       // Only the sender the workspace marked as its owner may toggle

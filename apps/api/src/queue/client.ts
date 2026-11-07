@@ -11,7 +11,7 @@ export interface InboxJobData {
 }
 
 // Redis is optional: if it is down, BullMQ cannot queue, so the API falls
-// back to processing the message in-process (same 3s debounce, same agent).
+// back to processing the message in-process (same 1s debounce, same agent).
 // The connection never retries forever and never crashes the process.
 const connection = new IORedis(config.redisUrl, {
   maxRetriesPerRequest: 1,
@@ -48,10 +48,10 @@ async function processInProcess(
   conversationId: string,
   text?: string,
 ): Promise<void> {
-  // Same 3s debounce as the BullMQ job: messages from the same customer
-  // arriving within 3 seconds batch into one run, because the agent reloads
+  // Same 1s debounce as the BullMQ job: messages from the same customer
+  // arriving within 1 second batch into one run, because the agent reloads
   // the full recent history from the DB when it runs.
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  await new Promise((resolve) => setTimeout(resolve, 1000));
   // A message can arrive while the agent is working (after the history
   // snapshot below). Loop so a message skipped by the dedup guard still
   // gets an answer: after each reply, check whether new inbound messages
@@ -97,10 +97,14 @@ async function processInProcess(
 
 /**
  * Enqueue a conversation for AI processing, debounced.
- * Same jobId per conversation + 3s delay: messages from the same customer
- * arriving within 3 seconds batch into one job, because the worker reloads
+ * Same jobId per conversation + 1s delay: messages from the same customer
+ * arriving within 1 second batch into one job, because the worker reloads
  * the full recent history from the DB when the job runs (so a duplicate
  * enqueue for an already-delayed job is safely ignored).
+ *
+ * The delay is 1s on purpose (was 3s): the customer must see the reply
+ * within a few seconds of messaging, and the dedup guard + the re-check
+ * loop below still keep rapid messages from producing duplicate replies.
  *
  * If Redis is unavailable, the message is processed in-process instead —
  * the chat still gets an answer; only queue persistence is lost.
@@ -118,7 +122,7 @@ export async function enqueueMessage(
           { workspaceId, conversationId, text },
           {
             jobId: `conv-${conversationId}`,
-            delay: 3000,
+            delay: 1000,
             attempts: 3,
             backoff: { type: 'exponential', delay: 1000 },
             removeOnComplete: true,
@@ -142,7 +146,7 @@ export async function enqueueMessage(
       }
     }
   }
-  // Fire-and-forget: the webhook must not wait for the 3s debounce.
+  // Fire-and-forget: the webhook must not wait for the 1s debounce.
   // On Vercel, waitUntil() keeps the serverless function alive until
   // the in-process work finishes — an unowned promise would otherwise
   // be frozen/killed when the webhook response is sent and the AI reply
