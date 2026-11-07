@@ -2,9 +2,13 @@
  * Per-token AI rates (USD per 1M tokens) — verified 2026-11-06 from the
  * providers' official pricing pages (sources in the comments below),
  * except gpt-5-mini + gemini-3.5-flash, verified 2026-11-07 (see below).
- * These feed provider_cost_paisa in the ledger ONLY: the WALLET charge
- * stays the subscription rule (included replies 0 paisa, overage flat
- * 10 paisa). Override any rate with AI_RATES_JSON env, e.g.
+ * gemini-3.5-flash was CORRECTED 2026-11-07: $1.50/$9.00 — the $0.30/
+ * $2.50 it carried before was the gemini-3.5-flash-LITE rate, and it
+ * under-reported every Gemini reply ~4x (e.g. 13 paisa recorded for a
+ * reply that really cost ~57 paisa). These feed provider_cost_paisa in
+ * the ledger ONLY: the WALLET charge stays the subscription rule
+ * (included replies 0 paisa, overage flat 10 paisa). Override any rate
+ * with AI_RATES_JSON env, e.g.
  * AI_RATES_JSON='{"gpt-5-mini":{"input":0.25,"output":2.00}}'.
  * Groq is 0: the platform uses Groq's FREE tier (30 req/min, 1,000
  * req/day); Groq's paid-tier rates do NOT apply while on the free tier.
@@ -39,14 +43,17 @@ const DEFAULT_RATES_USD_PER_MILLION: Record<string, TokenRate> = {
   // <=100K rate; shop prompts are far below that).
   'claude-sonnet-5-5': { input: 2, output: 10 },
   'claude-haiku-5-5': { input: 0.1, output: 0.5 },
-  // Google — ai.google.dev/gemini-api/docs/pricing: gemini-2.5-flash
-  // $0.30/$2.50 (kept for old ledger rows). gemini-3.5-flash is the
-  // current default (gemini-2.5-flash 404s for new keys); its rate was
-  // NOT verified — assumed the same $0.30/$2.50 as 2.5-flash, per
-  // secondary sources for 3.5-flash-lite. Verify at ai.google.dev
-  // before relying on the exact figure.
+  // Google — ai.google.dev/gemini-api/docs/pricing, verified 2026-11-07:
+  // gemini-3.5-flash $1.50/$9.00 (CORRECTED — the $0.30/$2.50 it had
+  // before was the Flash-Lite rate, not this model's). gemini-2.5-flash
+  // $0.30/$2.50 (kept for old ledger rows). gemini-3.5-flash-lite
+  // $0.30/$2.50. gemini-3-flash-preview (Gemini 3 Flash) $0.50/$3.00,
+  // verified 2026-11-07 from Google's pricing page via secondary
+  // sources (benchlm, puter, therundown — all agree).
   'gemini-2.5-flash': { input: 0.3, output: 2.5 },
-  'gemini-3.5-flash': { input: 0.3, output: 2.5 },
+  'gemini-3.5-flash': { input: 1.5, output: 9 },
+  'gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
+  'gemini-3-flash-preview': { input: 0.5, output: 3 },
   // Groq free tier — 0. (Paid tier would be $0.075/$0.30, not used.)
   'openai/gpt-oss-20b': { input: 0, output: 0 },
   'openai/gpt-oss-120b': { input: 0, output: 0 },
