@@ -246,10 +246,18 @@ export type CreateResult =
 /**
  * Fields the app receives for a subscribed Page. Must match the fields
  * configured on the Meta app's Webhooks product (messages,
- * messaging_postbacks, feed) — both layers have to include a field for
- * Meta to deliver that event.
+ * messaging_postbacks, feed, message_echoes) — both layers have to
+ * include a field for Meta to deliver that event.
+ *
+ * message_echoes matters for the AI ON/OFF dot commands: when the owner
+ * replies AS the Page from Page Inbox, Meta delivers the message only
+ * as an echo, so without this field a '.' typed as the Page never
+ * reaches the webhook. Existing Pages subscribed before this field was
+ * added must be re-subscribed (POST /api/channels/:id/resubscribe), and
+ * the Webhooks product in the Meta app dashboard must also tick
+ * message_echoes — the API subscribe alone is not enough.
  */
-export const SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,feed';
+export const SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,feed,message_echoes';
 
 /**
  * Subscribe a Facebook Page to the app so Meta delivers the Page's
@@ -263,9 +271,19 @@ export const SUBSCRIBED_FIELDS = 'messages,messaging_postbacks,feed';
  * (WhatsApp is NOT subscribed here — its Cloud API webhook is separate
  * and a WhatsApp channel token is a user token, not a Page token.)
  */
+/**
+ * Graph base for subscription calls. META_GRAPH_BASE_URL overrides it
+ * for offline testing only (same rule as meta-send.ts's sendGraphBase);
+ * production always uses graph.facebook.com.
+ */
+function subscribeGraphBase(): string {
+  const override = (process.env.META_GRAPH_BASE_URL ?? '').replace(/\/$/, '');
+  return override || GRAPH_BASE;
+}
+
 export async function subscribePageToApp(pageId: string, pageToken: string): Promise<boolean> {
   try {
-    const res = await fetchWithTimeout(`${GRAPH_BASE}/${encodeURIComponent(pageId)}/subscribed_apps`, {
+    const res = await fetchWithTimeout(`${subscribeGraphBase()}/${encodeURIComponent(pageId)}/subscribed_apps`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${pageToken}`,

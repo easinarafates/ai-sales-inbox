@@ -1,10 +1,11 @@
 import { Router, type Response } from 'express';
 import { config } from '../config';
-import { encryptToken } from '../db/crypto';
-import { query } from '../db/pool';
+import { decryptToken, encryptToken } from '../db/crypto';
+import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { checkChannelLimit } from '../subscriptions/service';
+import { SUBSCRIBED_FIELDS, subscribePageToApp } from './meta-oauth';
 
 export const channelsRouter = Router();
 channelsRouter.use(requireAuth);
@@ -108,4 +109,50 @@ channelsRouter.get('/', async (req: AuthRequest, res: Response) => {
     [workspaceId],
   );
   res.json({ channels: rows });
+});
+
+/**
+ * POST /api/channels/:id/resubscribe — re-subscribe a Page to the app
+ * with the current SUBSCRIBED_FIELDS. Needed when the field list grows
+ * (e.g. message_echoes was added after the Page first connected):
+ * Meta only delivers a field the Page is subscribed to, and the app
+ * only receives it when the Webhooks product also lists it. Returns
+ * subscribed=false (never throws) when Graph refuses — the channel
+ * still works for the fields it already had.
+ */
+channelsRouter.post('/:id/resubscribe', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const channel = await queryOne(
+    workspaceId,
+    'SELECT id, platform, external_id, source_id, token_encrypted FROM channels WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, req.params.id],
+  );
+  if (!channel) {
+    res.status(404).json({ error: 'Channel not found' });
+    return;
+  }
+  if (channel.platform !== 'messenger' && channel.platform !== 'instagram') {
+    res.status(400).json({ error: 'Only Messenger/Instagram pages can be re-subscribed' });
+    return;
+  }
+  if (!channel.token_encrypted) {
+    res.status(400).json({ error: 'No Page token stored for this channel' });
+    return;
+  }
+  // Messenger: the Page is external_id. Instagram: the Page is
+  // source_id (external_id is the IG user ID).
+  const pageId = channel.platform === 'messenger' ? channel.external_id : (channel.source_id ?? '');
+  if (!pageId) {
+    res.status(400).json({ error: 'No Page ID stored for this channel' });
+    return;
+  }
+  let pageToken: string;
+  try {
+    pageToken = decryptToken(channel.token_encrypted as string);
+  } catch {
+    res.status(400).json({ error: 'Stored Page token could not be read' });
+    return;
+  }
+  const subscribed = await subscribePageToApp(pageId as string, pageToken);
+  res.json({ channelId: channel.id, subscribed, fields: SUBSCRIBED_FIELDS });
 });

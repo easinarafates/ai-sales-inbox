@@ -1,8 +1,9 @@
 "use client";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   asArray,
+  customersApi,
   getToken,
   inboxApi,
   orderTotalPaisa,
@@ -20,10 +21,6 @@ function convName(c: Conversation, unknownLabel: string): string {
     (typeof c.customer === "string" ? c.customer : "") ||
     unknownLabel
   );
-}
-
-function convChannel(c: Conversation): string {
-  return c.channel || c.channelType || c.channel_type || "Messenger";
 }
 
 function convPicture(c: Conversation): string {
@@ -68,6 +65,24 @@ function CustomerAvatar({ name, pictureUrl, sizeClass }: { name: string; picture
   );
 }
 
+/** Source badge: which channel the chat came in on (the conversation's
+ *  channel platform — never guessed). Shown next to the customer name
+ *  in the list and in the thread header, like the competitor's inbox. */
+const CHANNEL_BADGE: Record<string, { label: string; cls: string }> = {
+  messenger: { label: "MESSENGER", cls: "bg-blue-100 text-blue-800" },
+  instagram: { label: "INSTAGRAM", cls: "bg-pink-100 text-pink-800" },
+  whatsapp: { label: "WHATSAPP", cls: "bg-green-100 text-green-800" },
+  tiktok: { label: "TIKTOK", cls: "bg-slate-800 text-white" },
+  webchat: { label: "WEBCHAT", cls: "bg-teal-100 text-teal-800" },
+  facebook_comment: { label: "COMMENT", cls: "bg-sky-100 text-sky-800" },
+};
+
+function ChannelBadge({ conversation }: { conversation: Conversation }) {
+  const raw = String(conversation.channel || conversation.channelType || conversation.channel_type || "messenger").toLowerCase();
+  const badge = CHANNEL_BADGE[raw] ?? { label: raw.toUpperCase(), cls: "bg-slate-100 text-slate-700" };
+  return <span className={`shrink-0 rounded px-2 py-0.5 text-[11px] font-bold tracking-wide ${badge.cls}`}>{badge.label}</span>;
+}
+
 function msgText(m: Message): string {
   return m.body || m.text || m.content || "";
 }
@@ -104,6 +119,67 @@ export default function InboxPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  // Manual customer photo (shop-owner upload from the Inbox — the
+  // workaround for Meta not returning a photo for some senders).
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState("");
+  const [photoSaving, setPhotoSaving] = useState(false);
+  const photoInputRef = useRef<HTMLInputElement | null>(null);
+
+  const clearPhotoPick = useCallback(() => {
+    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    setPhotoFile(null);
+    setPhotoPreview("");
+    if (photoInputRef.current) photoInputRef.current.value = "";
+  }, [photoPreview]);
+
+  const onPhotoFileChange = (file: File | undefined) => {
+    setError("");
+    if (!file) return;
+    const allowed = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+    if (!allowed.includes(file.type)) {
+      setError(t("inbox.invalidPhotoType", "Only jpg, png, gif or webp photos are allowed.", "শুধু jpg, png, gif বা webp ছবি দেওয়া যায়।"));
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setError(t("inbox.photoTooLarge", "Photo must be 25 MB or smaller.", "ছবি ২৫ MB-এর বেশি হতে পারবে না।"));
+      return;
+    }
+    if (photoPreview) URL.revokeObjectURL(photoPreview);
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+  };
+
+  const savePhoto = async () => {
+    const customerId = selected?.customer?.id;
+    if (!customerId || !photoFile) return;
+    setPhotoSaving(true);
+    setError("");
+    try {
+      await customersApi.uploadPhoto(customerId, photoFile);
+      clearPhotoPick();
+      await refreshThread();
+      await loadList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("inbox.photoUploadFailed", "Could not upload the photo.", "ছবি আপলোড করা যায়নি।"));
+    } finally {
+      setPhotoSaving(false);
+    }
+  };
+
+  const removePhoto = async () => {
+    const customerId = selected?.customer?.id;
+    if (!customerId) return;
+    if (!window.confirm(t("inbox.removePhotoConfirm", "Remove this customer's photo?", "এই কাস্টমারের ছবি সরিয়ে দেবো?"))) return;
+    setError("");
+    try {
+      await customersApi.deletePhoto(customerId);
+      await refreshThread();
+      await loadList();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("inbox.photoRemoveFailed", "Could not remove the photo.", "ছবি সরানো যায়নি।"));
+    }
+  };
 
   const loadList = useCallback(async () => {
     try {
@@ -127,6 +203,7 @@ export default function InboxPage() {
   const openThread = async (id: string) => {
     setSelectedId(id);
     setError("");
+    clearPhotoPick();
     try {
       const detail = await inboxApi.get(id);
       setSelected(detail);
@@ -196,7 +273,27 @@ export default function InboxPage() {
   };
 
   const aiMode = selected ? aiModeOf(selected.conversation) : null;
+  const ownerMarked = selected ? Boolean(selected.ownerMarked) : false;
   const unknownLabel = t("common.unknownCustomer", "Unknown customer", "অজানা কাস্টমার");
+
+  // AI উত্তর ON/OFF switch (top of the open conversation). ON = mode
+  // 'ai' (the AI auto-replies); OFF = mode 'human' (the owner replies
+  // himself). Same mode the Messenger '.' command writes.
+  const toggleAiMode = () => {
+    if (!selectedId || aiMode === null) return;
+    doAction(
+      () => inboxApi.setMode(selectedId, aiMode ? "human" : "ai"),
+      t("inbox.aiToggleFailed", "AI switch failed", "AI সুইচ ব্যর্থ"),
+    );
+  };
+
+  const markOwner = () => {
+    if (!selectedId) return;
+    doAction(
+      () => inboxApi.markOwner(selectedId),
+      t("inbox.markOwnerFailed", "Marking owner failed", "মালিক চিহ্নিত করা ব্যর্থ"),
+    );
+  };
 
   return (
     <div>
@@ -242,15 +339,19 @@ export default function InboxPage() {
             >
               <CustomerAvatar name={convName(c, unknownLabel)} pictureUrl={convPicture(c)} />
               <span className="min-w-0 flex-1">
-                <span className="flex justify-between gap-2">
-                  <span className="truncate font-medium">{convName(c, unknownLabel)}</span>
+                <span className="flex items-center justify-between gap-2">
+                  <span className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-medium">{convName(c, unknownLabel)}</span>
+                    <ChannelBadge conversation={c} />
+                  </span>
                   <span className="shrink-0 text-xs text-slate-400">{fmtDate(c.updatedAt || c.updated_at || c.lastMessageAt || c.last_message_at)}</span>
                 </span>
                 <span className="block truncate text-sm text-slate-500">{c.lastMessage || c.last_message || ""}</span>
-                <span className="mt-1 flex gap-2">
-                  <span className="rounded bg-slate-100 px-2 py-0.5 text-xs">{convChannel(c)}</span>
-                  {c.status && <span className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800">{c.status}</span>}
-                </span>
+                {c.status && (
+                  <span className="mt-1 flex gap-2">
+                    <span className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800">{c.status}</span>
+                  </span>
+                )}
               </span>
             </button>
           ))}
@@ -268,29 +369,65 @@ export default function InboxPage() {
               <div className="card p-4">
                 <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
                   <div className="flex items-center gap-3">
-                    <CustomerAvatar
-                      name={selected.customer?.name || convName(selected.conversation, unknownLabel)}
-                      pictureUrl={
-                        selected.customer?.picture_url || selected.customer?.pictureUrl || convPicture(selected.conversation)
-                      }
-                      sizeClass="h-12 w-12"
-                    />
+                    <span className="relative shrink-0">
+                      <CustomerAvatar
+                        name={selected.customer?.name || convName(selected.conversation, unknownLabel)}
+                        pictureUrl={
+                          selected.customer?.picture_url || selected.customer?.pictureUrl || convPicture(selected.conversation)
+                        }
+                        sizeClass="h-12 w-12"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => photoInputRef.current?.click()}
+                        title={t("inbox.changePhoto", "Change photo", "ছবি বদলান")}
+                        aria-label={t("inbox.changePhoto", "Change photo", "ছবি বদলান")}
+                        className="absolute -bottom-1 -right-1 flex h-5 w-5 items-center justify-center rounded-full bg-white text-xs shadow ring-1 ring-orange-200 transition hover:bg-orange-50"
+                      >
+                        📷
+                      </button>
+                    </span>
                     <div>
-                      <h2 className="font-bold text-lg">{selected.customer?.name || convName(selected.conversation, unknownLabel)}</h2>
-                      <p className="text-sm text-slate-500">
-                        {convChannel(selected.conversation)}
-                        {selected.customer?.phone ? ` • ${selected.customer.phone}` : ""}
-                      </p>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <h2 className="font-bold text-lg">{selected.customer?.name || convName(selected.conversation, unknownLabel)}</h2>
+                        <ChannelBadge conversation={selected.conversation} />
+                      </div>
+                      {selected.customer?.phone && (
+                        <p className="text-sm text-slate-500">{selected.customer.phone}</p>
+                      )}
                     </div>
                   </div>
-                  <span
-                    className={`text-xs font-medium px-3 py-1 rounded-full ${
-                      aiMode ? "bg-teal-100 text-teal-800" : aiMode === false ? "bg-amber-100 text-amber-800" : "bg-slate-100 text-slate-600"
-                    }`}
-                  >
-                    {aiMode === true ? t("inbox.aiModeOn", "🤖 AI mode — AI is replying", "🤖 AI মোড — AI উত্তর দিচ্ছে") : aiMode === false ? t("inbox.aiModeOff", "🧑 Human handling — AI is off", "🧑 মানুষ নিচ্ছে — AI বন্ধ") : t("inbox.aiModeUnknown", "AI mode: unknown", "AI মোড: অজানা")}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium">{t("inbox.aiReply", "AI reply", "AI উত্তর")}</span>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={aiMode === true}
+                      disabled={aiMode === null}
+                      onClick={toggleAiMode}
+                      title={t("inbox.aiToggleTitle", "ON: the AI auto-replies. OFF: you reply yourself. Messenger '.' does the same.", "চালু: AI নিজে উত্তর দেবে। বন্ধ: আপনি নিজে উত্তর দেবেন। Messenger-এ '.' লিখলেও একই কাজ হবে।")}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50 ${aiMode ? "bg-teal-600" : "bg-slate-300"}`}
+                    >
+                      <span
+                        className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${aiMode ? "left-[22px]" : "left-0.5"}`}
+                      />
+                    </button>
+                    <span className={`text-xs font-medium ${aiMode ? "text-teal-700" : aiMode === false ? "text-amber-700" : "text-slate-500"}`}>
+                      {aiMode === true
+                        ? t("inbox.aiModeOnShort", "On — AI is replying", "চালু — AI উত্তর দিচ্ছে")
+                        : aiMode === false
+                          ? t("inbox.aiModeOffShort", "Off — you reply", "বন্ধ — আপনি উত্তর দিচ্ছেন")
+                          : t("inbox.aiModeUnknown", "AI mode: unknown", "AI মোড: অজানা")}
+                    </span>
+                  </div>
                 </div>
+                <p className="pt-2 text-xs text-slate-500">
+                  {t(
+                    "inbox.dotHint",
+                    "Type '.' in Messenger to turn the AI on/off — page owner only. The switch or '.' cancels a timed handover.",
+                    "Messenger-এ '.' লিখলে AI চালু/বন্ধ হয় — শুধু পেজের মালিকের জন্য। সুইচ বা '.' চাপলে টাইমার হ্যান্ডওভার বাতিল হয়ে যায়।",
+                  )}
+                </p>
 
                 <div className="space-y-3 overflow-y-auto py-4 max-h-[420px] scroll-smooth">
                   {selected.messages.length === 0 && <p className="text-sm text-slate-500">{t("inbox.noMessages", "No messages yet.", "এখনো কোনো মেসেজ নেই।")}</p>}
@@ -299,7 +436,14 @@ export default function InboxPage() {
                     const isMe = sender.includes("agent") || sender.includes("business") || sender.includes("owner") || sender.includes("shop") || sender.includes("admin") || sender === "me";
                     const isAi = sender.includes("ai");
                     return (
-                      <div key={m.id} className={`flex ${isMe || isAi ? "justify-end" : "justify-start"}`}>
+                      <div key={m.id} className={`flex items-end gap-2 ${isMe || isAi ? "justify-end" : "justify-start"}`}>
+                        {!isMe && !isAi && (
+                          <CustomerAvatar
+                            name={selected.customer?.name || convName(selected.conversation, unknownLabel)}
+                            pictureUrl={selected.customer?.picture_url || selected.customer?.pictureUrl || convPicture(selected.conversation)}
+                            sizeClass="h-8 w-8"
+                          />
+                        )}
                         <div className={`max-w-[75%] rounded-xl px-3 py-2 text-sm shadow-sm ${isMe ? "bg-brand text-white" : isAi ? "bg-violet-100 text-violet-900" : "bg-slate-100"}`}>
                           <p>{msgText(m)}</p>
                           <p className={`text-[11px] mt-1 ${isMe ? "text-orange-100" : "text-slate-400"}`}>
@@ -362,9 +506,77 @@ export default function InboxPage() {
                   />
                   <p className="font-medium">{selected.customer?.name || "—"}</p>
                 </div>
+                {/* Manual photo: Meta does not return a photo for some
+                    senders, so the shop owner can upload one here. The
+                    uploaded photo is marked manual and is never
+                    overwritten by a later Meta refresh. */}
+                <input
+                  ref={photoInputRef}
+                  type="file"
+                  accept="image/jpeg,image/png,image/gif,image/webp"
+                  className="hidden"
+                  onChange={(e) => onPhotoFileChange(e.target.files?.[0])}
+                />
+                {photoPreview ? (
+                  <div className="mb-2 rounded-lg border border-orange-100 bg-orange-50/50 p-3">
+                    <p className="mb-2 text-xs text-slate-500">{t("inbox.photoPreview", "New photo preview", "নতুন ছবির প্রিভিউ")}</p>
+                    <img src={photoPreview} alt={t("inbox.photoPreview", "New photo preview", "নতুন ছবির প্রিভিউ")} className="h-20 w-20 rounded-full object-cover" />
+                    <div className="mt-2 flex gap-2">
+                      <button
+                        onClick={savePhoto}
+                        disabled={photoSaving}
+                        className="rounded-lg bg-teal-600 px-3 py-2 text-sm text-white transition hover:bg-teal-700 disabled:opacity-50"
+                      >
+                        {photoSaving ? t("inbox.savingPhoto", "Saving photo…", "ছবি সংরক্ষণ হচ্ছে…") : t("inbox.savePhoto", "Save photo", "ছবি সংরক্ষণ করুন")}
+                      </button>
+                      <button
+                        onClick={clearPhotoPick}
+                        disabled={photoSaving}
+                        className="rounded-lg bg-slate-100 px-3 py-2 text-sm transition hover:bg-slate-200 disabled:opacity-50"
+                      >
+                        {t("common.cancel", "Cancel", "বাতিল")}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="mb-2 flex flex-wrap gap-2">
+                    <button
+                      onClick={() => photoInputRef.current?.click()}
+                      className="rounded-lg bg-orange-100 px-3 py-2 text-sm text-orange-800 transition hover:bg-orange-200"
+                    >
+                      📷 {selected.customer?.picture_url || selected.customer?.pictureUrl
+                        ? t("inbox.changePhoto", "Change photo", "ছবি বদলান")
+                        : t("inbox.addPhoto", "Add photo", "ছবি যোগ করুন")}
+                    </button>
+                    {(selected.customer?.picture_url || selected.customer?.pictureUrl) && (
+                      <button
+                        onClick={removePhoto}
+                        className="rounded-lg bg-slate-100 px-3 py-2 text-sm transition hover:bg-slate-200"
+                      >
+                        {t("inbox.removePhoto", "Remove photo", "ছবি সরান")}
+                      </button>
+                    )}
+                  </div>
+                )}
                 <p className="text-sm"><span className="text-slate-500">{t("common.name", "Name", "নাম")}:</span> {selected.customer?.name || "—"}</p>
                 <p className="text-sm"><span className="text-slate-500">{t("common.phone", "Phone", "ফোন")}:</span> {selected.customer?.phone || "—"}</p>
                 <p className="text-sm"><span className="text-slate-500">{t("common.address", "Address", "ঠিকানা")}:</span> {selected.customer?.address || "—"}</p>
+                {/* Owner marking for Messenger dot commands: only the
+                    sender marked here may toggle the AI with '.' / '.on' /
+                    '.off' from a personal account. A random customer
+                    typing '.' is ignored silently. */}
+                {ownerMarked ? (
+                  <p className="mt-2 rounded-lg bg-teal-50 px-3 py-2 text-sm text-teal-800">
+                    ✓ {t("inbox.ownerMarked", "Marked as the page owner — '.' in Messenger toggles the AI for this chat.", "পেজের মালিক হিসেবে চিহ্নিত — Messenger-এ '.' লিখলে এই চ্যাটের AI চালু/বন্ধ হবে।")}
+                  </p>
+                ) : (
+                  <button
+                    onClick={markOwner}
+                    className="mt-2 rounded-lg bg-slate-100 px-3 py-2 text-sm transition hover:bg-slate-200"
+                  >
+                    {t("inbox.markOwner", "This customer is me (the page owner)", "এই কাস্টমারটিই আমি (পেজের মালিক)")}
+                  </button>
+                )}
 
                 <h4 className="font-bold mt-4 mb-2 text-sm">{t("inbox.openOrders", "Open orders", "খোলা অর্ডার")}</h4>
                 {(!selected.openOrders || selected.openOrders.length === 0) && (

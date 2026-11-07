@@ -139,7 +139,10 @@ async function main() {
   check('helper never throws (fetch + enrich return null / swallow)', (profileSrc.includes('catch {') || profileSrc.includes('catch (err)')) && profileSrc.includes('return null'));
   check('helper sends the Page token as Bearer (never in a URL)', profileSrc.includes('Authorization: `Bearer ${input.pageToken}`') && !profileSrc.includes('access_token=${'));
   check('helper only fills missing name/picture (never overwrites)', profileSrc.includes('input.customerName ?? profile.name') && profileSrc.includes('input.customerPictureUrl ?? profile.pictureUrl'));
-  check('helper skips the fetch when name + picture are already known', profileSrc.includes('if (input.customerName && input.customerPictureUrl) return;'));
+  // (Manual-photo update, 2026-11-07: the guard is now needName/needPicture —
+  // a 'manual' photo is never refreshed — but it still skips the fetch
+  // entirely when the customer already has both name and picture.)
+  check('helper skips the fetch when name + picture are already known', profileSrc.includes('if (!needName && !needPicture) return;'));
   check('helper falls back to the Page conversations endpoint when the direct PSID read is blocked', profileSrc.includes('/conversations?user_id=') && profileSrc.includes('participants'));
   check('helper takes the participant whose id matches the sender', profileSrc.includes('!== senderId') || profileSrc.includes('=== senderId'));
   check('helper logs profile failures instead of failing silently', profileSrc.includes('console.warn') && profileSrc.includes('[meta-profile]'));
@@ -156,7 +159,9 @@ async function main() {
 
   const inboxSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/inbox/routes.ts'), 'utf8');
   check('inbox list + detail return customer_picture_url', inboxSrc.includes('cu.picture_url AS customer_picture_url'));
-  check('inbox detail returns the customer picture_url', inboxSrc.includes('picture_url, channel_identities'));
+  // (Manual-photo update, 2026-11-07: the detail SELECT now also returns
+  // picture_source between picture_url and channel_identities.)
+  check('inbox detail returns the customer picture_url', inboxSrc.includes('picture_url, picture_source, channel_identities'));
 
   const pageSrc = fs.readFileSync(path.join(ROOT, 'apps/web/app/inbox/page.tsx'), 'utf8');
   check('inbox page renders a photo avatar with initials fallback', pageSrc.includes('<img src={pictureUrl}') && pageSrc.includes('CustomerAvatar'));

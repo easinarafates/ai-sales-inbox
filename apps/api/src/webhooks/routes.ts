@@ -6,6 +6,12 @@ import { enqueueMessage } from '../queue/client';
 import { recordAttributionForPlatformPost } from '../analytics/attribution';
 import { enrichCustomerProfileIfNeeded } from '../channels/meta-profile';
 import { decryptToken } from '../db/crypto';
+import {
+  applyDotCommand,
+  getWorkspaceOwnerPsid,
+  parseDotCommand,
+  sendModeConfirmation,
+} from '../inbox/dot-commands';
 
 export const webhooksRouter = Router();
 
@@ -18,6 +24,7 @@ interface CustomerRow {
   name: string | null;
   phone: string | null;
   picture_url: string | null;
+  picture_source: string | null;
   channel_identities: unknown;
 }
 
@@ -33,7 +40,7 @@ async function findOrCreateCustomer(
   const lookup = () =>
     queryOne<CustomerRow>(
       workspaceId,
-      `SELECT id, name, phone, picture_url, channel_identities FROM customers
+      `SELECT id, name, phone, picture_url, picture_source, channel_identities FROM customers
        WHERE workspace_id = $1 AND channel_identities @> $2::jsonb LIMIT 1`,
       [workspaceId, JSON.stringify([{ platform, senderId }])],
     );
@@ -46,7 +53,7 @@ async function findOrCreateCustomer(
     // winner instead of returning a second row for the same PSID.
     const { rows } = await query<CustomerRow>(
       workspaceId,
-      'INSERT INTO customers (workspace_id, name, channel_identities) VALUES ($1, $2, $3::jsonb) ON CONFLICT DO NOTHING RETURNING id, name, phone, picture_url, channel_identities',
+      'INSERT INTO customers (workspace_id, name, channel_identities) VALUES ($1, $2, $3::jsonb) ON CONFLICT DO NOTHING RETURNING id, name, phone, picture_url, picture_source, channel_identities',
       [workspaceId, name ?? null, identity],
     );
     if (rows[0]) return rows[0];
@@ -193,14 +200,65 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
     for (const event of messaging) {
       const sender = event.sender as { id?: string } | undefined;
       const recipient = event.recipient as { id?: string } | undefined;
-      const message = event.message as { mid?: string; text?: string } | undefined;
-      if (!sender?.id || !message?.text) continue;
+      const message = event.message as { mid?: string; text?: string; is_echo?: boolean; app_id?: string } | undefined;
       const platform = (body.object as string) === 'instagram' ? 'instagram' : 'messenger';
+
+      // --- Message echoes: the owner replying AS the Page ---
+      // Meta delivers a human's Page-Inbox reply as a message echo:
+      // sender = the Page, recipient = the customer, and (for the
+      // legacy shape) event.message_echoes instead of event.message.
+      // An echo WITH an app_id came from an app (including our own
+      // sends) — only an echo WITHOUT app_id is a human owner typing
+      // in Page Inbox, so only those may toggle the AI.
+      const echoRaw = (event as Record<string, unknown>).message_echoes as
+        | { mid?: string; text?: string; app_id?: string }
+        | undefined;
+      const echo = echoRaw ?? (message?.is_echo ? message : undefined);
+      if (echo && typeof echo.text === 'string') {
+        const pageId = sender?.id ?? '';
+        const customerPsid = recipient?.id ?? '';
+        if (!pageId || !customerPsid) continue;
+        const cmd = parseDotCommand(echo.text);
+        if (!cmd) continue; // ordinary echoes are not our business
+        if (echo.app_id) continue; // an app sent it — never a human owner
+        const channel = await findChannelByExternalId(platform, pageId);
+        if (!channel) continue; // Unknown page — not connected to any workspace.
+        const echoMid = echo.mid ?? `echo-${customerPsid}-${Date.now()}`;
+        if (!(await recordWebhookEvent(channel.workspace_id, platform, echoMid, event))) continue; // duplicate
+        const customer = await findOrCreateCustomer(channel.workspace_id, platform, customerPsid);
+        const conversationId = await findOrCreateConversation(channel.workspace_id, channel.id, customer.id);
+        const newMode = await applyDotCommand(channel.workspace_id, conversationId, cmd);
+        if (newMode) await sendModeConfirmation(channel.workspace_id, conversationId, newMode);
+        continue;
+      }
+
+      if (!sender?.id || !message?.text) continue;
       // The channel is the page/account that received the message.
       const channel = await findChannelByExternalId(platform, recipient?.id ?? '');
       if (!channel) continue; // Unknown page — not connected to any workspace.
       const eventId = message.mid ?? `${sender.id}-${Date.now()}`;
       if (!(await recordWebhookEvent(channel.workspace_id, platform, eventId, event))) continue; // duplicate
+
+      // --- Dot commands from a personal account ---
+      // Only the sender the workspace marked as its owner may toggle
+      // the AI this way. A random customer typing '.' is ignored
+      // silently: the message is saved so the owner can see it, but it
+      // is never enqueued for an AI reply and never toggles anything —
+      // the customer is never told the command exists.
+      const dotCmd = parseDotCommand(message.text);
+      if (dotCmd) {
+        const ownerPsid = await getWorkspaceOwnerPsid(channel.workspace_id);
+        const customer = await findOrCreateCustomer(channel.workspace_id, platform, sender.id);
+        const conversationId = await findOrCreateConversation(channel.workspace_id, channel.id, customer.id);
+        if (ownerPsid && ownerPsid === sender.id) {
+          const newMode = await applyDotCommand(channel.workspace_id, conversationId, dotCmd);
+          if (newMode) await sendModeConfirmation(channel.workspace_id, conversationId, newMode);
+        } else {
+          await saveIncomingMessage(channel.workspace_id, conversationId, message.text, message.mid);
+        }
+        continue;
+      }
+
       const customer = await findOrCreateCustomer(channel.workspace_id, platform, sender.id);
       // First sight of this sender: fetch the real name + photo from
       // Graph with the Page token (best-effort — a failed fetch never
@@ -219,6 +277,9 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
           customerId: customer.id,
           customerName: customer.name,
           customerPictureUrl: customer.picture_url,
+          // A manual photo (picture_source='manual') is never touched
+          // by the Meta refresh — see meta-profile.ts.
+          customerPictureSource: customer.picture_source,
           pageToken,
           // Messenger: external_id IS the Page ID. Instagram: the Page ID
           // lives in source_id (external_id is the IG user ID). The Page

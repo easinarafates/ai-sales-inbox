@@ -3,6 +3,7 @@ import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { deliverOutgoingMessage } from '../channels/meta-send';
+import { applyAiMode, getWorkspaceOwnerPsid, toggleAiMode } from './dot-commands';
 
 export const inboxRouter = Router();
 inboxRouter.use(requireAuth);
@@ -88,7 +89,7 @@ inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   const customer = conversation.customer_id
     ? await queryOne(
         workspaceId,
-        'SELECT id, name, phone, address, picture_url, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+        'SELECT id, name, phone, address, picture_url, picture_source, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
         [workspaceId, conversation.customer_id],
       )
     : null;
@@ -98,7 +99,25 @@ inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
      WHERE workspace_id = $1 AND conversation_id = $2 AND status <> 'delivered' ORDER BY created_at DESC`,
     [workspaceId, req.params.id],
   );
-  res.json({ conversation, customer, messages, openOrders: orders });
+  // Is this customer the one the workspace marked as its owner? The
+  // raw PSID is never returned — only the boolean, so the UI can show
+  // the "marked as owner" state without ever displaying the PSID.
+  let ownerMarked = false;
+  const ownerPsid = await getWorkspaceOwnerPsid(workspaceId);
+  if (ownerPsid && customer?.channel_identities) {
+    try {
+      // pg returns jsonb as a parsed value; PGlite may return a string.
+      const raw = customer.channel_identities as unknown;
+      const identities =
+        typeof raw === 'string'
+          ? (JSON.parse(raw) as { platform?: string; senderId?: string }[])
+          : (raw as { platform?: string; senderId?: string }[]);
+      ownerMarked = Array.isArray(identities) && identities.some((i) => i.senderId === ownerPsid);
+    } catch {
+      ownerMarked = false;
+    }
+  }
+  res.json({ conversation, customer, messages, openOrders: orders, ownerMarked });
 });
 
 /** POST /api/inbox/:id/reply {body} — team member sends an outgoing message.
@@ -188,18 +207,77 @@ inboxRouter.post('/:id/done', async (req: AuthRequest, res: Response) => {
   res.json({ conversation: rows[0] });
 });
 
+/**
+ * Set a conversation's AI mode. The shared applyAiMode also cancels any
+ * pending timed handover, so a manual toggle can never be undone by the
+ * auto-return sweep.
+ */
 async function setMode(workspaceId: string, conversationId: string, mode: 'ai' | 'human', res: Response): Promise<void> {
-  const { rows } = await query(
-    workspaceId,
-    'UPDATE conversations SET mode = $1, updated_at = now() WHERE workspace_id = $2 AND id = $3 RETURNING id, mode',
-    [mode, workspaceId, conversationId],
-  );
-  if (rows.length === 0) {
+  const next = await applyAiMode(workspaceId, conversationId, mode);
+  if (!next) {
     res.status(404).json({ error: 'Conversation not found' });
     return;
   }
-  res.json({ conversation: rows[0] });
+  res.json({ conversation: { id: conversationId, mode: next } });
 }
+
+/**
+ * POST /api/inbox/:id/mode {mode: 'ai'|'human'} — the Inbox AI উত্তর
+ * switch. Explicit set (unlike /dot, which flips).
+ */
+inboxRouter.post('/:id/mode', async (req: AuthRequest, res: Response) => {
+  const { mode } = (req.body ?? {}) as { mode?: string };
+  if (mode !== 'ai' && mode !== 'human') {
+    res.status(400).json({ error: "mode must be 'ai' or 'human'" });
+    return;
+  }
+  await setMode(getWorkspaceId(req), req.params.id, mode, res);
+});
+
+/**
+ * POST /api/inbox/:id/mark-owner — mark this conversation's customer as
+ * the workspace owner, so their '.' / '.on' / '.off' messages in
+ * Messenger toggle the AI. The sender PSID comes from the customer's
+ * stored Messenger/Instagram identity; the response never contains the
+ * raw PSID — only whether the customer is now the marked owner.
+ */
+inboxRouter.post('/:id/mark-owner', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const conversation = await queryOne<{ customer_id: string | null }>(
+    workspaceId,
+    'SELECT customer_id FROM conversations WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, req.params.id],
+  );
+  if (!conversation?.customer_id) {
+    res.status(404).json({ error: 'Conversation not found' });
+    return;
+  }
+  const customer = await queryOne(
+    workspaceId,
+    'SELECT channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, conversation.customer_id],
+  );
+  let senderId: string | null = null;
+  try {
+    const raw = customer?.channel_identities as unknown;
+    const identities =
+      typeof raw === 'string'
+        ? (JSON.parse(raw) as { platform?: string; senderId?: string }[])
+        : (raw as { platform?: string; senderId?: string }[]);
+    const found = Array.isArray(identities)
+      ? identities.find((i) => (i.platform === 'messenger' || i.platform === 'instagram') && i.senderId)
+      : undefined;
+    senderId = found?.senderId ?? null;
+  } catch {
+    senderId = null;
+  }
+  if (!senderId) {
+    res.status(400).json({ error: 'This customer has no Messenger/Instagram identity to mark as owner' });
+    return;
+  }
+  await query(workspaceId, 'UPDATE workspaces SET owner_psid = $1, updated_at = now() WHERE id = $2', [senderId, workspaceId]);
+  res.json({ ownerMarked: true });
+});
 
 /**
  * POST /api/inbox/:id/dot — a '.' from the owner toggles ai <-> human mode.
@@ -208,16 +286,12 @@ async function setMode(workspaceId: string, conversationId: string, mode: 'ai' |
  */
 inboxRouter.post('/:id/dot', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
-  const current = await queryOne<{ mode: string }>(
-    workspaceId,
-    'SELECT mode FROM conversations WHERE workspace_id = $1 AND id = $2',
-    [workspaceId, req.params.id],
-  );
-  if (!current) {
+  const next = await toggleAiMode(workspaceId, req.params.id);
+  if (!next) {
     res.status(404).json({ error: 'Conversation not found' });
     return;
   }
-  await setMode(workspaceId, req.params.id, current.mode === 'ai' ? 'human' : 'ai', res);
+  res.json({ conversation: { id: req.params.id, mode: next } });
 });
 
 inboxRouter.post('/:id/takeover', async (req: AuthRequest, res: Response) => {

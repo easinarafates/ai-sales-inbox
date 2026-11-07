@@ -1,0 +1,16 @@
+-- 19-ai-toggle-owner.sql — owner PSID for Messenger dot commands.
+--
+-- The shop owner can toggle the AI for a chat from inside Messenger by
+-- sending '.' / '.on' / '.off' — but ONLY the owner's own account may do
+-- it. A random customer typing '.' must be ignored silently, so the
+-- webhook needs to know which PSID belongs to the shop owner. This column
+-- records it (set from the Inbox: "এই কাস্টমারটিই আমি (পেজের মালিক)").
+--   NULL — no owner marked yet: dot commands from personal accounts are
+--          ignored; echoes (the owner replying AS the Page) still work,
+--          because an echo proves the sender IS the Page.
+-- The value is a Page-scoped sender ID, never shown in the UI beyond a
+-- "marked as owner" state — the Inbox never displays the raw PSID.
+-- Idempotent: safe to re-run on every start (same pattern as the other
+-- migrations). Loads on local PGlite (auto-run on boot) and on Neon
+-- Postgres with the HTTPS loader before the next deploy.
+ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS owner_psid TEXT;
