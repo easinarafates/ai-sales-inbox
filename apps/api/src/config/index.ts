@@ -23,10 +23,12 @@ export const config = {
   jwtSecret: required('JWT_SECRET'),
   tokenEncryptionKey: required('TOKEN_ENCRYPTION_KEY'),
   geminiApiKey: process.env.GEMINI_API_KEY ?? '',
-  // Gemini default model: gemini-3.5-flash (verified 2026-11-07 with
-  // the current key). gemini-2.5-flash returns 404 "no longer available
-  // to new users" for this key, and gemini-2.0-flash no longer exists.
-  aiModel: optional('AI_MODEL', 'gemini-3.5-flash'),
+  // Gemini default model: gemini-3.5-flash-lite (verified 2026-11-07 with
+  // the current key; ~9 paisa/reply vs ~49 for gemini-3.5-flash, and its
+  // free-tier quota is separate so flash 429s do not block it).
+  // gemini-2.5-flash returns 404 "no longer available to new users" for
+  // this key, and gemini-2.0-flash no longer exists.
+  aiModel: optional('AI_MODEL', 'gemini-3.5-flash-lite'),
   /** AI provider: 'gemini' (paid/billing) or 'groq' (free tier, no card). */
   aiProvider: optional('AI_PROVIDER', 'gemini'),
   groqApiKey: process.env.GROQ_API_KEY ?? '',

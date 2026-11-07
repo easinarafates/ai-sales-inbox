@@ -7,6 +7,7 @@ import {
   isAiProviderId,
   providerModels,
   resolveWorkspaceAi,
+  systemDefaultAi,
 } from '../ai-agent/providers';
 
 /**
@@ -16,7 +17,11 @@ import {
  *   the last 10 ledger rows (provider, model, tokens, costs, fallback).
  * - POST /api/ai-providers/select {provider, model?}: pick the workspace's
  *   provider. A provider with no API key is NOT selectable as live (400).
- *   provider 'system' resets to the system default (NULL columns).
+ *   provider 'system' resets to the system default: it resolves the
+ *   configured default (gemini / gemini-3.5-flash-lite) and WRITES it
+ *   into the workspace columns. It never NULLs them — the old NULL
+ *   reset silently left workspaces on the Groq env default, whose
+ *   quota is exhausted, so live replies stopped (2026-11-07).
  *   Gemini used to be blocked (Google billing on the old key) — with the
  *   current key it generates fine, so it is selectable like the others;
  *   if a provider call fails at reply time the agent falls back to Groq.
@@ -52,12 +57,19 @@ aiProvidersRouter.post('/ai-providers/select', async (req: AuthRequest, res: Res
   const workspaceId = getWorkspaceId(req);
   const { provider, model } = (req.body ?? {}) as { provider?: string; model?: string };
 
-  // Reset to the system default (env AI_PROVIDER).
+  // Reset to the system default: resolve the configured default
+  // (gemini / gemini-3.5-flash-lite) and WRITE it into the columns.
+  // The old code NULLed the columns here, which silently left the
+  // workspace on the env default — Groq, whose free-tier quota is
+  // exhausted — so live AI replies stopped and fell back to demo mode
+  // (the 2026-11-07 provider-NULL reverts, 4 times). The columns
+  // must never be NULLed by this path again.
   if (provider === 'system') {
+    const def = systemDefaultAi();
     await query(
       workspaceId,
-      'UPDATE workspaces SET ai_provider = NULL, ai_model = NULL, updated_at = now() WHERE id = $1',
-      [workspaceId],
+      'UPDATE workspaces SET ai_provider = $2, ai_model = $3, updated_at = now() WHERE id = $1',
+      [workspaceId, def.provider, def.model],
     );
     const current = await resolveWorkspaceAi(workspaceId);
     res.json({ current, providers: allProviderInfo(), reset: true });

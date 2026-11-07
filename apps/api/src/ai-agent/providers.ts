@@ -95,7 +95,8 @@ export function providerModels(provider: AiProviderId): string[] {
       return unique(config.openaiModel, 'gpt-5-mini', 'gpt-5', 'gpt-5-nano', 'gpt-4o-mini', 'gpt-4o');
     case 'gemini':
       // Both verified working with the current key (2026-11-07):
-      // gemini-3.5-flash (default) and gemini-3-flash-preview.
+      // gemini-3.5-flash-lite (default) and gemini-3.5-flash, plus
+      // gemini-3-flash-preview.
       return unique(config.aiModel, 'gemini-3.5-flash', 'gemini-3-flash-preview');
     case 'claude':
       return unique(config.claudeModel, 'claude-haiku-5-5');
@@ -126,7 +127,7 @@ function providerCostNote(provider: AiProviderId): string {
     case 'openai':
       return 'পেইড — টোকেন হিসেবে খরচ (gpt-5-mini: $0.25 / $2.00 প্রতি ১০ লাখ টোকেন)';
     case 'gemini':
-      return 'পেইড — টোকেন হিসেবে খরচ (gemini-3.5-flash)';
+      return 'পেইড — টোকেন হিসেবে খরচ (gemini-3.5-flash-lite)';
     case 'claude':
       return 'পেইড — টোকেন হিসেবে খরচ (Claude Sonnet 5.5: $2 / $10 প্রতি ১০ লাখ টোকেন)';
   }
@@ -210,17 +211,36 @@ export interface WorkspaceAiChoice {
 }
 
 /**
+ * The platform's configured system default AI — what "Use system
+ * default" resolves to. It comes from env (AI_PROVIDER / AI_MODEL);
+ * when the env is missing or invalid it falls back to the known-good
+ * default gemini / gemini-3.5-flash-lite. It NEVER returns NULL and
+ * NEVER resolves to Groq: Groq's free-tier quota is exhausted, so a
+ * workspace left on the Groq default silently stops getting live
+ * replies (the 2026-11-07 provider-NULL reverts). Callers that apply
+ * this default WRITE these concrete values into the workspace columns
+ * instead of NULLing them.
+ */
+export function systemDefaultAi(): { provider: AiProviderId; model: string } {
+  const provider: AiProviderId = isAiProviderId(config.aiProvider) ? config.aiProvider : 'gemini';
+  const model = providerDefaultModel(provider);
+  if (model?.trim()) return { provider, model: model.trim() };
+  // Config is broken (empty model) — fall back to the known-good default.
+  return { provider: 'gemini', model: 'gemini-3.5-flash-lite' };
+}
+
+/**
  * The workspace's AI choice: explicit ai_provider/ai_model columns win;
- * NULL columns mean "system default" (AI_PROVIDER env, default groq in
- * this repo's .env). An invalid stored value falls back to the env default
- * instead of crashing. Pass the already-loaded workspace row when the
- * caller has it, to avoid a second query.
+ * NULL columns mean "system default" (AI_PROVIDER env, default gemini /
+ * gemini-3.5-flash-lite). An invalid stored value falls back to the env
+ * default instead of crashing. Pass the already-loaded workspace row when
+ * the caller has it, to avoid a second query.
  */
 export async function resolveWorkspaceAi(
   workspaceId: string,
   preloaded?: { ai_provider?: string | null; ai_model?: string | null },
 ): Promise<WorkspaceAiChoice> {
-  const envProvider: AiProviderId = isAiProviderId(config.aiProvider) ? config.aiProvider : 'groq';
+  const envProvider: AiProviderId = isAiProviderId(config.aiProvider) ? config.aiProvider : 'gemini';
   const row =
     preloaded ??
     (await queryOne<{ ai_provider: string | null; ai_model: string | null }>(
