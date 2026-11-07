@@ -8,7 +8,8 @@
  *   its own outgoing reply message and its own ai_usage_ledger + wallet
  *   bookkeeping — the agent's own audit trail, not business data.
  * - It NEVER states a price, stock level, discount or delivery time except
- *   from a tool result. Unknown questions go to a human (low confidence).
+ *   from a tool result or the product list in its prompt (same DB data, read
+ *   in processBatch). Unknown questions go to a human (low confidence).
  * - Phase 2 plug points (NOT built here): courier booking / live tracking
  *   (shipments table + track_parcel tool), follow-up engine (followups
  *   table), post scheduling, WhatsApp/TikTok channels. See the stubs in
@@ -183,6 +184,42 @@ function toolResultAmountsFrom(results: { tool: string; result: unknown }[]): nu
   };
   results.forEach((r) => walk(r.result));
   return amounts;
+}
+
+/**
+ * Deterministic reply from READ-ONLY product tool results (search_products,
+ * check_stock, send_product_cards). Used ONLY when the second provider call
+ * fails or is unparseable and the model's draft reply states no price —
+ * so a "checking…" placeholder is never sent when the real data is already
+ * in hand. Every amount comes from the DB via the tools, so the
+ * hallucination guard below still validates it. Returns null when the
+ * results carry no product rows (e.g. create_order) — then the draft reply
+ * stands and the order flow is untouched.
+ */
+function deterministicProductReply(results: { tool: string; result: unknown }[]): string | null {
+  const seen = new Map<string, { name: string; price: number; stock: number }>();
+  for (const { tool, result } of results) {
+    const r = result as Record<string, unknown> | null;
+    if (!r || typeof r !== 'object') continue;
+    if (tool === 'search_products' || tool === 'check_stock') {
+      const prods = Array.isArray(r.products) ? (r.products as Record<string, unknown>[]) : [];
+      for (const p of prods) {
+        if (p && typeof p.name === 'string' && typeof p.price_paisa === 'number') {
+          seen.set(String(p.id ?? p.name), { name: p.name, price: Number(p.price_paisa) / 100, stock: Number(p.stock ?? 0) });
+        }
+      }
+    } else if (tool === 'send_product_cards') {
+      const cards = Array.isArray(r.cards) ? (r.cards as Record<string, unknown>[]) : [];
+      for (const c of cards) {
+        if (c && typeof c.name === 'string' && typeof c.pricePaisa === 'number') {
+          seen.set(String(c.productId ?? c.name), { name: c.name, price: Number(c.pricePaisa) / 100, stock: Number(c.stock ?? 0) });
+        }
+      }
+    }
+  }
+  if (seen.size === 0) return null;
+  const lines = [...seen.values()].map((p) => `${p.name} — দাম ৳${p.price}, স্টক ${p.stock}টি আছে।`);
+  return lines.join('\n') + '\nঅর্ডার করতে চাইলে জানাবেন।';
 }
 
 export function guardReplyAgainstHallucination(
@@ -659,10 +696,18 @@ export async function processBatch(
       results.push({ tool: call.tool, result });
     }
     toolResultAmounts = toolResultAmountsFrom(results);
+    // Second-call prompt is SHORT on purpose: the full prompt (~2700
+    // tokens) doubles input tokens and burns quota on the follow-up, and
+    // a 429/503 there used to send the model's placeholder reply as-is.
+    // The draft reply + tool results + the customer's messages are all
+    // the model needs to write the final answer.
     const secondPrompt =
-      `${prompt}\n\nটুলের ফলাফল (শুধু এখানকার তথ্য ব্যবহার করো, বানিয়ে কিছু বলো না):\n` +
-      JSON.stringify(results, null, 2) +
+      `কাস্টমারের মেসেজ:\n${batchedMessages.map((m) => m.body ?? '').join('\n')}\n\n` +
+      `তোমার খসড়া উত্তর: ${parsed?.reply ?? ''}\n\n` +
+      `টুলের ফলাফল (শুধু এখানকার তথ্য ব্যবহার করো, বানিয়ে কিছু বলো না):\n` +
+      JSON.stringify(results) +
       '\n\nএবার চূড়ান্ত JSON উত্তর দাও: {"reply": "...", "confidence": 0.0-1.0, "toolCalls": []}';
+    let secondOk = false;
     try {
       const second = await callProvider(provider, secondPrompt, ai.model);
       if (second) {
@@ -671,10 +716,20 @@ export async function processBatch(
           parsed = secondParsed;
           inputTokens += second.inputTokens;
           outputTokens += second.outputTokens;
+          secondOk = true;
         }
       }
     } catch (err) {
       console.error(`[agent] second ${provider} call failed:`, (err as Error).message);
+    }
+    // Second call failed or unparseable: if the draft reply has no price
+    // but the tools returned real product data, answer deterministically
+    // from that data instead of sending a "checking…" placeholder.
+    if (!secondOk && parsed && extractPriceAmounts(parsed.reply).length === 0) {
+      const deterministic = deterministicProductReply(results);
+      if (deterministic) {
+        parsed = { reply: deterministic, confidence: 0.95, toolCalls: [] };
+      }
     }
   }
 
