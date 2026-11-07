@@ -294,55 +294,66 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       }
 
       const customer = await findOrCreateCustomer(channel.workspace_id, platform, sender.id);
-      // First sight of this sender: fetch the real name + photo from
-      // Graph (best-effort — a failed fetch never blocks the message
-      // or the AI reply). Page token first; the connecting user's token
-      // (migration 20) is retried when the Page token cannot load the
-      // sender, and /me/picture is tried for the marked owner.
-      if (channel.token_encrypted || channel.user_token_encrypted) {
-        let pageToken: string | null = null;
-        try {
-          pageToken = channel.token_encrypted ? decryptToken(channel.token_encrypted) : null;
-        } catch {
-          pageToken = null;
-        }
-        let userToken: string | null = null;
-        try {
-          userToken = channel.user_token_encrypted ? decryptToken(channel.user_token_encrypted) : null;
-        } catch {
-          userToken = null;
-        }
-        // The owner-photo route only matters when the sender still has
-        // no photo and a user token exists — fetch the marked owner
-        // PSID only then, never on every message.
-        let ownerPsid: string | null = null;
-        if (userToken && !customer.picture_url && customer.picture_source !== 'manual') {
-          ownerPsid = await getWorkspaceOwnerPsid(channel.workspace_id).catch(() => null);
-        }
-        await enrichCustomerProfileIfNeeded({
-          workspaceId: channel.workspace_id,
-          platform: platform as 'messenger' | 'instagram',
-          senderId: sender.id,
-          customerId: customer.id,
-          customerName: customer.name,
-          customerPictureUrl: customer.picture_url,
-          // A manual photo (picture_source='manual') is never touched
-          // by the Meta refresh — see meta-profile.ts.
-          customerPictureSource: customer.picture_source,
-          pageToken,
-          userToken,
-          ownerPsid,
-          // Messenger: external_id IS the Page ID. Instagram: the Page ID
-          // lives in source_id (external_id is the IG user ID). The Page
-          // ID powers the conversations-endpoint profile fallback.
-          pageId: platform === 'instagram' ? (channel.source_id ?? null) : (channel.external_id ?? recipient?.id ?? null),
-        }).catch((err) => console.error('[webhook/meta] profile enrich failed:', (err as Error).message));
-      }
       const conversationId = await findOrCreateConversation(channel.workspace_id, channel.id, customer.id);
       await saveIncomingMessage(channel.workspace_id, conversationId, message.text, message.mid);
       await enqueueMessage(channel.workspace_id, conversationId, message.text).catch((err) =>
         console.error('[webhook/meta] enqueue failed:', (err as Error).message),
       );
+      // --- Profile enrich AFTER save/enqueue (fire-and-forget) ---
+      // It used to run awaited BEFORE the save (~1-2s of Graph calls on
+      // every message whose photo is missing — the direct PSID read
+      // 400s for this sender, then the conversations fallback runs).
+      // The reply does not need the name/photo, so it must never sit on
+      // the reply's critical path: it now runs in the background via
+      // waitUntil (the function stays alive for it on Vercel), and the
+      // Inbox picks the name/photo up on its next refresh. A failed
+      // enrich is logged and never blocks anything.
+      if (channel.token_encrypted || channel.user_token_encrypted) {
+        // Capture the sender id here: inside the async closure below TS
+        // can no longer narrow sender.id to string (the guard above did).
+        const senderId = sender.id;
+        waitUntil(
+          (async () => {
+            let pageToken: string | null = null;
+            try {
+              pageToken = channel.token_encrypted ? decryptToken(channel.token_encrypted) : null;
+            } catch {
+              pageToken = null;
+            }
+            let userToken: string | null = null;
+            try {
+              userToken = channel.user_token_encrypted ? decryptToken(channel.user_token_encrypted) : null;
+            } catch {
+              userToken = null;
+            }
+            // The owner-photo route only matters when the sender still has
+            // no photo and a user token exists — fetch the marked owner
+            // PSID only then, never on every message.
+            let ownerPsid: string | null = null;
+            if (userToken && !customer.picture_url && customer.picture_source !== 'manual') {
+              ownerPsid = await getWorkspaceOwnerPsid(channel.workspace_id).catch(() => null);
+            }
+            await enrichCustomerProfileIfNeeded({
+              workspaceId: channel.workspace_id,
+              platform: platform as 'messenger' | 'instagram',
+              senderId,
+              customerId: customer.id,
+              customerName: customer.name,
+              customerPictureUrl: customer.picture_url,
+              // A manual photo (picture_source='manual') is never touched
+              // by the Meta refresh — see meta-profile.ts.
+              customerPictureSource: customer.picture_source,
+              pageToken,
+              userToken,
+              ownerPsid,
+              // Messenger: external_id IS the Page ID. Instagram: the Page ID
+              // lives in source_id (external_id is the IG user ID). The Page
+              // ID powers the conversations-endpoint profile fallback.
+              pageId: platform === 'instagram' ? (channel.source_id ?? null) : (channel.external_id ?? recipient?.id ?? null),
+            });
+          })().catch((err) => console.error('[webhook/meta] profile enrich failed:', (err as Error).message)),
+        );
+      }
     }
 
     // 2) Facebook comments: entry.changes[] with field=feed, value.item=comment

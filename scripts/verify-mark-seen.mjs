@@ -25,7 +25,7 @@
  * - The webhook fires mark_seen fire-and-forget (waitUntil) BEFORE the
  *   profile enrich, the save and the AI enqueue — so the Seen tick goes
  *   out while the AI is still thinking.
- * - The AI debounce is 1s (was 3s) in both the BullMQ job delay and the
+ * - The AI debounce is 300ms (was 1s) in both the BullMQ job delay and the
  *   in-process fallback.
  * - Live: a customer webhook message produces a mark_seen hit on the
  *   stub within 2s, before any reply, and an AI reply (demo mode here —
@@ -176,14 +176,14 @@ async function main() {
     whSrc.includes("mark_seen failed:") && whSrc.includes('// --- Seen FIRST'));
 
   const queueSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/queue/client.ts'), 'utf8');
-  check('BullMQ inbox job delay is 1s', queueSrc.includes('delay: 1000,'));
-  check('in-process fallback debounce is 1s', queueSrc.includes('setTimeout(resolve, 1000)'));
-  check('no 3s debounce left in the queue client',
-    !queueSrc.includes('delay: 3000') && !queueSrc.includes('setTimeout(resolve, 3000)'));
+  check('BullMQ inbox job delay is 300ms', queueSrc.includes('delay: 300,'));
+  check('in-process fallback debounce is 300ms', queueSrc.includes('setTimeout(resolve, 300)'));
+  check('no 1s debounce left in the queue client',
+    !queueSrc.includes('delay: 1000,') && !queueSrc.includes('setTimeout(resolve, 1000)'));
   check('queue dedup guard still in place (fallbackInFlight)', queueSrc.includes('fallbackInFlight'));
 
   const workerSrc = fs.readFileSync(path.join(ROOT, 'workers/queue/src/worker.ts'), 'utf8');
-  check('worker comments say 1s debounce', workerSrc.includes('1s delay') && workerSrc.includes('1s debounce'));
+  check('worker comments say 300ms debounce', workerSrc.includes('300ms delay') && workerSrc.includes('300ms debounce'));
 
   // ---------- Stub Graph server ----------
   const stubHits = [];

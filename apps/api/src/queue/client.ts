@@ -48,10 +48,13 @@ async function processInProcess(
   conversationId: string,
   text?: string,
 ): Promise<void> {
-  // Same 1s debounce as the BullMQ job: messages from the same customer
-  // arriving within 1 second batch into one run, because the agent reloads
-  // the full recent history from the DB when it runs.
-  await new Promise((resolve) => setTimeout(resolve, 1000));
+  // Short 300ms debounce (was 1s): messages from the same customer
+  // arriving within 300ms batch into one run, because the agent reloads
+  // the full recent history from the DB when it runs. A message arriving
+  // later is NOT lost — the re-check loop below answers it in a second
+  // run, so the shorter window only trades a little batching for speed
+  // (the customer must see the reply within a few seconds).
+  await new Promise((resolve) => setTimeout(resolve, 300));
   // A message can arrive while the agent is working (after the history
   // snapshot below). Loop so a message skipped by the dedup guard still
   // gets an answer: after each reply, check whether new inbound messages
@@ -97,12 +100,12 @@ async function processInProcess(
 
 /**
  * Enqueue a conversation for AI processing, debounced.
- * Same jobId per conversation + 1s delay: messages from the same customer
- * arriving within 1 second batch into one job, because the worker reloads
+ * Same jobId per conversation + 300ms delay: messages from the same customer
+ * arriving within 300ms batch into one job, because the worker reloads
  * the full recent history from the DB when the job runs (so a duplicate
  * enqueue for an already-delayed job is safely ignored).
  *
- * The delay is 1s on purpose (was 3s): the customer must see the reply
+ * The delay is 300ms on purpose (was 1s): the customer must see the reply
  * within a few seconds of messaging, and the dedup guard + the re-check
  * loop below still keep rapid messages from producing duplicate replies.
  *
@@ -114,7 +117,12 @@ export async function enqueueMessage(
   conversationId: string,
   text?: string,
 ): Promise<void> {
-  if (queueUsable !== false) {
+  // Vercel has no Redis: the ioredis connection never becomes 'ready',
+  // so attempting inboxQueue.add() on every cold start burned up to 2s
+  // before falling back in-process. Skip the attempt outright unless
+  // the connection is already ready (local dev with a real Redis) —
+  // the in-process fallback below handles the message identically.
+  if (queueUsable !== false && connection.status === 'ready') {
     try {
       await Promise.race([
         inboxQueue.add(
@@ -122,7 +130,7 @@ export async function enqueueMessage(
           { workspaceId, conversationId, text },
           {
             jobId: `conv-${conversationId}`,
-            delay: 1000,
+            delay: 300,
             attempts: 3,
             backoff: { type: 'exponential', delay: 1000 },
             removeOnComplete: true,
@@ -130,7 +138,7 @@ export async function enqueueMessage(
           },
         ),
         new Promise<never>((_resolve, reject) =>
-          setTimeout(() => reject(new Error('queue add timed out')), 2000),
+          setTimeout(() => reject(new Error('queue add timed out')), 800),
         ),
       ]);
       queueUsable = true;

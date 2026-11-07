@@ -3,7 +3,7 @@
  * (Phase 2) with a 60s sweep for due scheduled posts and follow-ups.
  *
  * Flow: webhook (API) saves the inbound message and enqueues a debounced job
- * (jobId per conversation + 1s delay) -> this worker picks it up, reloads the
+ * (jobId per conversation + 300ms delay) -> this worker picks it up, reloads the
  * latest inbound messages for the conversation from the DB, and calls the
  * API's AI agent (processBatch) to answer them as one batch.
  *
@@ -67,7 +67,7 @@ function startWorker(): void {
     'inbox-messages',
     async (job) => {
       const { workspaceId, conversationId } = job.data;
-      // Reload the recent inbound messages — this is what makes the 1s debounce
+      // Reload the recent inbound messages — this is what makes the 300ms debounce
       // a true batch: messages that arrived while the job was delayed are included.
       const { rows } = await query<{ body: string | null }>(
         workspaceId,

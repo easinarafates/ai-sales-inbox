@@ -475,18 +475,38 @@ export async function processBatch(
   conversationId: string,
   batchedMessages: BatchedMessage[],
 ): Promise<ProcessBatchResult> {
-  const workspace = await queryOne<{
-    id: string;
-    ai_enabled: boolean;
-    balance_paisa: number;
-    practice_mode: boolean;
-    ai_provider: string | null;
-    ai_model: string | null;
-  }>(
-    workspaceId,
-    'SELECT id, ai_enabled, balance_paisa, practice_mode, ai_provider, ai_model FROM workspaces WHERE id = $1',
-    [workspaceId],
-  );
+  // Independent reads fired together: on Vercel each query is a
+  // US→Singapore round-trip (~200ms), so sequential awaits cost
+  // seconds across the reply path. Group 1 needs only the ids;
+  // group 2 needs the conversation row (and runs only once the
+  // workspace exists, so the allowance check never creates a trial
+  // subscription for a bogus workspace); group 3 (context) runs only
+  // after the subscription gate passes. All early-return semantics
+  // and check order are unchanged.
+  const [workspace, conversation] = await Promise.all([
+    queryOne<{
+      id: string;
+      ai_enabled: boolean;
+      balance_paisa: number;
+      practice_mode: boolean;
+      ai_provider: string | null;
+      ai_model: string | null;
+    }>(
+      workspaceId,
+      'SELECT id, ai_enabled, balance_paisa, practice_mode, ai_provider, ai_model FROM workspaces WHERE id = $1',
+      [workspaceId],
+    ),
+    queryOne<{
+      id: string;
+      mode: string;
+      customer_id: string | null;
+      channel_id: string | null;
+    }>(
+      workspaceId,
+      'SELECT id, mode, customer_id, channel_id FROM conversations WHERE workspace_id = $1 AND id = $2',
+      [workspaceId, conversationId],
+    ),
+  ]);
   if (!workspace) return { replied: false, reason: 'workspace_not_found' };
   if (!workspace.ai_enabled) return { replied: false, reason: 'ai_disabled' };
   // The workspace's AI choice (explicit columns, else the system default).
@@ -499,27 +519,26 @@ export async function processBatch(
   // NOTE: no early balance check here — the subscription gate below decides.
   // Replies included in the plan are free (0 paisa) even with a 0 wallet
   // balance; only over-limit replies need wallet money (10 paisa).
-
-  const conversation = await queryOne<{
-    id: string;
-    mode: string;
-    customer_id: string | null;
-    channel_id: string | null;
-  }>(
-    workspaceId,
-    'SELECT id, mode, customer_id, channel_id FROM conversations WHERE workspace_id = $1 AND id = $2',
-    [workspaceId, conversationId],
-  );
   if (!conversation) return { replied: false, reason: 'conversation_not_found' };
   if (conversation.mode !== 'ai') return { replied: false, reason: 'human_mode' };
 
-  const customer = conversation.customer_id
-    ? await queryOne<{ id: string; name: string | null; phone: string | null; channel_identities: unknown }>(
-        workspaceId,
-        'SELECT id, name, phone, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
-        [workspaceId, conversation.customer_id],
-      )
-    : null;
+  const [customer, channel, allowance] = await Promise.all([
+    conversation.customer_id
+      ? queryOne<{ id: string; name: string | null; phone: string | null; channel_identities: unknown }>(
+          workspaceId,
+          'SELECT id, name, phone, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+          [workspaceId, conversation.customer_id],
+        )
+      : Promise.resolve(null),
+    conversation.channel_id
+      ? queryOne<{ platform: string }>(
+          workspaceId,
+          'SELECT platform FROM channels WHERE workspace_id = $1 AND id = $2',
+          [workspaceId, conversation.channel_id],
+        )
+      : Promise.resolve(null),
+    checkAiReplyAllowance(workspaceId),
+  ]);
 
   // Practice mode: only answer the owner's test messages. A test customer is
   // marked with {"is_test": true} in channel_identities (set by the owner /
@@ -528,14 +547,6 @@ export async function processBatch(
     return { replied: false, reason: 'practice_mode_non_test' };
   }
 
-  const channel = conversation.channel_id
-    ? await queryOne<{ platform: string }>(
-        workspaceId,
-        'SELECT platform FROM channels WHERE workspace_id = $1 AND id = $2',
-        [workspaceId, conversation.channel_id],
-      )
-    : null;
-
   // --- Subscription gate (before any AI work) ---
   // Active plan + under the included limit → reply free (0 paisa).
   // Active + over the limit → 10 paisa overage while the wallet lasts.
@@ -543,7 +554,6 @@ export async function processBatch(
   // Instead the customer gets a Bengali upgrade notice (saved as the
   // outgoing message, so the inbox shows it) and the team gets a ticket.
   // Never silently fail, never silently reply.
-  const allowance = await checkAiReplyAllowance(workspaceId);
   if (!allowance.allowed) {
     await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, UPGRADE_NOTICE);
     await runTool(toolDb, workspaceId, 'create_ticket', {
@@ -554,28 +564,30 @@ export async function processBatch(
     return { replied: false, reason: 'subscription_blocked', confidence: 0 };
   }
 
-  const { rows: historyRows } = await query<{ direction: string; body: string | null }>(
-    workspaceId,
-    `SELECT direction, body FROM messages WHERE workspace_id = $1 AND conversation_id = $2
-     ORDER BY created_at DESC LIMIT 20`,
-    [workspaceId, conversationId],
-  );
-  const { rows: openOrders } = await query<{ id: string; status: string; total_paisa: number }>(
-    workspaceId,
-    `SELECT id, status, total_paisa FROM orders
-     WHERE workspace_id = $1 AND conversation_id = $2 AND status <> 'delivered' ORDER BY created_at DESC LIMIT 5`,
-    [workspaceId, conversationId],
-  );
-  const { rows: knowledge } = await query<{ title: string | null; body: string }>(
-    workspaceId,
-    'SELECT title, body FROM knowledge_items WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 10',
-    [workspaceId],
-  );
-  const { rows: products } = await query<{ id: string; name: string; price_paisa: number; stock: number }>(
-    workspaceId,
-    'SELECT id, name, price_paisa, stock FROM products WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 20',
-    [workspaceId],
-  );
+  const [{ rows: historyRows }, { rows: openOrders }, { rows: knowledge }, { rows: products }] = await Promise.all([
+    query<{ direction: string; body: string | null }>(
+      workspaceId,
+      `SELECT direction, body FROM messages WHERE workspace_id = $1 AND conversation_id = $2
+       ORDER BY created_at DESC LIMIT 20`,
+      [workspaceId, conversationId],
+    ),
+    query<{ id: string; status: string; total_paisa: number }>(
+      workspaceId,
+      `SELECT id, status, total_paisa FROM orders
+       WHERE workspace_id = $1 AND conversation_id = $2 AND status <> 'delivered' ORDER BY created_at DESC LIMIT 5`,
+      [workspaceId, conversationId],
+    ),
+    query<{ title: string | null; body: string }>(
+      workspaceId,
+      'SELECT title, body FROM knowledge_items WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 10',
+      [workspaceId],
+    ),
+    query<{ id: string; name: string; price_paisa: number; stock: number }>(
+      workspaceId,
+      'SELECT id, name, price_paisa, stock FROM products WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 20',
+      [workspaceId],
+    ),
+  ]);
 
   const ctx: AgentContext = {
     customerName: customer?.name ?? null,
