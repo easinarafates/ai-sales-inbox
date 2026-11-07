@@ -16,12 +16,11 @@
  *
  * DEMO MODE (no key, or provider call fails):
  * - Gemini: a real key is configured in apps/api/.env (AI_MODEL in config,
- *   now gemini-2.5-flash — gemini-2.0-flash no longer exists). BUT generation
- *   is currently BLOCKED by billing: the Google Cloud project returns
- *   HTTP 403 "The Gemini API free tier is not available for this project"
- *   (and gemini-2.5-flash itself returns 404 "no longer available to new
- *   users", suggesting gemini-3.8-flash). Until billing is enabled on that
- *   project, every Gemini call fails and the agent falls back to Groq.
+ *   now gemini-3.5-flash — gemini-2.5-flash returns 404 "no longer
+ *   available to new users" for this key, and gemini-2.0-flash no longer
+ *   exists). The current key generates fine (verified 2026-11-07); the
+ *   old key was blocked by billing (HTTP 403 "free tier is not available
+ *   for this project"). If a Gemini call fails, the agent falls back to Groq.
  * - Groq (AI_PROVIDER=groq): free tier, no card — key from console.groq.com.
  *   Groq replies cost 0 paisa. If the key is missing/invalid or Groq
  *   returns 429, the agent falls back to the same demo mode.

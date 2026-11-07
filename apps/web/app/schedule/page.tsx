@@ -128,6 +128,7 @@ export default function SchedulePage() {
   const [captionOptions, setCaptionOptions] = useState<string[]>([]);
   const [captionLoading, setCaptionLoading] = useState(false);
   const [captionAi, setCaptionAi] = useState(false);
+  const [captionAnalysis, setCaptionAnalysis] = useState("");
 
   // Edit form
   const [editing, setEditing] = useState<ScheduledPost | null>(null);
@@ -228,16 +229,23 @@ export default function SchedulePage() {
   const autoCaption = async () => {
     setError("");
     setCaptionLoading(true);
+    setCaptionAnalysis("");
     try {
       const res = await schedulingApi.autoCaption({
         productIds: productIds.length ? productIds : undefined,
         topic: caption.trim() || undefined,
         lang,
+        mediaUrls: mediaUrl ? [mediaUrl] : undefined,
       });
       setCaptionOptions(res.options || []);
       setCaptionAi(res.aiGenerated);
+      if (res.mediaAnalysis?.analysis) {
+        setCaptionAnalysis(res.mediaAnalysis.analysis);
+      }
       if (!res.aiGenerated) {
         setNotice(t("caption_template_note", "AI did not answer, so template captions from your real product data are shown.", "AI উত্তর দেয়নি, তাই আপনার আসল প্রোডাক্টের তথ্য দিয়ে সাধারণ ক্যাপশন দেখানো হচ্ছে।"));
+      } else if (res.note) {
+        setNotice(res.note);
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : t("caption_failed", "Could not make a caption.", "ক্যাপশন বানানো যায়নি।"));
@@ -476,7 +484,7 @@ export default function SchedulePage() {
                 <MediaPreview url={mediaUrl} alt={t("media_preview_alt", "Media preview", "মিডিয়ার প্রিভিউ")} />
                 <button
                   type="button"
-                  onClick={() => { setMediaUrl(""); setMediaUrlInput(""); }}
+                  onClick={() => { setMediaUrl(""); setMediaUrlInput(""); setCaptionAnalysis(""); setCaptionOptions([]); }}
                   className="text-sm text-red-700 underline mt-1"
                 >
                   {t("remove_media", "Remove media", "মিডিয়া সরান")}
@@ -503,6 +511,12 @@ export default function SchedulePage() {
             </span>
           )}
         </div>
+        {captionAnalysis && (
+          <div className="text-sm bg-teal-50 border border-teal-200 rounded-lg px-3 py-2">
+            <span className="font-medium">{t("caption_media_seen", "AI saw in your media:", "AI আপনার ছবি/ভিডিওতে দেখলো:")}</span>{" "}
+            {captionAnalysis}
+          </div>
+        )}
         {captionOptions.length > 0 && (
           <div className="space-y-2">
             <p className="text-sm font-medium">{t("caption_options_title", "Pick a caption:", "ক্যাপশন বেছে নিন:")}</p>
@@ -510,7 +524,7 @@ export default function SchedulePage() {
               <button
                 key={i}
                 type="button"
-                onClick={() => { setCaption(opt); setCaptionOptions([]); }}
+                onClick={() => { setCaption(opt); setCaptionOptions([]); setCaptionAnalysis(""); }}
                 className="block w-full text-left text-sm bg-orange-50 hover:bg-orange-100 border border-orange-200 rounded-lg px-3 py-2 whitespace-pre-wrap"
               >
                 {opt}

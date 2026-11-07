@@ -1,7 +1,7 @@
 -- AI সেলস ইনবক্স প্ল্যাটফর্ম — ডাটাবেস স্কিমা (PostgreSQL + pgvector)
 -- উৎস: AI.pdf সেকশন ২ (টেক স্ট্যাক) ও সেকশন ৭ (ডাটাবেস টেবিল)
 -- নিয়ম: প্রতিটি টেবিলে workspace_id আছে, প্রতিটি কোয়েরিতে এটি দিয়ে ফিল্টার করতে হবে।
--- AI মডেলের নাম কোডে হার্ডকোড নয়, কনফিগে থাকবে (এখন gemini-2.5-flash)।
+-- AI মডেলের নাম কোডে হার্ডকোড নয়, কনফিগে থাকবে (এখন gemini-3.5-flash)।
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;

@@ -60,8 +60,8 @@ export interface AiProviderInfo {
 
 /** Canned reply used ONLY by the test mock (never a live answer).
  * Token counts (20,000 in / 10,000 out) are deliberately large so the
- * verifier can assert cost math exactly: gpt-6-luna $0.10/$0.50 gives
- * (0.02 x 0.10 + 0.01 x 0.50) x 12200 = 85 paisa; claude-sonnet-5-5
+ * verifier can assert cost math exactly: gpt-5-mini $0.25/$2.00 gives
+ * (0.02 x 0.25 + 0.01 x 2.00) x 12200 = 305 paisa; claude-sonnet-5-5
  * $2/$10 gives (0.02 x 2 + 0.01 x 10) x 12200 = 1708 paisa. */
 const MOCK_REPLY =
   '{"reply": "দাম জানতে চেয়েছেন — প্রোডাক্টের দাম টুল থেকে দেখে জানাচ্ছি।", "confidence": 0.9, "toolCalls": []}';
@@ -90,12 +90,13 @@ export function providerModels(provider: AiProviderId): string[] {
     case 'groq':
       return unique(config.groqModel, 'openai/gpt-oss-120b', 'qwen/qwen3.8-27b');
     case 'openai':
-      // gpt-6-luna is the verified current model on OpenAI's pricing page;
-      // gpt-4o-mini / gpt-4o stay selectable (secondary sources report
-      // both are removed from the API on 2027-01-14).
-      return unique(config.openaiModel, 'gpt-6-luna', 'gpt-4o-mini', 'gpt-4o');
+      // All five verified in the key's /v1/models list (2026-11-07):
+      // gpt-5-mini (default), gpt-5, gpt-5-nano, gpt-4o-mini, gpt-4o.
+      return unique(config.openaiModel, 'gpt-5-mini', 'gpt-5', 'gpt-5-nano', 'gpt-4o-mini', 'gpt-4o');
     case 'gemini':
-      return [config.aiModel];
+      // Both verified working with the current key (2026-11-07):
+      // gemini-3.5-flash (default) and gemini-3-flash-preview.
+      return unique(config.aiModel, 'gemini-3.5-flash', 'gemini-3-flash-preview');
     case 'claude':
       return unique(config.claudeModel, 'claude-haiku-5-5');
   }
@@ -110,7 +111,7 @@ function providerName(provider: AiProviderId): string {
     case 'groq':
       return 'Groq';
     case 'openai':
-      return 'ChatGPT (OpenAI)';
+      return 'OpenAI';
     case 'gemini':
       return 'Gemini (Google)';
     case 'claude':
@@ -123,9 +124,9 @@ function providerCostNote(provider: AiProviderId): string {
     case 'groq':
       return 'ফ্রি — প্রতি রিপ্লাই ৳০ (ফ্রি টিয়ার: দিনে ১,০০০ উত্তর)';
     case 'openai':
-      return 'পেইড — টোকেন হিসেবে খরচ (gpt-6-luna: $0.10 / $0.50 প্রতি ১০ লাখ টোকেন)';
+      return 'পেইড — টোকেন হিসেবে খরচ (gpt-5-mini: $0.25 / $2.00 প্রতি ১০ লাখ টোকেন)';
     case 'gemini':
-      return 'পেইড — টোকেন হিসেবে খরচ; এই প্রজেক্টে এখন ব্লকড (বিলিং লাগবে)';
+      return 'পেইড — টোকেন হিসেবে খরচ (gemini-3.5-flash)';
     case 'claude':
       return 'পেইড — টোকেন হিসেবে খরচ (Claude Sonnet 5.5: $2 / $10 প্রতি ১০ লাখ টোকেন)';
   }
@@ -134,8 +135,10 @@ function providerCostNote(provider: AiProviderId): string {
 /**
  * Status of one provider: 'connected' (key present, or test mock),
  * 'key_missing' (no key — never selectable as live), or 'blocked'
- * (Gemini: key present but Google blocks generation on this project
- * until billing is enabled — HTTP 403).
+ * (kept for compatibility — no provider is hardcoded blocked any more:
+ * Gemini used to be blocked by Google billing (HTTP 403) on the old
+ * key, but the current key generates fine, so a present key means
+ * connected; a real API failure still falls back to Groq at call time).
  */
 export function providerInfo(provider: AiProviderId): AiProviderInfo {
   const mock = isMockProvider(provider);
@@ -152,13 +155,7 @@ export function providerInfo(provider: AiProviderId): AiProviderInfo {
   if (mock) {
     status = 'connected';
   } else if (keyPresent) {
-    if (provider === 'gemini') {
-      status = 'blocked';
-      blockedReason =
-        'Google এই প্রজেক্টে ফ্রি ব্যবহার বন্ধ করেছে (HTTP 403 — বিলিং চালু করতে হবে, কমপক্ষে $30)। বিলিং চালু না হওয়া পর্যন্ত Gemini উত্তর দেবে না, Groq দিয়ে চলবে।';
-    } else {
-      status = 'connected';
-    }
+    status = 'connected';
   }
   return {
     id: provider,

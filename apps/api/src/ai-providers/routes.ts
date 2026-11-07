@@ -17,9 +17,9 @@ import {
  * - POST /api/ai-providers/select {provider, model?}: pick the workspace's
  *   provider. A provider with no API key is NOT selectable as live (400).
  *   provider 'system' resets to the system default (NULL columns).
- *   Gemini has a key but is blocked (Google billing) — it CAN be chosen,
- *   but the response carries the warning and the agent falls back to Groq
- *   until billing is enabled.
+ *   Gemini used to be blocked (Google billing on the old key) — with the
+ *   current key it generates fine, so it is selectable like the others;
+ *   if a provider call fails at reply time the agent falls back to Groq.
  */
 export const aiProvidersRouter = Router();
 aiProvidersRouter.use(requireAuth);

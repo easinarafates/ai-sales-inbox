@@ -8,6 +8,7 @@ import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { callGroq } from '../ai-agent/groq';
+import { analyzePostMedia } from './media-caption';
 import { publishScheduledPost, type ScheduledPostRow } from './publisher';
 import { enqueueScheduledPost } from './queue';
 
@@ -452,23 +453,37 @@ schedulingRouter.post('/scheduled-posts/upload', async (req: AuthRequest, res: R
 });
 
 /**
- * POST /api/scheduled-posts/auto-caption { productIds?, topic?, lang? }
+ * POST /api/scheduled-posts/auto-caption { productIds?, topic?, lang?, mediaUrls? | mediaUrl? }
  * Drafts 2–3 caption options with the existing Groq helper, using the
  * products' REAL name / price / stock from the DB. Prices and stock are
  * NEVER invented — the prompt only gets DB values, and if the AI reply
  * does not contain a real price it is discarded in favour of template
  * captions built from the same DB values. Without an AI key (or on AI
  * failure) the templates are returned with aiGenerated: false.
+ *
+ * MEDIA-AWARE: when mediaUrls (or mediaUrl) is given, the attached
+ * image/video is ANALYZED with Gemini vision first (see
+ * ./media-caption.ts) and its caption — written from what is actually
+ * in the media — is put first in the options, with `mediaAnalysis`
+ * (what the AI saw) in the response. If vision fails (no key, fetch
+ * failure, Gemini error) the endpoint falls back to the text-only
+ * captions below and says so in `note` — an analysis is never faked.
  * Default language is Bengali; lang='en' gives English captions.
  */
 schedulingRouter.post('/scheduled-posts/auto-caption', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
-  const { productIds, topic, lang } = (req.body ?? {}) as {
+  const { productIds, topic, lang, mediaUrls, mediaUrl } = (req.body ?? {}) as {
     productIds?: string[];
     topic?: string;
     lang?: string;
+    mediaUrls?: string[];
+    mediaUrl?: string;
   };
   const english = lang === 'en';
+  const mediaList = [
+    ...(Array.isArray(mediaUrls) ? mediaUrls : []),
+    ...(typeof mediaUrl === 'string' ? [mediaUrl] : []),
+  ].filter((u) => typeof u === 'string' && u.trim());
   let products: { id: string; name: string; price_paisa: number; stock: number }[] = [];
   if (Array.isArray(productIds) && productIds.length > 0) {
     const { rows } = await query(
@@ -526,6 +541,43 @@ schedulingRouter.post('/scheduled-posts/auto-caption', async (req: AuthRequest, 
   const containsRealPrice = (text: string): boolean =>
     products.length === 0 || priceStrings.some((s) => text.includes(s));
 
+  // Media-aware caption: if media is attached, analyze the FIRST item
+  // with Gemini vision and put its caption first. Any vision failure
+  // falls back to the text-only captions below (with a note) — the
+  // analysis is never faked.
+  let mediaCaption: string | null = null;
+  let mediaAnalysis: { analysis: string; mediaType: 'image' | 'video' } | null = null;
+  let visionNote: string | null = null;
+  if (mediaList.length > 0) {
+    const productContext =
+      products.length > 0
+        ? products
+            .map((p) => `${p.name}, ৳${taka(Number(p.price_paisa))}, stock ${p.stock}`)
+            .join('; ')
+        : undefined;
+    try {
+      const analyzed = await analyzePostMedia({
+        mediaUrl: mediaList[0],
+        lang: english ? 'en' : 'bn',
+        productContext,
+      });
+      mediaCaption = analyzed.caption;
+      // Price guard: a linked product's real price must appear in the
+      // caption — append it truthfully if the vision caption missed it.
+      if (!containsRealPrice(mediaCaption)) {
+        mediaCaption += english
+          ? `\nPrice: ${productBits}`
+          : `\nদাম: ${productBits}`;
+      }
+      mediaAnalysis = { analysis: analyzed.analysis, mediaType: analyzed.mediaType };
+    } catch (err) {
+      visionNote = (err as Error).message;
+      console.error('[scheduling] auto-caption vision failed, using text captions:', visionNote);
+    }
+  }
+
+  // Text-only captions (Groq, or DB-truthful templates on failure).
+  let groqOptions: string[] | null = null;
   try {
     const context =
       products.length > 0
@@ -561,14 +613,13 @@ schedulingRouter.post('/scheduled-posts/auto-caption', async (req: AuthRequest, 
         .filter((line, i, arr) => arr.indexOf(line) === i)
         .slice(0, 3);
       if (options.length >= 2 && options.some(containsRealPrice)) {
-        const filled = [...options];
-        while (filled.length < 3) {
-          const extra = templates.find((t) => !filled.includes(t));
+        groqOptions = [...options];
+        while (groqOptions.length < 3) {
+          const extra = templates.find((t) => !groqOptions!.includes(t));
           if (!extra) break;
-          filled.push(extra);
+          groqOptions.push(extra);
         }
-        res.json({ options: filled.slice(0, 3), aiGenerated: true });
-        return;
+        groqOptions = groqOptions.slice(0, 3);
       }
       // AI reply did not carry a real price (or too few options) — fall
       // through to the DB-truthful templates instead of inventing one.
@@ -576,12 +627,35 @@ schedulingRouter.post('/scheduled-posts/auto-caption', async (req: AuthRequest, 
   } catch (err) {
     console.error('[scheduling] auto-caption AI failed, using templates:', (err as Error).message);
   }
+  // Compose: media caption first (when vision succeeded), then the
+  // Groq/template options, de-duplicated, max 3.
+  const baseOptions = groqOptions ?? templates.slice(0, 3);
+  const composed: string[] = [];
+  if (mediaCaption) composed.push(mediaCaption);
+  for (const opt of baseOptions) {
+    if (composed.length >= 3) break;
+    if (!composed.includes(opt)) composed.push(opt);
+  }
+  const aiGenerated = mediaCaption !== null || groqOptions !== null;
   res.json({
-    options: templates.slice(0, 3),
-    aiGenerated: false,
-    note: english
-      ? 'AI key is not set or the AI did not answer, so template captions built from your real product data are shown — no price/stock was invented.'
-      : 'AI চাবি বসানো নেই বা AI উত্তর দিচ্ছে না, তাই আপনার আসল প্রোডাক্টের তথ্য দিয়ে সাধারণ ক্যাপশন দেওয়া হলো — দাম/স্টক বানিয়ে লেখা হয়নি।',
+    options: composed.slice(0, 3),
+    aiGenerated,
+    ...(mediaAnalysis ? { mediaAnalysis } : {}),
+    ...(!aiGenerated
+      ? {
+          note: english
+            ? 'AI key is not set or the AI did not answer, so template captions built from your real product data are shown — no price/stock was invented.' +
+              (visionNote ? ` The attached media could not be analyzed (${visionNote}).` : '')
+            : 'AI চাবি বসানো নেই বা AI উত্তর দিচ্ছে না, তাই আপনার আসল প্রোডাক্টের তথ্য দিয়ে সাধারণ ক্যাপশন দেওয়া হলো — দাম/স্টক বানিয়ে লেখা হয়নি।' +
+              (visionNote ? ` সংযুক্ত ছবি/ভিডিও বিশ্লেষণ করা যায়নি (${visionNote})।` : ''),
+        }
+      : visionNote
+        ? {
+            note: english
+              ? `The attached media could not be analyzed (${visionNote}), so text captions are shown instead.`
+              : `সংযুক্ত ছবি/ভিডিও বিশ্লেষণ করা যায়নি (${visionNote}), তাই সাধারণ ক্যাপশন দেওয়া হলো।`,
+          }
+        : {}),
   });
 });
 

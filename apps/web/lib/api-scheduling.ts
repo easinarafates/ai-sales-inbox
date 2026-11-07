@@ -213,9 +213,12 @@ export const schedulingApi = {
       `/api/scheduled-posts/${id}/ai-caption`,
       { method: "POST", body: JSON.stringify({ productIds }) }
     ),
-  /** Auto caption generator — 2–3 options from real product data. */
-  autoCaption: (body: { productIds?: string[]; topic?: string; lang?: "en" | "bn" }) =>
-    request<{ options: string[]; aiGenerated: boolean; note?: string }>(
+  /** Auto caption generator — 2–3 options from real product data.
+   * Pass mediaUrls when media is attached: Gemini vision analyzes the
+   * image/video and its caption comes first, with mediaAnalysis
+   * describing what the AI saw. Without media, text-only captions. */
+  autoCaption: (body: { productIds?: string[]; topic?: string; lang?: "en" | "bn"; mediaUrls?: string[] }) =>
+    request<{ options: string[]; aiGenerated: boolean; note?: string; mediaAnalysis?: { analysis: string; mediaType: MediaType } }>(
       "/api/scheduled-posts/auto-caption",
       { method: "POST", body: JSON.stringify(body) }
     ),

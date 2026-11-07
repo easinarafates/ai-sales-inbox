@@ -10,7 +10,7 @@ import type { GeminiResult } from './gemini';
  * Paid per token (see apps/api/src/ai-agent/pricing.ts for the rates used
  * in cost accounting — the wallet charge itself stays the subscription
  * overage rule; the provider's real token cost is recorded in the ledger
- * as provider_cost_paisa). Default model gpt-6-luna (config OPENAI_MODEL;
+ * as provider_cost_paisa). Default model gpt-5-mini (config OPENAI_MODEL;
  * gpt-4o-mini / gpt-4o are also selectable). Returns null when no
  * OPENAI_API_KEY is configured; throws on API errors so the agent falls
  * back to Groq.

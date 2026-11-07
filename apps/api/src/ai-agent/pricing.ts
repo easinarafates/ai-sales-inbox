@@ -1,10 +1,11 @@
 /**
  * Per-token AI rates (USD per 1M tokens) — verified 2026-11-06 from the
- * providers' official pricing pages (sources in the comments below).
+ * providers' official pricing pages (sources in the comments below),
+ * except gpt-5-mini + gemini-3.5-flash, verified 2026-11-07 (see below).
  * These feed provider_cost_paisa in the ledger ONLY: the WALLET charge
  * stays the subscription rule (included replies 0 paisa, overage flat
  * 10 paisa). Override any rate with AI_RATES_JSON env, e.g.
- * AI_RATES_JSON='{"gpt-6-luna":{"input":0.10,"output":0.50}}'.
+ * AI_RATES_JSON='{"gpt-5-mini":{"input":0.25,"output":2.00}}'.
  * Groq is 0: the platform uses Groq's FREE tier (30 req/min, 1,000
  * req/day); Groq's paid-tier rates do NOT apply while on the free tier.
  */
@@ -16,13 +17,20 @@ export interface TokenRate {
 }
 
 const DEFAULT_RATES_USD_PER_MILLION: Record<string, TokenRate> = {
-  // OpenAI — gpt-6-luna $0.10/$0.50 verified on
-  // developers.openai.com/api/docs/pricing (2026-11-06). gpt-4o-mini
-  // $0.15/$0.60 and gpt-4o $2.50/$10.00 are corroborated by secondary
-  // sources citing OpenAI's pricing page (not seen directly on the live
-  // page that day); the same sources report both models are removed from
-  // the API on 2027-01-14.
-  'gpt-6-luna': { input: 0.1, output: 0.5 },
+  // OpenAI — gpt-5-mini $0.25/$2.00 verified 2026-11-07 across
+  // several sources citing OpenAI's pricing page (LiteLLM price file,
+  // G2, getdeploying, requesty, wpwebhooks, apicost — all agree). The
+  // old default gpt-6-luna does NOT exist (no gpt-6 in the key's
+  // /v1/models list). gpt-5 $1.25/$10.00 and gpt-5-nano $0.05/$0.40
+  // verified 2026-11-07 the same way (cabina, memetik, requesty, G2,
+  // howmanytokens, apicost — all agree). gpt-4o-mini $0.15/$0.60 and
+  // gpt-4o $2.50/$10.00 are corroborated by secondary sources citing
+  // OpenAI's pricing page (not seen directly on the live page that day);
+  // the same sources report both models are removed from the API on
+  // 2027-01-14.
+  'gpt-5-mini': { input: 0.25, output: 2 },
+  'gpt-5': { input: 1.25, output: 10 },
+  'gpt-5-nano': { input: 0.05, output: 0.4 },
   'gpt-4o-mini': { input: 0.15, output: 0.6 },
   'gpt-4o': { input: 2.5, output: 10 },
   // Anthropic — platform.claude.com/docs/en/about-claude/pricing:
@@ -32,10 +40,13 @@ const DEFAULT_RATES_USD_PER_MILLION: Record<string, TokenRate> = {
   'claude-sonnet-5-5': { input: 2, output: 10 },
   'claude-haiku-5-5': { input: 0.1, output: 0.5 },
   // Google — ai.google.dev/gemini-api/docs/pricing: gemini-2.5-flash
-  // $0.30/$2.50. Deprecated: from 2026-12-01 requests auto-route to
-  // gemini-3.5-flash-lite (its rates were not verified; secondary sources
-  // say the same $0.30/$2.50).
+  // $0.30/$2.50 (kept for old ledger rows). gemini-3.5-flash is the
+  // current default (gemini-2.5-flash 404s for new keys); its rate was
+  // NOT verified — assumed the same $0.30/$2.50 as 2.5-flash, per
+  // secondary sources for 3.5-flash-lite. Verify at ai.google.dev
+  // before relying on the exact figure.
   'gemini-2.5-flash': { input: 0.3, output: 2.5 },
+  'gemini-3.5-flash': { input: 0.3, output: 2.5 },
   // Groq free tier — 0. (Paid tier would be $0.075/$0.30, not used.)
   'openai/gpt-oss-20b': { input: 0, output: 0 },
   'openai/gpt-oss-120b': { input: 0, output: 0 },

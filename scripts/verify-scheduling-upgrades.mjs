@@ -9,15 +9,21 @@
  * Covers: 15/day limit (16th rejected 400), 7-day window (beyond 7 days
  * rejected 400), publish frees a slot (15 -> publish 1 -> add 1 succeeds),
  * base64 image upload returns a servable URL, auto-caption returns 2-3
- * options containing the REAL product price (never invented), video post
- * create + list shows media_type 'video' (and publishes in the local flow).
+ * options containing the REAL product price (never invented), MEDIA-AWARE
+ * auto-caption (Gemini vision analyzes the attached image/video and the
+ * caption comes from what is actually in it — red/blue test PNG, small
+ * red test video via the inline path, >18 MB test video via the Gemini
+ * File API path, bogus media URL falls back honestly with no fake
+ * analysis), video post create + list shows media_type 'video' (and
+ * publishes in the local flow).
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
  * NOTE: uses only test data in a fresh workspace; nothing is sent to Meta.
  */
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { spawn } from 'node:child_process';
+import zlib from 'node:zlib';
+import { spawn, execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -281,6 +287,154 @@ async function main() {
       options.map((o) => String(o).slice(0, 80)).join(' | '),
     );
     check('auto-caption invents no price', !hasInventedPrice, '');
+
+    // 6b. Media-aware auto-caption: Gemini vision must describe what is
+    // actually in the image/video, and the caption must come from that.
+    // A red/blue test PNG (top half red, bottom half blue) is generated
+    // in-process — no fixture files, no network.
+    const crcTable = (() => {
+      const t = new Int32Array(256);
+      for (let n = 0; n < 256; n++) {
+        let c = n;
+        for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+        t[n] = c;
+      }
+      return t;
+    })();
+    const crc32 = (buf) => {
+      let c = 0xffffffff;
+      for (const b of buf) c = crcTable[(c ^ b) & 0xff] ^ (c >>> 8);
+      return (c ^ 0xffffffff) >>> 0;
+    };
+    const pngChunk = (type, data) => {
+      const len = Buffer.alloc(4);
+      len.writeUInt32BE(data.length);
+      const td = Buffer.concat([Buffer.from(type, 'ascii'), data]);
+      const crc = Buffer.alloc(4);
+      crc.writeUInt32BE(crc32(td));
+      return Buffer.concat([len, td, crc]);
+    };
+    const makeRedBluePng = () => {
+      const w = 64, h = 64;
+      const raw = Buffer.alloc(h * (1 + w * 3));
+      for (let y = 0; y < h; y++) {
+        raw[y * (1 + w * 3)] = 0;
+        for (let x = 0; x < w; x++) {
+          const o = y * (1 + w * 3) + 1 + x * 3;
+          if (y < h / 2) { raw[o] = 255; raw[o + 1] = 0; raw[o + 2] = 0; }
+          else { raw[o] = 0; raw[o + 1] = 0; raw[o + 2] = 255; }
+        }
+      }
+      const ihdr = Buffer.alloc(13);
+      ihdr.writeUInt32BE(w, 0); ihdr.writeUInt32BE(h, 4);
+      ihdr[8] = 8; ihdr[9] = 2; ihdr[10] = 0; ihdr[11] = 0; ihdr[12] = 0;
+      return Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+        pngChunk('IHDR', ihdr),
+        pngChunk('IDAT', zlib.deflateSync(raw)),
+        pngChunk('IEND', Buffer.alloc(0)),
+      ]);
+    };
+    const imgUp = await api('/api/scheduled-posts/upload', {
+      method: 'POST',
+      body: { fileBase64: makeRedBluePng().toString('base64'), fileName: 'red-blue.png', mimeType: 'image/png' },
+    });
+    const imgUrl = imgUp.data?.url ?? '';
+    check('media test image uploads (201, /api/uploads URL)', imgUp.status === 201 && imgUrl.startsWith('/api/uploads/'), `status=${imgUp.status}, url=${imgUrl}`);
+    const capImg = await api('/api/scheduled-posts/auto-caption', {
+      method: 'POST',
+      body: { productIds: [product.id], lang: 'en', mediaUrls: [imgUrl] },
+    });
+    const imgAnalysis = capImg.data?.mediaAnalysis;
+    const imgOpts = Array.isArray(capImg.data?.options) ? capImg.data.options : [];
+    check(
+      'image auto-caption analyzes the media (mentions red/blue)',
+      capImg.status === 200 && imgAnalysis?.mediaType === 'image' && /red/i.test(imgAnalysis.analysis ?? ''),
+      `status=${capImg.status}, analysis=${(imgAnalysis?.analysis ?? '').slice(0, 120)}`,
+    );
+    check(
+      'image auto-caption first option is the vision caption (mentions red, real price ৳1500)',
+      imgOpts.length >= 1 && /red/i.test(imgOpts[0] ?? '') && (imgOpts[0] ?? '').includes('1500'),
+      `options[0]=${(imgOpts[0] ?? '').slice(0, 120)}`,
+    );
+
+    // Small red video (2s, ffmpeg) — inline Gemini video path.
+    let smallVidPath = '';
+    try {
+      smallVidPath = path.join(tmpDir, 'red.mp4');
+      execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'color=c=red:s=64x64:d=2', '-pix_fmt', 'yuv420p', '-c:v', 'libx264', '-movflags', '+faststart', smallVidPath], { timeout: 60000 });
+    } catch (e) {
+      check('ffmpeg makes the small test video', false, String(e?.message ?? e).slice(0, 200));
+    }
+    if (smallVidPath && fs.existsSync(smallVidPath)) {
+      const vidUp = await api('/api/scheduled-posts/upload', {
+        method: 'POST',
+        body: { fileBase64: fs.readFileSync(smallVidPath).toString('base64'), fileName: 'red.mp4', mimeType: 'video/mp4' },
+      });
+      const vidUrl = vidUp.data?.url ?? '';
+      check('media test video uploads (201, video)', vidUp.status === 201 && vidUp.data?.mediaType === 'video', `status=${vidUp.status}, url=${vidUrl}`);
+      const capVid = await api('/api/scheduled-posts/auto-caption', {
+        method: 'POST',
+        body: { productIds: [product.id], lang: 'en', mediaUrls: [vidUrl] },
+      });
+      const vidAnalysis = capVid.data?.mediaAnalysis;
+      const vidOpts = Array.isArray(capVid.data?.options) ? capVid.data.options : [];
+      check(
+        'video auto-caption analyzes the video (mentions red)',
+        capVid.status === 200 && vidAnalysis?.mediaType === 'video' && /red/i.test(vidAnalysis.analysis ?? ''),
+        `status=${capVid.status}, analysis=${(vidAnalysis?.analysis ?? '').slice(0, 120)}`,
+      );
+      check(
+        'video auto-caption first option is the vision caption (mentions red)',
+        vidOpts.length >= 1 && /red/i.test(vidOpts[0] ?? ''),
+        `options[0]=${(vidOpts[0] ?? '').slice(0, 120)}`,
+      );
+    } else {
+      check('video auto-caption analyzes the video (mentions red)', false, 'small video was not created');
+      check('video auto-caption first option is the vision caption (mentions red)', false, 'small video was not created');
+    }
+
+    // Large video (>18 MB) — must go through the Gemini File API path.
+    let bigVidPath = '';
+    try {
+      bigVidPath = path.join(tmpDir, 'big.mp4');
+      execFileSync('ffmpeg', ['-y', '-v', 'error', '-f', 'lavfi', '-i', 'nullsrc=s=640x360:d=30', '-vf', 'noise=alls=40:allf=t+u', '-c:v', 'libx264', '-b:v', '6M', '-pix_fmt', 'yuv420p', bigVidPath], { timeout: 120000 });
+    } catch (e) {
+      check('ffmpeg makes the large (>18 MB) test video', false, String(e?.message ?? e).slice(0, 200));
+    }
+    if (bigVidPath && fs.existsSync(bigVidPath)) {
+      const bigSize = fs.statSync(bigVidPath).size;
+      check('large test video is really over the 18 MB inline limit', bigSize > 18 * 1024 * 1024, `bytes=${bigSize}`);
+      const bigUp = await api('/api/scheduled-posts/upload', {
+        method: 'POST',
+        body: { fileBase64: fs.readFileSync(bigVidPath).toString('base64'), fileName: 'big.mp4', mimeType: 'video/mp4' },
+      });
+      const bigUrl = bigUp.data?.url ?? '';
+      const capBig = await api('/api/scheduled-posts/auto-caption', {
+        method: 'POST',
+        body: { lang: 'en', mediaUrls: [bigUrl] },
+      });
+      check(
+        'large video auto-caption works via the File API path (mediaAnalysis, video)',
+        capBig.status === 200 && capBig.data?.mediaAnalysis?.mediaType === 'video' && typeof capBig.data?.mediaAnalysis?.analysis === 'string' && capBig.data.mediaAnalysis.analysis.length > 10,
+        `status=${capBig.status}, analysis=${(capBig.data?.mediaAnalysis?.analysis ?? '').slice(0, 120)}`,
+      );
+    } else {
+      check('large video auto-caption works via the File API path (mediaAnalysis, video)', false, 'large video was not created');
+    }
+
+    // Bogus media URL — must fall back to text captions honestly, never
+    // fake an analysis.
+    const capBad = await api('/api/scheduled-posts/auto-caption', {
+      method: 'POST',
+      body: { productIds: [product.id], lang: 'bn', mediaUrls: ['https://example.com/does-not-exist-xyz.jpg'] },
+    });
+    const badOpts = Array.isArray(capBad.data?.options) ? capBad.data.options : [];
+    check(
+      'bogus media URL falls back to text captions (no fake analysis)',
+      capBad.status === 200 && badOpts.length >= 2 && !capBad.data?.mediaAnalysis && typeof capBad.data?.note === 'string' && capBad.data.note.length > 0,
+      `status=${capBad.status}, options=${badOpts.length}, note=${(capBad.data?.note ?? '').slice(0, 100)}`,
+    );
 
     // 7. Video post: create with media_type 'video', list shows it, publish works locally.
     const vid = await api('/api/scheduled-posts', {

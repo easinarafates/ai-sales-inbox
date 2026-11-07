@@ -35,7 +35,7 @@ export default function OwnerApiCostsPage() {
 
   const providerName = (p: string) =>
     p === "groq" ? "Groq"
-    : p === "openai" ? "ChatGPT (OpenAI)"
+    : p === "openai" ? "OpenAI"
     : p === "gemini" ? "Gemini"
     : p === "claude" ? "Claude"
     : p;

@@ -23,7 +23,10 @@ export const config = {
   jwtSecret: required('JWT_SECRET'),
   tokenEncryptionKey: required('TOKEN_ENCRYPTION_KEY'),
   geminiApiKey: process.env.GEMINI_API_KEY ?? '',
-  aiModel: optional('AI_MODEL', 'gemini-2.5-flash'),
+  // Gemini default model: gemini-3.5-flash (verified 2026-11-07 with
+  // the current key). gemini-2.5-flash returns 404 "no longer available
+  // to new users" for this key, and gemini-2.0-flash no longer exists.
+  aiModel: optional('AI_MODEL', 'gemini-3.5-flash'),
   /** AI provider: 'gemini' (paid/billing) or 'groq' (free tier, no card). */
   aiProvider: optional('AI_PROVIDER', 'gemini'),
   groqApiKey: process.env.GROQ_API_KEY ?? '',
@@ -36,7 +39,10 @@ export const config = {
    * "not connected" and is never selectable as live.
    */
   openaiApiKey: process.env.OPENAI_API_KEY ?? '',
-  openaiModel: optional('OPENAI_MODEL', 'gpt-6-luna'),
+  // ChatGPT default model: gpt-5-mini (verified 2026-11-07 against the
+  // key's /v1/models list — gpt-6-luna does not exist; the list tops out
+  // at gpt-5.x). Cheap capable chat model: $0.25/$2.00 per 1M tokens.
+  openaiModel: optional('OPENAI_MODEL', 'gpt-5-mini'),
   anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? '',
   claudeModel: optional('CLAUDE_MODEL', 'claude-sonnet-5-5'),
   /**

@@ -99,8 +99,8 @@ export default function AiProvidersPage() {
       <p className="text-sm text-slate-500 mb-4">
         {t(
           "aiProvSub",
-          "Choose which AI answers your customers: Groq (free), ChatGPT, Gemini or Claude. If the chosen AI fails, Groq answers instead and the switch is recorded honestly.",
-          "কোন AI আপনার কাস্টমারের উত্তর দেবে তা বেছে নিন: Groq (ফ্রি), ChatGPT, Gemini বা Claude। বেছে নেওয়া AI না চললে Groq উত্তর দেবে, আর সেটা হিসেবে লেখা থাকবে।"
+          "Choose which AI answers your customers: Groq (free), OpenAI, Gemini or Claude. If the chosen AI fails, Groq answers instead and the switch is recorded honestly.",
+          "কোন AI আপনার কাস্টমারের উত্তর দেবে তা বেছে নিন: Groq (ফ্রি), OpenAI, Gemini বা Claude। বেছে নেওয়া AI না চললে Groq উত্তর দেবে, আর সেটা হিসেবে লেখা থাকবে।"
         )}
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
@@ -161,16 +161,19 @@ export default function AiProvidersPage() {
                   )}
                   <div className="flex gap-2 mt-3 flex-wrap items-center">
                     {p.models.length > 1 && (
-                      <select
-                        value={models[p.id] ?? p.defaultModel}
-                        onChange={(e) => setModels({ ...models, [p.id]: e.target.value })}
-                        className="border rounded-lg px-3 py-2 text-sm"
-                        aria-label={t("aiProvModel", "Model", "মডেল")}
-                      >
-                        {p.models.map((m) => (
-                          <option key={m} value={m}>{m}</option>
-                        ))}
-                      </select>
+                      <label className="text-sm flex items-center gap-1">
+                        <span className="text-slate-500">{t("aiProvModel", "Model", "মডেল")}:</span>
+                        <select
+                          value={models[p.id] ?? p.defaultModel}
+                          onChange={(e) => setModels({ ...models, [p.id]: e.target.value })}
+                          className="border rounded-lg px-3 py-2 text-sm"
+                          aria-label={t("aiProvModel", "Model", "মডেল")}
+                        >
+                          {p.models.map((m) => (
+                            <option key={m} value={m}>{m}</option>
+                          ))}
+                        </select>
+                      </label>
                     )}
                     {p.models.length === 1 && (
                       <span className="text-sm text-slate-500">
@@ -179,14 +182,16 @@ export default function AiProvidersPage() {
                     )}
                     <button
                       onClick={() => choose(p.id)}
-                      disabled={p.status === "key_missing" || saving === p.id || isCurrent}
+                      disabled={p.status === "key_missing" || saving === p.id || (isCurrent && (models[p.id] ?? p.defaultModel) === data.current.model)}
                       className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white text-sm rounded-lg px-3 py-2 disabled:opacity-50"
                     >
-                      {isCurrent
+                      {isCurrent && (models[p.id] ?? p.defaultModel) === data.current.model
                         ? t("aiProvInUse", "In use", "ব্যবহার হচ্ছে")
                         : saving === p.id
                           ? t("saving", "Saving…", "সেভ হচ্ছে…")
-                          : t("aiProvUse", "Use this AI", "এই AI ব্যবহার করুন")}
+                          : isCurrent
+                            ? t("aiProvUseModel", "Use this model", "এই মডেলটি ব্যবহার করুন")
+                            : t("aiProvUse", "Use this AI", "এই AI ব্যবহার করুন")}
                     </button>
                   </div>
                 </div>
@@ -236,8 +241,8 @@ export default function AiProvidersPage() {
           </p>
           <p className="text-xs text-slate-400 mt-1">
             {lang === "bn"
-              ? "চাবি কোথায় পাবেন: Groq — console.groq.com (ফ্রি), ChatGPT — platform.openai.com, Gemini — aistudio.google.com, Claude — console.anthropic.com।"
-              : "Where to get keys: Groq — console.groq.com (free), ChatGPT — platform.openai.com, Gemini — aistudio.google.com, Claude — console.anthropic.com."}
+              ? "চাবি কোথায় পাবেন: Groq — console.groq.com (ফ্রি), OpenAI — platform.openai.com, Gemini — aistudio.google.com, Claude — console.anthropic.com।"
+              : "Where to get keys: Groq — console.groq.com (free), OpenAI — platform.openai.com, Gemini — aistudio.google.com, Claude — console.anthropic.com."}
           </p>
         </>
       ) : null}
