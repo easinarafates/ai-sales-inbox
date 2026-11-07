@@ -14,10 +14,11 @@
  * channel); self-minted picker sessions: IG pages list strips tokens,
  * connect creates exactly one 'instagram' channel row (IG id, username,
  * picture, source_id = Page ID) with the token encrypted, unlinked page
- * → 400 ig_not_linked, duplicate → 409, second account → 402 (trial
- * plan: 1 channel); WA accounts list strips the user token, connect
- * creates exactly one 'whatsapp' channel row (phone-number ID, display
- * number, source_id = WABA ID), duplicate → 409, unknown number → 400.
+ * → 400 ig_not_linked, reconnect → 201 (updates tokens, no second row),
+ * second account → 402 (trial plan: 1 channel); WA accounts list strips
+ * the user token, connect creates exactly one 'whatsapp' channel row
+ * (phone-number ID, display number, source_id = WABA ID), reconnect →
+ * 201 (updates, no second row), unknown number → 400.
  * Webhook subscription: the IG connect attempts POST /{page-id}/
  * subscribed_apps with the Page token (dummy token → Graph rejects →
  * logged, connect still 201); GET /api/webhooks/meta handshake with
@@ -340,8 +341,16 @@ async function main() {
     check('Instagram row has token_expires_at ~59 days out', !!igRow?.token_expires_at && new Date(igRow.token_expires_at).getTime() > Date.now() + 50 * 24 * 60 * 60 * 1000, `token_expires_at=${igRow?.token_expires_at}`);
     check('GET /api/channels never leaks the IG page token', !igListChannels.text.includes('tok-ig-page-1-secret'));
 
-    const igDupe = await apiB('/api/channels/instagram/connect', { method: 'POST', body: { session: igSession, pageId: 'page-ig-1' } });
-    check('duplicate instagram connect → 409', igDupe.status === 409, `status=${igDupe.status}`);
+    // Reconnect (same IG account, fresh page token) must UPDATE, not 409.
+    const igPagesV2 = [
+      { id: 'page-ig-1', name: 'Rongdhonu Fashion', category: 'Clothing', picture: 'https://example.com/p1.jpg', token: 'tok-ig-page-1-v2-secret', instagram: { id: 'ig-111', username: 'rongdhonu.fashion', picture: 'https://example.com/ig1.jpg' } },
+    ];
+    const igSessionV2 = signJwt(jwtSecret, { purpose: 'instagram_pages', workspaceId, pages: igPagesV2 }, 600);
+    const igReconnect = await apiB('/api/channels/instagram/connect', { method: 'POST', body: { session: igSessionV2, pageId: 'page-ig-1' } });
+    check('reconnect instagram → 201 (updates, not 409)', igReconnect.status === 201 && igReconnect.data?.channel?.external_id === 'ig-111', `status=${igReconnect.status}`);
+    const igListAfter = await apiB('/api/channels');
+    check('reconnect instagram created NO second row', (igListAfter.data?.channels ?? []).filter((c) => c.external_id === 'ig-111').length === 1, `rows=${(igListAfter.data?.channels ?? []).filter((c) => c.external_id === 'ig-111').length}`);
+    check('reconnect instagram never leaks the new page token', !igReconnect.text.includes('tok-ig-page-1-v2-secret') && !igListAfter.text.includes('tok-ig-page-1-v2-secret'));
     const igPages2 = [
       { id: 'page-ig-9', name: 'Other Shop', category: 'Clothing', picture: '', token: 'tok-ig-page-9-secret', instagram: { id: 'ig-999', username: 'other.shop', picture: '' } },
     ];
@@ -385,8 +394,13 @@ async function main() {
     check('GET /api/channels shows the WhatsApp row (number + source WABA)', !!waRow && waRow.display_name === '+880 1911-111111' && waRow.source_id === 'waba-1', JSON.stringify(waRow));
     check('GET /api/channels never leaks the WA user token', !waListChannels.text.includes('tok-wa-user-secret'));
 
-    const waDupe = await apiB('/api/channels/whatsapp/connect', { method: 'POST', body: { session: waSession, wabaId: 'waba-1', phoneNumberId: 'pn-111' } });
-    check('duplicate whatsapp connect → 409', waDupe.status === 409, `status=${waDupe.status}`);
+    // Reconnect (same number, fresh user token) must UPDATE, not 409.
+    const waSessionV2 = signJwt(jwtSecret, { ...waSessionData, userToken: 'tok-wa-user-v2-secret' }, 600);
+    const waReconnect = await apiB('/api/channels/whatsapp/connect', { method: 'POST', body: { session: waSessionV2, wabaId: 'waba-1', phoneNumberId: 'pn-111' } });
+    check('reconnect whatsapp → 201 (updates, not 409)', waReconnect.status === 201 && waReconnect.data?.channel?.external_id === 'pn-111', `status=${waReconnect.status}`);
+    const waListAfter = await apiB('/api/channels');
+    check('reconnect whatsapp created NO second row', (waListAfter.data?.channels ?? []).filter((c) => c.external_id === 'pn-111').length === 1, `rows=${(waListAfter.data?.channels ?? []).filter((c) => c.external_id === 'pn-111').length}`);
+    check('reconnect whatsapp never leaks the new user token', !waReconnect.text.includes('tok-wa-user-v2-secret') && !waListAfter.text.includes('tok-wa-user-v2-secret'));
     const waLimit = await apiB('/api/channels/whatsapp/connect', { method: 'POST', body: { session: waSession, wabaId: 'waba-1', phoneNumberId: 'pn-222' } });
     check('second whatsapp number → 402 (trial plan: 1 channel)', waLimit.status === 402, `status=${waLimit.status}, error=${waLimit.data?.error ?? ''}`);
 
@@ -470,7 +484,10 @@ async function main() {
       const out1 = (detail1.messages ?? []).filter((m) => m.direction === 'out')[0];
       check('C1 AI reply is a real (non-demo) reply', !(out1?.body ?? '').includes('[ডেমো AI'), (out1?.body ?? '').slice(0, 80));
       check('C1 AI reply is marked sent with the stub message_id', out1?.delivery_status === 'sent' && out1?.platform_message_id === 'm_stub_ok_1', `delivery_status=${out1?.delivery_status}, platform_message_id=${out1?.platform_message_id}`);
-      const hit1 = stubHits.find((h) => h.path === '/v21.0/page-send-ok/messages' && h.body?.recipient?.id === 'psid-1');
+      // NOTE: the first hit on this path is the mark_seen call (fast-seen
+      // fires it on webhook intake, same /messages endpoint, no
+      // message.text) — match the hit that actually carries the reply.
+      const hit1 = stubHits.find((h) => h.path === '/v21.0/page-send-ok/messages' && h.body?.recipient?.id === 'psid-1' && typeof h.body?.message?.text === 'string');
       check('C1 stub Graph got the send (right PSID + Page token as Bearer)', !!hit1 && hit1.auth === 'Bearer tok-stub-page' && hit1.body?.message?.text === out1?.body, JSON.stringify(hit1?.body ?? null));
       const bill1 = await apiC('/api/billing');
       check('C1 delivered reply is charged (ledger entry, 0 paisa Groq)', (bill1.data?.usage ?? []).length >= 1 && Number(bill1.data.usage[0]?.cost_paisa) === 0, `entries=${(bill1.data?.usage ?? []).length}, cost=${bill1.data?.usage?.[0]?.cost_paisa}`);

@@ -11,7 +11,8 @@
  * with a self-minted page-pick session JWT: pages list strips tokens,
  * connect creates exactly one 'messenger' channel row with the token
  * encrypted (GET /api/channels shows it and never leaks the token),
- * duplicate connect → 409, second page → 402 (trial plan: 1 channel).
+ * reconnect of the same page → 201 (refreshes tokens, no second row),
+ * second page → 402 (trial plan: 1 channel).
  *
  * Run from the repo root:  node scripts/verify-facebook-oauth.mjs
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
@@ -236,8 +237,16 @@ async function main() {
     check('row has picture_url', row?.picture_url === 'https://example.com/a.jpg', `picture_url=${row?.picture_url}`);
     check('GET /api/channels never leaks the page token', !list.text.includes('tok-page-aaa-secret'));
 
-    const dupe = await apiB('/api/channels/facebook/connect', { method: 'POST', body: { session, pageId: 'page-aaa' } });
-    check('duplicate connect → 409', dupe.status === 409, `status=${dupe.status}`);
+    // Reconnect (same page, fresh tokens) must UPDATE the row, not 409.
+    const fakePagesV2 = [
+      { id: 'page-aaa', name: 'Rongdhonu Fashion', category: 'Clothing', picture: 'https://example.com/a2.jpg', token: 'tok-page-aaa-v2-secret' },
+    ];
+    const sessionV2 = signJwt(jwtSecret, { purpose: 'facebook_pages', workspaceId, pages: fakePagesV2, userToken: 'tok-user-v2-secret', connectedByUserId: 'fb-user-2' }, 600);
+    const reconnect = await apiB('/api/channels/facebook/connect', { method: 'POST', body: { session: sessionV2, pageId: 'page-aaa' } });
+    check('reconnect same page → 201 (updates, not 409)', reconnect.status === 201 && reconnect.data?.channel?.external_id === 'page-aaa', `status=${reconnect.status}, channel=${JSON.stringify(reconnect.data?.channel)}`);
+    const listAfter = await apiB('/api/channels');
+    check('reconnect created NO second row', (listAfter.data?.channels ?? []).filter((c) => c.external_id === 'page-aaa' && c.platform === 'messenger').length === 1, `messenger rows=${(listAfter.data?.channels ?? []).filter((c) => c.external_id === 'page-aaa' && c.platform === 'messenger').length}`);
+    check('reconnect never leaks the new page token', !reconnect.text.includes('tok-page-aaa-v2-secret') && !listAfter.text.includes('tok-page-aaa-v2-secret'));
     const limit = await apiB('/api/channels/facebook/connect', { method: 'POST', body: { session, pageId: 'page-bbb' } });
     check('second page → 402 (trial plan: 1 channel)', limit.status === 402, `status=${limit.status}, error=${limit.data?.error ?? ''}`);
   } finally {

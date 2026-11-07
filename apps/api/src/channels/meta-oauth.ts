@@ -329,16 +329,22 @@ export async function subscribePageToApp(pageId: string, pageToken: string): Pro
 }
 
 /**
- * Shared by all three OAuth connects: duplicate check (same platform +
- * external_id in this workspace), subscription channel limit, then the
- * INSERT with the token encrypted. The token is stored encrypted and is
- * never returned by any list endpoint. After a Messenger/Instagram
- * channel is created, the Page is subscribed to the app (best-effort —
+ * Shared by all three OAuth connects. A connect of a Page/account that
+ * is ALREADY connected in this workspace is a RECONNECT: the existing
+ * row is UPDATED (fresh Page token, fresh user token when provided,
+ * fresh expiry, status back to 'connected') instead of erroring — a
+ * reconnect adds no new channel, so the subscription channel-limit
+ * check is skipped on that path and must never 402 it. Only a genuinely
+ * new (workspace, platform, external_id) goes through the limit check
+ * and the INSERT. The token is stored encrypted and is never returned
+ * by any list endpoint. After a Messenger/Instagram channel is created
+ * (or refreshed), the Page is subscribed to the app (best-effort —
  * a subscribe failure never fails the connect). A Messenger connect
  * also creates a companion 'facebook_comment' row for the same Page
  * (same token) so Page-post comments reach the webhook — it is the
  * same Page's comment leg, not a second channel, so it does not count
- * toward the subscription channel limit.
+ * toward the subscription channel limit; on a reconnect the companion
+ * row's tokens are refreshed the same way.
  */
 export async function createOAuthChannel(
   workspaceId: string,
@@ -362,41 +368,74 @@ export async function createOAuthChannel(
     connectedByUserId?: string | null;
   },
 ): Promise<CreateResult> {
+  const expiresAt = new Date(Date.now() + PAGE_TOKEN_TTL_MS).toISOString();
+  const userTokenEncrypted = input.userToken ? encryptToken(input.userToken) : null;
+  const connectedByUserId = input.connectedByUserId || null;
   const dupe = await query(
     workspaceId,
     'SELECT id FROM channels WHERE workspace_id = $1 AND platform = $2 AND external_id = $3',
     [workspaceId, input.platform, input.externalId],
   );
+  let rows: ChannelRow[];
   if (dupe.rows.length > 0) {
-    return { ok: false, reason: 'duplicate', message: input.duplicateMessage };
-  }
-  const limit = await checkChannelLimit(workspaceId);
-  if (!limit.canAdd) {
-    return { ok: false, reason: 'limit', message: limit.message };
-  }
-  const expiresAt = new Date(Date.now() + PAGE_TOKEN_TTL_MS).toISOString();
-  const userTokenEncrypted = input.userToken ? encryptToken(input.userToken) : null;
-  const connectedByUserId = input.connectedByUserId || null;
-  const { rows } = await query<ChannelRow>(
-    workspaceId,
-    `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id)
+    // Reconnect: refresh the tokens on the existing row instead of
+    // erroring. A missing user token / connected-by ID on the new input
+    // keeps the stored value (COALESCE) — flows without a user token
+    // (e.g. WhatsApp, whose channel token IS the user token) must not
+    // wipe the stored one.
+    const updated = await query<ChannelRow>(
+      workspaceId,
+      `UPDATE channels
+       SET token_encrypted = $1, user_token_encrypted = COALESCE($2, user_token_encrypted),
+           connected_by_user_id = COALESCE($3, connected_by_user_id),
+           display_name = $4, picture_url = COALESCE($5, picture_url),
+           source_id = COALESCE($6, source_id), token_expires_at = $7, status = 'connected'
+       WHERE workspace_id = $8 AND platform = $9 AND external_id = $10
+       RETURNING id, platform, external_id, display_name, status, token_expires_at, picture_url, source_id, created_at`,
+      [
+        encryptToken(input.token),
+        userTokenEncrypted,
+        connectedByUserId,
+        input.displayName,
+        input.pictureUrl || null,
+        input.sourceId || null,
+        expiresAt,
+        workspaceId,
+        input.platform,
+        input.externalId,
+      ],
+    );
+    rows = updated.rows;
+    if (rows.length === 0) {
+      return { ok: false, reason: 'duplicate', message: input.duplicateMessage };
+    }
+  } else {
+    const limit = await checkChannelLimit(workspaceId);
+    if (!limit.canAdd) {
+      return { ok: false, reason: 'limit', message: limit.message };
+    }
+    const inserted = await query<ChannelRow>(
+      workspaceId,
+      `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id)
      VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8, $9, $10)
      RETURNING id, platform, external_id, display_name, status, token_expires_at, picture_url, source_id, created_at`,
-    [
-      workspaceId,
-      input.platform,
-      input.externalId,
-      input.displayName,
-      encryptToken(input.token),
-      expiresAt,
-      input.pictureUrl || null,
-      input.sourceId || null,
-      userTokenEncrypted,
-      connectedByUserId,
-    ],
-  );
-  if (rows.length === 0) {
-    return { ok: false, reason: 'duplicate', message: input.duplicateMessage };
+      [
+        workspaceId,
+        input.platform,
+        input.externalId,
+        input.displayName,
+        encryptToken(input.token),
+        expiresAt,
+        input.pictureUrl || null,
+        input.sourceId || null,
+        userTokenEncrypted,
+        connectedByUserId,
+      ],
+    );
+    rows = inserted.rows;
+    if (rows.length === 0) {
+      return { ok: false, reason: 'duplicate', message: input.duplicateMessage };
+    }
   }
   // Subscribe the Page to the app so Meta delivers its events to our
   // webhook. Messenger: the Page is externalId. Instagram: the Page is
@@ -439,6 +478,28 @@ export async function createOAuthChannel(
             input.sourceId || null,
             userTokenEncrypted,
             connectedByUserId,
+          ],
+        );
+      } else {
+        // Reconnect: refresh the companion row's tokens the same way.
+        await query(
+          workspaceId,
+          `UPDATE channels
+           SET token_encrypted = $1, user_token_encrypted = COALESCE($2, user_token_encrypted),
+               connected_by_user_id = COALESCE($3, connected_by_user_id),
+               display_name = $4, picture_url = COALESCE($5, picture_url),
+               source_id = COALESCE($6, source_id), token_expires_at = $7, status = 'connected'
+           WHERE workspace_id = $8 AND platform = 'facebook_comment' AND external_id = $9`,
+          [
+            encryptToken(input.token),
+            userTokenEncrypted,
+            connectedByUserId,
+            input.displayName,
+            input.pictureUrl || null,
+            input.sourceId || null,
+            expiresAt,
+            workspaceId,
+            input.externalId,
           ],
         );
       }
