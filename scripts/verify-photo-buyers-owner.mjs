@@ -223,6 +223,11 @@ async function main() {
   check('webhook: owner dot toggles the workspace AI switch', hookSrc.includes('toggleWorkspaceAiMode(channel.workspace_id)') && hookSrc.includes('setWorkspaceAiMode(channel.workspace_id'));
   check('webhook: owner comments skipped too', hookSrc.includes('commentOwnerPsid'));
 
+  const queueSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/queue/client.ts'), 'utf8');
+  check('queue: batch is only UNANSWERED messages (after latest out)', queueSrc.includes("AND created_at > COALESCE(") && queueSrc.includes("direction = 'out'") && queueSrc.includes("TIMESTAMP 'epoch'"));
+  const workerSrc = fs.readFileSync(path.join(ROOT, 'workers/queue/src/worker.ts'), 'utf8');
+  check('worker: batch is only UNANSWERED messages (after latest out)', workerSrc.includes("AND created_at > COALESCE(") && workerSrc.includes("direction = 'out'") && workerSrc.includes("TIMESTAMP 'epoch'"));
+
   const dotSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/inbox/dot-commands.ts'), 'utf8');
   check('dot-commands: workspace-level toggle exists', dotSrc.includes('export async function setWorkspaceAiMode') && dotSrc.includes('export async function toggleWorkspaceAiMode'));
 
@@ -299,6 +304,22 @@ async function main() {
     });
     check('boot 1: show → exactly 1 image (the jeans photo)', !!showFound && showFound.out.filter((m) => m.type === 'image').length === 1 && showFound.out.some((m) => m.type === 'image' && m.body === IMG.jeans), JSON.stringify((showFound?.out ?? []).filter((m) => m.type === 'image').map((m) => m.body)));
     check('boot 1: show → details text with Jeans + ৳500', !!showFound && showFound.out.some((m) => m.type === 'text' && (m.body ?? '').includes('Jeans') && ((m.body ?? '').includes('৳500') || (m.body ?? '').includes('500'))), JSON.stringify((showFound?.out ?? []).filter((m) => m.type === 'text').map((m) => m.body)));
+
+    // (b2) REGRESSION (live bug 2026-11-08): the queue used to batch the
+    // LAST 10 incoming messages with no lower bound, so "জিন্সটা দেখাও"
+    // sent right after the list request re-fired the list intent and
+    // re-sent the WHOLE list. Same conversation, same sender: the show
+    // request must send ONLY the jeans photo + details.
+    const listOutBefore = listFound.out.length;
+    const mShowSame = await webchat(api, 'wc-photo-list-1', 'List Customer', 'জিন্সটা দেখাও');
+    check('boot 1: same-thread show message accepted', mShowSame.status === 200 && mShowSame.data?.conversationId === listConvId, `status=${mShowSame.status}`);
+    const showSameFound = await pollFor(async () => {
+      const t = await threadOut(api, listConvId);
+      return t.out.length >= listOutBefore + 2 ? t : null;
+    });
+    const newMsgs = (showSameFound?.out ?? []).slice(listOutBefore);
+    check('boot 1: same-thread show → exactly 2 new messages (photo + details)', !!showSameFound && newMsgs.length === 2, `new=${newMsgs.length} ${JSON.stringify(newMsgs.map((m) => `${m.type}:${(m.body ?? '').slice(0, 30)}`))}`);
+    check('boot 1: same-thread show → jeans photo only, NO second list', !!showSameFound && newMsgs.length === 2 && newMsgs[0].type === 'image' && newMsgs[0].body === IMG.jeans && newMsgs[1].type === 'text' && (newMsgs[1].body ?? '').includes('Jeans') && !newMsgs.some((m) => (m.body ?? '').includes('আগ্রহী')), JSON.stringify(newMsgs.map((m) => m.body)));
 
     // (c) Fast-reply question → deflection, no AI word, not escalated.
     const mFast = await webchat(api, 'wc-photo-fast-1', 'Fast Customer', 'তুমি এত দ্রুত রিপ্লাই দিচ্ছ কেন?');

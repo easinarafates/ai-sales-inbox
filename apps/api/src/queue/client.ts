@@ -64,14 +64,24 @@ async function processInProcess(
     try {
       const { processBatch } = await import('../ai-agent/agent');
       const { query } = await import('../db/pool');
+      // Only the messages that arrived AFTER the latest outgoing reply
+      // are unanswered — older incoming messages were already answered
+      // by an earlier run. Batching the last 10 regardless re-fired
+      // their intent: a "জিন্সটা দেখাও" after a list request re-sent
+      // the WHOLE product list instead of the jeans photo (live bug
+      // 2026-11-08). Same predicate as the re-check loop below.
       const { rows } = await query<{ body: string | null }>(
         workspaceId,
         `SELECT body FROM messages
          WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'in'
-         ORDER BY created_at DESC LIMIT 10`,
+           AND created_at > COALESCE(
+             (SELECT MAX(created_at) FROM messages
+              WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'out'),
+             TIMESTAMP 'epoch')
+         ORDER BY created_at ASC LIMIT 10`,
         [workspaceId, conversationId],
       );
-      const batched = [...rows].reverse().map((r) => ({ body: r.body ?? '' }));
+      const batched = rows.map((r) => ({ body: r.body ?? '' }));
       if (batched.length === 0) return;
       const result = await processBatch(workspaceId, conversationId, batched);
       console.log(`[queue:fallback] conv ${conversationId}:`, result);

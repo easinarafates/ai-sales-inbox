@@ -67,16 +67,24 @@ function startWorker(): void {
     'inbox-messages',
     async (job) => {
       const { workspaceId, conversationId } = job.data;
-      // Reload the recent inbound messages — this is what makes the 300ms debounce
-      // a true batch: messages that arrived while the job was delayed are included.
+      // Reload only the UNANSWERED inbound messages — the ones that
+      // arrived after the latest outgoing reply. Batching the last 10
+      // regardless re-fired their intent: a "জিন্সটা দেখাও" after a list
+      // request re-sent the WHOLE product list instead of the jeans
+      // photo (live bug 2026-11-08; same fix in the API's in-process
+      // fallback, apps/api/src/queue/client.ts).
       const { rows } = await query<{ body: string | null }>(
         workspaceId,
         `SELECT body FROM messages
          WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'in'
-         ORDER BY created_at DESC LIMIT 10`,
+           AND created_at > COALESCE(
+             (SELECT MAX(created_at) FROM messages
+              WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'out'),
+             TIMESTAMP 'epoch')
+         ORDER BY created_at ASC LIMIT 10`,
         [workspaceId, conversationId],
       );
-      const batched: BatchedMessage[] = [...rows].reverse().map((r) => ({ body: r.body ?? '' }));
+      const batched: BatchedMessage[] = rows.map((r) => ({ body: r.body ?? '' }));
       if (batched.length === 0) return { replied: false, reason: 'no_messages' };
       const result = await processBatch(workspaceId, conversationId, batched);
       console.log(`[worker] conv ${conversationId}:`, result);
