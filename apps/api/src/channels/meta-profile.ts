@@ -36,7 +36,9 @@
  *   on every attempt — the same object-access block as the direct PSID
  *   read. It adds nothing beyond the paths above, so it is NOT wired in
  *   as a fallback for the PAGE token; do not re-probe it for this sender.
- *   (It IS tried with the USER token below — a different credential.)
+ *   (It IS tried with the USER token below — a different credential —
+ *   but that was also tried live 2026-11-07 evening and 400s #3 for
+ *   this sender.)
  * - GET /{psid}/ids_for_apps was ALSO probed live (2026-11-07, both
  *   Page tokens, v21.0): 400 GraphMethodException #100/33 on every
  *   attempt. The PSID object cannot be loaded at all with a Page token,
@@ -51,18 +53,33 @@
  * participants, /{psid}/picture) — a different credential may return
  * what the Page token cannot. No user token is stored for channels
  * connected before this change; they get one only on the next reconnect.
- * LIVE STATUS (2026-11-07): no user token exists yet for any channel,
- * so the user-token routes have NOT been tried live — they are wired
- * and covered by the verifier's stub, and the first real attempt will
- * happen on the first message after a Page is reconnected. If Meta
- * blocks the PSID for the user token too, the photo stays NULL.
+ * LIVE STATUS (2026-11-07 evening): user tokens ARE now stored (both
+ * workspaces reconnected ~19:09–19:10) and the user-token PSID routes
+ * were tried live for this sender — direct read 400 #3, conversations
+ * fallback 400 #10 ("Requested Page Does Not Match Page Access
+ * Token"), /{psid}/picture 400 #3. So for this sender the user token
+ * does not unblock the PSID object either; the photo stays NULL.
  *
- * OWNER PHOTO — when the sender IS the Page owner (the workspace's
- * marked owner_psid), GET /me/picture?redirect=false with the stored
- * user token returns the owner's own Facebook photo directly, without
- * ever needing the PSID to load. That is the route that can give the
- * test sender (the owner himself) his original photo. It only runs
- * for the marked owner, never for other customers.
+ * OWNER PHOTO — REMOVED 2026-11-07. There used to be a fallback that
+ * called GET /me/picture?redirect=false with the stored user token
+ * when the sender was the workspace's marked owner (owner_psid).
+ * /me/picture returns the photo of the Facebook user who CONNECTED
+ * the app (the developer account, Easin Arafat ES) — NOT the photo of
+ * the person who sent the message (here: Mohammad Easin, a different
+ * Facebook account). The wrong photo was stored on the sender's chat
+ * and the user rightly called it out. NEVER bring this route back:
+ * a customer photo may ONLY ever be stored when it comes from a
+ * route scoped to the sender's own PSID (direct read, conversations
+ * participants, /{psid}/picture). /me/picture is not PSID-scoped and
+ * must never be used for a customer photo.
+ *
+ * For this sender (phone-registered PSID 9336113056470349) Meta
+ * blocks the PSID object on EVERY route — direct read 400 #100/33
+ * (Page token) and #3 (user token), conversations strips the picture,
+ * /{psid}/picture 400/33, ids_for_apps 400/33 — so his photo stays
+ * NULL and the Inbox shows the initials avatar until Meta allows it.
+ * That is a platform limit, not a code bug, and it must be reported
+ * plainly rather than worked around with somebody else's photo.
  *
  * The pipeline below already stores a photo whenever Graph returns
  * one, so other (e.g. email-registered) customers' photos WILL show
@@ -249,32 +266,6 @@ async function fetchMessengerPicture(senderId: string, token: string, label: str
 }
 
 /**
- * The Page owner's own photo: GET /me/picture?redirect=false with the
- * stored USER token. Needs no PSID at all, so it works even when Meta
- * refuses to load the sender's PSID object. Only ever called for the
- * workspace's marked owner (owner_psid). A silhouette is ignored.
- */
-async function fetchOwnerPicture(userToken: string): Promise<string | null> {
-  const url = `${profileGraphBase()}/me/picture?redirect=false`;
-  let res: Awaited<ReturnType<typeof fetchWithTimeout>>;
-  try {
-    res = await fetchWithTimeout(url, { headers: { Authorization: `Bearer ${userToken}` } }, 8000);
-  } catch (err) {
-    console.warn(`[meta-profile] owner picture read failed: ${(err as Error).message}`);
-    return null;
-  }
-  if (!res.ok) {
-    const data = await readJson(res);
-    console.warn(`[meta-profile] owner picture read failed: HTTP ${res.status} ${graphErrorDetail(data)}`);
-    return null;
-  }
-  const data = await readJson(res);
-  const pic = (data?.data ?? null) as { url?: unknown; is_silhouette?: unknown } | null;
-  if (pic?.is_silhouette === true) return null;
-  return asNonEmptyString(pic?.url);
-}
-
-/**
  * Fetch one sender's profile from Graph. Never throws — every failure
  * is returned as null (the caller falls back to "Unknown") and logged.
  */
@@ -373,9 +364,12 @@ export async function fetchMetaProfile(input: {
  *
  * Order of attempts (Messenger): Page-token direct read → Page-token
  * conversations fallback → user-token direct read → user-token
- * conversations fallback → user-token /{psid}/picture → (owner only)
- * /me/picture with the user token. The first route that returns a
- * picture wins; a name is filled from whichever route returns one.
+ * conversations fallback → user-token /{psid}/picture. The first route
+ * that returns a picture wins; a name is filled from whichever route
+ * returns one. Every route here is scoped to the sender's own PSID —
+ * there is deliberately NO /me/picture fallback: /me/picture returns
+ * the connecting account's photo, not the sender's (removed 2026-11-07
+ * after it stored the wrong person's photo).
  *
  * Manual-photo protection: when picture_source is 'manual' the stored
  * picture is the shop owner's upload — the refresh never touches it
@@ -399,8 +393,6 @@ export async function enrichCustomerProfileIfNeeded(input: {
   pageToken: string | null;
   /** The connecting user's long-lived token (migration 20) — null until the Page is reconnected. */
   userToken?: string | null;
-  /** The workspace's marked owner PSID (workspaces.owner_psid) — null when nobody is marked. */
-  ownerPsid?: string | null;
   /** Messenger: the Page ID — enables the conversations-endpoint fallback. */
   pageId?: string | null;
 }): Promise<void> {
@@ -423,22 +415,9 @@ export async function enrichCustomerProfileIfNeeded(input: {
   // Manual name: kept exactly as the owner typed it — the Graph name is
   // ignored entirely, even if the stored name were ever missing.
   let name = nameManuallySet ? input.customerName : (input.customerName ?? profile?.name ?? null);
-  let pictureUrl = pictureIsManual
+  const pictureUrl = pictureIsManual
     ? input.customerPictureUrl
     : (input.customerPictureUrl ?? profile?.pictureUrl ?? null);
-  // Owner route: when the sender IS the Page owner, /me/picture with
-  // the user token is the owner's own Facebook photo — no PSID lookup
-  // needed, so it works even when Meta refuses to load the PSID.
-  if (
-    needPicture &&
-    !pictureUrl &&
-    input.userToken &&
-    input.ownerPsid &&
-    input.senderId === input.ownerPsid
-  ) {
-    const ownerPic = await fetchOwnerPicture(input.userToken);
-    if (ownerPic) pictureUrl = ownerPic;
-  }
   const pictureSource = pictureIsManual
     ? 'manual'
     : !input.customerPictureUrl && pictureUrl

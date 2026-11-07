@@ -13,19 +13,30 @@
  *   and the conversations edge returns a NAME but strips the picture —
  *   exactly what live Meta does for a phone-registered sender.
  * - User token ('stub-user-token'): the direct read WORKS for
- *   psid-usertoken (name + photo); /me/picture returns the owner's
- *   photo for the marked-owner sender.
+ *   psid-usertoken (name + photo). /me/picture still answers 200 with
+ *   a photo — on purpose, so the test can PROVE the code never calls
+ *   it: if the enrich ever hit that endpoint, the photo would be
+ *   stored and the checks below would fail.
  *
  * Checks:
  * 1. User-token direct read fills name + photo (source 'meta') when the
  *    Page token gives nothing.
- * 2. Owner route: sender == owner_psid gets the photo from /me/picture
- *    even though every PSID route fails for him.
+ * 2. Owner sender (sender == owner_psid, every PSID route fails):
+ *    name fills from conversations, photo stays NULL — the removed
+ *    /me/picture owner route must never supply a photo.
  * 3. No user token: name fills from conversations, photo stays NULL
  *    (unchanged behaviour).
- * 4. A non-owner sender never gets the /me/picture photo (owner gate).
+ * 4. A sender whose PSID routes all fail gets no photo even WITH a
+ *    user token (the token alone conjures nothing).
  * 5. A silhouette /picture is ignored (no fake photo stored).
  * 6. A stored name is never overwritten by the user-token fetch.
+ * 7. /me/picture was never called by the enrich in any case above.
+ *
+ * REMOVED 2026-11-07: the /me/picture owner-photo fallback. /me/picture
+ * returns the photo of the Facebook user who CONNECTED the app, not the
+ * sender's — it stored the developer account's photo on the sender's
+ * chat. A customer photo may only ever come from a route scoped to the
+ * sender's own PSID.
  *
  * Prints "PASS <name>" / "FAIL <name>" lines + "N/M checks passed".
  * Exits 0 only when every check passes. Never prints a token.
@@ -39,6 +50,8 @@ const ROOT = path.resolve(__dirname, '..');
 const STUB_PORT = 4021;
 const PAGE_TOKEN = 'stub-page-token';
 const USER_TOKEN = 'stub-user-token';
+// Counts /me/picture hits on the stub — must stay 0 (see header).
+let mePictureHits = 0;
 
 let passed = 0;
 let failed = 0;
@@ -76,8 +89,11 @@ function startStub(): Promise<http.Server> {
       res.writeHead(status, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify(body));
     };
-    // /me/picture — the owner route (user token only).
+    // /me/picture — DELIBERATELY still answers 200: the enrich must
+    // NEVER call it (it returns the connecting account's photo, not the
+    // sender's). mePictureHits counts calls so the checks can prove it.
     if (seg[1] === 'me' && seg[2] === 'picture') {
+      mePictureHits++;
       if (bearer !== USER_TOKEN) return graph400(res);
       return send(200, { data: { height: 200, width: 200, is_silhouette: false, url: 'https://example.com/owner.jpg' } });
     }
@@ -147,53 +163,55 @@ async function main(): Promise<number> {
     await enrichCustomerProfileIfNeeded({
       workspaceId, platform: 'messenger', senderId: 'psid-usertoken', customerId: c1,
       customerName: null, customerPictureUrl: null, customerPictureSource: null,
-      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, ownerPsid: null, pageId: 'stub-page-id',
+      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, pageId: 'stub-page-id',
     });
     const r1 = await readCustomer(c1);
     check('user-token direct read fills the name', r1.name === 'User Token', `name=${r1.name}`);
     check('user-token direct read fills the photo', r1.picture_url === 'https://example.com/user-token.jpg', `pic=${r1.picture_url}`);
     check('user-token photo is marked meta', r1.picture_source === 'meta', `source=${r1.picture_source}`);
 
-    // 2. Owner route: every PSID route fails, /me/picture gives the photo.
+    // 2. Owner sender: every PSID route fails. Name fills from
+    //    conversations; the photo must stay NULL — /me/picture (which
+    //    would return the CONNECTING account's photo, not his) is gone.
     const c2 = await makeCustomer();
     await enrichCustomerProfileIfNeeded({
       workspaceId, platform: 'messenger', senderId: 'psid-owner', customerId: c2,
       customerName: null, customerPictureUrl: null, customerPictureSource: null,
-      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, ownerPsid: 'psid-owner', pageId: 'stub-page-id',
+      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, pageId: 'stub-page-id',
     });
     const r2 = await readCustomer(c2);
     check('owner gets a name from conversations', r2.name === 'Owner Person', `name=${r2.name}`);
-    check('owner gets the photo from /me/picture', r2.picture_url === 'https://example.com/owner.jpg', `pic=${r2.picture_url}`);
-    check('owner photo is marked meta', r2.picture_source === 'meta', `source=${r2.picture_source}`);
+    check('owner photo stays NULL (no /me/picture)', r2.picture_url === null, `pic=${r2.picture_url}`);
+    check('owner photo source stays NULL', r2.picture_source === null, `source=${r2.picture_source}`);
 
     // 3. No user token: name fills, photo stays NULL (unchanged behaviour).
     const c3 = await makeCustomer();
     await enrichCustomerProfileIfNeeded({
       workspaceId, platform: 'messenger', senderId: 'psid-nouser', customerId: c3,
       customerName: null, customerPictureUrl: null, customerPictureSource: null,
-      pageToken: PAGE_TOKEN, userToken: null, ownerPsid: null, pageId: 'stub-page-id',
+      pageToken: PAGE_TOKEN, userToken: null, pageId: 'stub-page-id',
     });
     const r3 = await readCustomer(c3);
     check('no user token: name still fills', r3.name === 'No User', `name=${r3.name}`);
     check('no user token: photo stays NULL', r3.picture_url === null, `pic=${r3.picture_url}`);
 
-    // 4. Non-owner sender never gets the /me/picture photo: every PSID
-    //    route fails for psid-owner, and the owner gate is closed.
+    // 4. PSID routes all fail for this sender even WITH a user token:
+    //    the token alone conjures no photo.
     const c4 = await makeCustomer();
     await enrichCustomerProfileIfNeeded({
-      workspaceId, platform: 'messenger', senderId: 'psid-owner', customerId: c4,
+      workspaceId, platform: 'messenger', senderId: 'psid-nouser', customerId: c4,
       customerName: null, customerPictureUrl: null, customerPictureSource: null,
-      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, ownerPsid: 'someone-else', pageId: 'stub-page-id',
+      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, pageId: 'stub-page-id',
     });
     const r4 = await readCustomer(c4);
-    check('non-owner never gets the /me/picture photo', r4.name === 'Owner Person' && r4.picture_url === null, `name=${r4.name} pic=${r4.picture_url}`);
+    check('failed PSID routes + user token: photo stays NULL', r4.name === 'No User' && r4.picture_url === null, `name=${r4.name} pic=${r4.picture_url}`);
 
     // 5. A silhouette /picture is ignored (placeholder, not a photo).
     const c5 = await makeCustomer();
     await enrichCustomerProfileIfNeeded({
       workspaceId, platform: 'messenger', senderId: 'psid-silhouette', customerId: c5,
       customerName: null, customerPictureUrl: null, customerPictureSource: null,
-      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, ownerPsid: null, pageId: 'stub-page-id',
+      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, pageId: 'stub-page-id',
     });
     const r5 = await readCustomer(c5);
     check('silhouette picture is ignored', r5.picture_url === null, `pic=${r5.picture_url}`);
@@ -203,10 +221,14 @@ async function main(): Promise<number> {
     await enrichCustomerProfileIfNeeded({
       workspaceId, platform: 'messenger', senderId: 'psid-usertoken', customerId: c6,
       customerName: 'Already Named', customerPictureUrl: null, customerPictureSource: null,
-      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, ownerPsid: 'psid-owner', pageId: 'stub-page-id',
+      pageToken: PAGE_TOKEN, userToken: USER_TOKEN, pageId: 'stub-page-id',
     });
     const r6 = await readCustomer(c6);
     check('stored name is kept, photo still fills', r6.name === 'Already Named' && r6.picture_url === 'https://example.com/user-token.jpg', `name=${r6.name} pic=${r6.picture_url}`);
+
+    // 7. The stub's /me/picture endpoint was never called by the
+    //    enrich in any case above — the route is gone from the code.
+    check('/me/picture was never called', mePictureHits === 0, `hits=${mePictureHits}`);
 
     console.log(`\n${passed}/${passed + failed} checks passed`);
     return failed === 0 ? 0 : 1;

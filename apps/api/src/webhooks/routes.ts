@@ -339,13 +339,6 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
             } catch {
               userToken = null;
             }
-            // The owner-photo route only matters when the sender still has
-            // no photo and a user token exists — fetch the marked owner
-            // PSID only then, never on every message.
-            let ownerPsid: string | null = null;
-            if (userToken && !customer.picture_url && customer.picture_source !== 'manual') {
-              ownerPsid = await getWorkspaceOwnerPsid(channel.workspace_id).catch(() => null);
-            }
             await enrichCustomerProfileIfNeeded({
               workspaceId: channel.workspace_id,
               platform: platform as 'messenger' | 'instagram',
@@ -360,7 +353,6 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
               customerPictureSource: customer.picture_source,
               pageToken,
               userToken,
-              ownerPsid,
               // Messenger: external_id IS the Page ID. Instagram: the Page ID
               // lives in source_id (external_id is the IG user ID). The Page
               // ID powers the conversations-endpoint profile fallback.

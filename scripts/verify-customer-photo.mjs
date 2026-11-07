@@ -26,8 +26,11 @@
  *   customer with no photo inherits the merged customer's photo.
  * - User-token fallbacks (migration 20): the probe script
  *   scripts/verify-user-token-photo.ts runs here too — the same routes
- *   retried with the Page admin's USER token, plus the owner
- *   /me/picture route. Its PASS/FAIL lines are folded into this count.
+ *   retried with the Page admin's USER token. It also proves the
+ *   removed /me/picture owner route is never called: that endpoint
+ *   returns the connecting account's photo, not the sender's, so it
+ *   must never store a customer photo. Its PASS/FAIL lines are folded
+ *   into this count.
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
  * NOTE: uses only test data in a fresh workspace; nothing is sent to Meta.
  */
