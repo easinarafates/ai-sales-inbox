@@ -176,6 +176,8 @@ export interface Conversation {
   channelType?: string;
   channel_type?: string;
   status?: string;
+  escalation_reason?: string | null;
+  escalated_at?: string | null;
   mode?: string; // backend: 'ai' | 'human'
   aiMode?: boolean;
   ai_mode?: boolean;
@@ -442,6 +444,8 @@ export const inboxApi = {
   assign: (id: string, userId: string) =>
     api.post<Conversation>(`/api/inbox/${id}/assign`, { userId }),
   done: (id: string) => api.post<Conversation>(`/api/inbox/${id}/done`),
+  /** Move a 'waiting' conversation back to Open. Mode stays 'human' — the owner handles it; he turns the AI back on with the thread switch. */
+  reopen: (id: string) => api.post<Conversation>(`/api/inbox/${id}/reopen`),
   dot: (id: string) => api.post<Conversation>(`/api/inbox/${id}/dot`),
   setMode: (id: string, mode: "ai" | "human") =>
     api.post<Conversation>(`/api/inbox/${id}/mode`, { mode }),

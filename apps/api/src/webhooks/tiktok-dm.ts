@@ -105,12 +105,15 @@ async function findOrCreateConversation(
   for (let attempt = 0; attempt < 3; attempt++) {
     const latest = await lookupLatest();
     if (latest?.status === 'open') return latest.id;
+    // A 'waiting' chat stays waiting until the OWNER clears it — a new
+    // message must not silently reopen it and restart the AI.
+    if (latest?.status === 'waiting') return latest.id;
     if (latest) {
       try {
         const { rows } = await query<{ id: string }>(
           workspaceId,
           `UPDATE conversations SET status = 'open', snooze_until = NULL, updated_at = now()
-           WHERE workspace_id = $1 AND id = $2 AND status <> 'open'
+           WHERE workspace_id = $1 AND id = $2 AND status <> 'open' AND status <> 'waiting'
              AND NOT EXISTS (
                SELECT 1 FROM conversations
                WHERE workspace_id = $1 AND customer_id = $3

@@ -50,6 +50,7 @@ import {
 } from './providers';
 import { computeAiCostPaisa } from './pricing';
 import { deliverOutgoingMessage, type DeliveryResult } from '../channels/meta-send';
+import { detectAnger, escalateConversation, isCantAnswerReply } from '../inbox/escalation';
 
 /** Flat MVP estimate per AI reply (paisa). Real per-token pricing plugs in here later. Must stay under the 20-paisa gate. */
 const AI_REPLY_COST_PAISA = 10;
@@ -484,6 +485,13 @@ async function runDemoReply(
     } else {
       reply = `${DEMO_LABEL}দুঃখিত, অর্ডারটি তৈরি করা যায়নি। একজন মানুষ শীঘ্রই আপনাকে সাহায্য করবে।`;
       confidence = 0.5;
+      // The AI could not complete the order — a human must take over.
+      await escalateConversation(workspaceId, conversationId, 'cant_answer');
+      await runTool(toolDb, workspaceId, 'create_ticket', {
+        conversationId,
+        customerId: customerId ?? '',
+        reason: `Demo mode could not create the order: ${text.slice(0, 200)}`,
+      });
     }
   } else if (ORDER_INTENT.test(text) && matched.length === 0) {
     const list = products.slice(0, 5).map((p) => `• ${p.name} — ${taka(p.pricePaisa)}`).join('\n');
@@ -525,6 +533,8 @@ async function runDemoReply(
         customerId: customerId ?? '',
         reason: `Demo mode could not answer: ${text.slice(0, 200)}`,
       });
+      // Can't-answer fallback reply — the chat needs a human.
+      await escalateConversation(workspaceId, conversationId, 'cant_answer');
     }
   }
 
@@ -620,6 +630,25 @@ export async function processBatch(
   // balance; only over-limit replies need wallet money (10 paisa).
   if (!conversation) return { replied: false, reason: 'conversation_not_found' };
   if (conversation.mode !== 'ai') return { replied: false, reason: 'human_mode' };
+
+  // Angry customer? Escalate FIRST — before any AI call, before the
+  // subscription gate — so no AI reply goes out to an angry customer.
+  // The chat moves to the Inbox "Waiting" tab (status='waiting',
+  // mode='human') with the reason stored, plus a ticket + unanswered
+  // record, so a human sees it and takes over. A plain refund request
+  // or a normal complaint never matches the anger list (see
+  // inbox/escalation.ts) and flows through normally.
+  const batchedText = batchedMessages.map((m) => m.body).join(' ');
+  if (detectAnger(batchedText)) {
+    await escalateConversation(workspaceId, conversationId, 'angry_customer');
+    await runTool(toolDb, workspaceId, 'create_ticket', {
+      conversationId,
+      customerId: conversation.customer_id ?? '',
+      reason: `Angry customer — escalated to Waiting: ${batchedText.slice(0, 200)}`,
+    });
+    await recordUnanswered(workspaceId, batchedText);
+    return { replied: false, reason: 'escalated_angry_customer' };
+  }
 
   const [customer, channel, allowance] = await Promise.all([
     conversation.customer_id
@@ -810,6 +839,8 @@ export async function processBatch(
       reason: 'AI returned an empty/unparseable reply',
     });
     await recordUnanswered(workspaceId, batchedMessages.map((m) => m.body).join(' '));
+    // No usable answer at all — a human must take over.
+    await escalateConversation(workspaceId, conversationId, 'cant_answer');
     return { replied: false, reason: 'empty_reply_ticket_created', confidence: 0 };
   }
 
@@ -821,6 +852,7 @@ export async function processBatch(
       reason: `Low confidence (${parsed.confidence}): ${batchedMessages.map((m) => m.body).join(' ')}`,
     });
     await recordUnanswered(workspaceId, batchedMessages.map((m) => m.body).join(' '));
+    await escalateConversation(workspaceId, conversationId, 'ai_unsure');
     return { replied: false, reason: 'low_confidence_ticket_created', confidence: parsed.confidence };
   }
 
@@ -848,6 +880,13 @@ export async function processBatch(
       confidence: parsed.confidence,
       costPaisa: 0,
     };
+  }
+
+  // The reply went out but it IS a can't-answer reply ("জানি না…") —
+  // the customer was told a human will answer, so the chat belongs in
+  // Waiting until a human actually does.
+  if (isCantAnswerReply(parsed.reply)) {
+    await escalateConversation(workspaceId, conversationId, 'cant_answer');
   }
 
   // Charge for the reply; stop AI if the balance ran out.

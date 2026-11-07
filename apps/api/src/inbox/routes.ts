@@ -12,6 +12,8 @@ interface ConversationRow {
   id: string;
   status: string;
   mode: string;
+  escalation_reason: string | null;
+  escalated_at: string | null;
   customer_id: string | null;
   customer_name: string | null;
   customer_phone: string | null;
@@ -47,7 +49,7 @@ inboxRouter.get('/', async (req: AuthRequest, res: Response) => {
   }
   const { rows } = await query<ConversationRow>(
     workspaceId,
-    `SELECT c.id, c.status, c.mode, c.customer_id, cu.name AS customer_name, cu.phone AS customer_phone,
+    `SELECT c.id, c.status, c.mode, c.escalation_reason, c.escalated_at, c.customer_id, cu.name AS customer_name, cu.phone AS customer_phone,
             cu.picture_url AS customer_picture_url,
             c.assignee_id, c.updated_at, ch.platform AS channel, ch.display_name AS channel_name,
             (SELECT m.body FROM messages m WHERE m.workspace_id = $1 AND m.conversation_id = c.id
@@ -67,7 +69,7 @@ inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
   const conversation = await queryOne<ConversationRow>(
     workspaceId,
-    `SELECT c.id, c.status, c.mode, c.customer_id, cu.name AS customer_name, cu.phone AS customer_phone,
+    `SELECT c.id, c.status, c.mode, c.escalation_reason, c.escalated_at, c.customer_id, cu.name AS customer_name, cu.phone AS customer_phone,
             cu.picture_url AS customer_picture_url,
             c.assignee_id, c.updated_at, ch.platform AS channel, ch.display_name AS channel_name, NULL::text AS last_message
      FROM conversations c
@@ -192,16 +194,40 @@ inboxRouter.post('/:id/assign', async (req: AuthRequest, res: Response) => {
   res.json({ conversation: rows[0] });
 });
 
-/** POST /api/inbox/:id/done — mark the chat done. */
+/** POST /api/inbox/:id/done — mark the chat done. Clears any escalation: a done chat is no longer waiting. */
 inboxRouter.post('/:id/done', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
   const { rows } = await query(
     workspaceId,
-    "UPDATE conversations SET status = 'done', updated_at = now() WHERE workspace_id = $1 AND id = $2 RETURNING id, status",
+    "UPDATE conversations SET status = 'done', escalation_reason = NULL, escalated_at = NULL, updated_at = now() WHERE workspace_id = $1 AND id = $2 RETURNING id, status",
     [workspaceId, req.params.id],
   );
   if (rows.length === 0) {
     res.status(404).json({ error: 'Conversation not found' });
+    return;
+  }
+  res.json({ conversation: rows[0] });
+});
+
+/**
+ * POST /api/inbox/:id/reopen — move a 'waiting' conversation back to
+ * 'open'. The AI mode is deliberately NOT changed: the chat stays in
+ * human mode, so the owner handles it himself; he turns the AI back on
+ * with the thread's AI switch (or '.' in Messenger) when he is ready.
+ * The escalation reason is cleared — it is no longer waiting.
+ */
+inboxRouter.post('/:id/reopen', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { rows } = await query(
+    workspaceId,
+    `UPDATE conversations
+     SET status = 'open', escalation_reason = NULL, escalated_at = NULL, updated_at = now()
+     WHERE workspace_id = $1 AND id = $2 AND status = 'waiting'
+     RETURNING id, status, mode`,
+    [workspaceId, req.params.id],
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Conversation not found or not waiting' });
     return;
   }
   res.json({ conversation: rows[0] });

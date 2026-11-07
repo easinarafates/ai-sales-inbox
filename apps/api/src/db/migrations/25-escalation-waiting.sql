@@ -1,0 +1,22 @@
+-- 25-escalation-waiting.sql — Automatic escalation to a 'Waiting' status.
+--
+-- Problem (2026-11-07): when a customer got angry, or said something the
+-- AI could not understand, the AI either kept replying badly or went
+-- silent (low-confidence handoff) with nothing in the Inbox marking the
+-- chat as needing a human — the owner had no "Waiting" tab to look at,
+-- and a new message could reopen the chat and restart the AI.
+--
+-- Fix: conversations carry WHY they were escalated (escalation_reason)
+-- and WHEN (escalated_at). The agent (see inbox/escalation.ts) sets
+-- status='waiting' + mode='human' when (a) the reply confidence is below
+-- the existing handoff threshold, (b) the AI gives its can't-answer /
+-- fallback reply, or (c) the customer's message matches a curated,
+-- conservative anger list (Bengali + English). The webhook intake never
+-- reopens a 'waiting' chat — only the owner clears it (reopen → 'open',
+-- still human-handled; done → 'done').
+--
+-- Reasons: 'ai_unsure' (low confidence), 'angry_customer', 'cant_answer'.
+-- Older rows have NULLs here (never escalated) and the Inbox shows them
+-- exactly as before. Idempotent: safe to run more than once.
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS escalation_reason TEXT;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS escalated_at TIMESTAMPTZ;

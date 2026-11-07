@@ -109,14 +109,27 @@ function aiModeOf(c: Conversation): boolean | null {
 
 /**
  * Conversation status mapping (backend values → spec labels). The API
- * stores open / done / snoozed; the design calls them Open / Closed /
- * Pending. Pending = snoozed (waiting for attention), Closed = done.
+ * stores open / done / snoozed / waiting; the design calls them Open /
+ * Closed / Pending / Waiting. Pending = snoozed (waiting for attention),
+ * Closed = done. Waiting is its own status: the AI escalated the chat
+ * (angry customer / couldn't answer) and a human must take over.
  */
-function statusOf(c: Conversation): "open" | "pending" | "closed" {
+function statusOf(c: Conversation): "open" | "pending" | "closed" | "waiting" {
   const s = String(c.status || "").toLowerCase();
   if (s === "done" || s === "closed") return "closed";
+  if (s === "waiting") return "waiting";
   if (s === "snoozed" || s === "pending") return "pending";
   return "open";
+}
+
+/** Why a conversation is waiting — shown as a badge in the list + thread. */
+function waitingReason(c: Conversation): { en: string; bn: string } | null {
+  if (statusOf(c) !== "waiting") return null;
+  const r = String((c as { escalation_reason?: unknown }).escalation_reason || "");
+  if (r === "angry_customer") return { en: "Customer is angry", bn: "কাস্টমার রেগে গেছেন" };
+  if (r === "cant_answer") return { en: "AI couldn't answer", bn: "AI উত্তর দিতে পারেনি" };
+  if (r === "ai_unsure") return { en: "AI wasn't sure how to answer", bn: "AI উত্তর বুঝতে পারেনি" };
+  return { en: "Needs a human", bn: "মানুষের উত্তর দরকার" };
 }
 
 function StatCard({
@@ -161,7 +174,7 @@ function InboxPage() {
   const searchInputRef = useRef<HTMLInputElement>(null);
   // Real stat counts, computed from the full unfiltered list (never from
   // the search-filtered list, so searching never changes the cards).
-  const [stats, setStats] = useState({ total: 0, open: 0, pending: 0, closed: 0 });
+  const [stats, setStats] = useState({ total: 0, open: 0, pending: 0, closed: 0, waiting: 0 });
 
   const loadList = useCallback(async () => {
     try {
@@ -177,7 +190,7 @@ function InboxPage() {
   const loadStats = useCallback(async () => {
     try {
       const all = asArray(await inboxApi.list());
-      const counts = { total: all.length, open: 0, pending: 0, closed: 0 };
+      const counts = { total: all.length, open: 0, pending: 0, closed: 0, waiting: 0 };
       for (const c of all) counts[statusOf(c)] += 1;
       setStats(counts);
     } catch {
@@ -355,17 +368,22 @@ function InboxPage() {
     }
   };
 
-  // Status tabs (spec): All / Open / Pending / Closed. They drive the
-  // same status filter the search dropdown uses.
-  const activeTab = status === "" ? "all" : status === "open" ? "open" : status === "snoozed" ? "pending" : "closed";
-  const setTab = (tab: "all" | "open" | "pending" | "closed") => {
-    setStatus(tab === "all" ? "" : tab === "open" ? "open" : tab === "pending" ? "snoozed" : "done");
+  // Status tabs (spec): All / Open / Pending / Closed / Waiting. They
+  // drive the same status filter the search dropdown uses. Waiting is
+  // the auto-escalation tab — angry customers and questions the AI
+  // could not answer land here for a human. Its Bengali label is
+  // deliberately NOT "অপেক্ষমাণ" (that is Pending) — it is
+  // "মানুষের অপেক্ষায়" (waiting for a human).
+  const activeTab = status === "" ? "all" : status === "open" ? "open" : status === "snoozed" ? "pending" : status === "waiting" ? "waiting" : "closed";
+  const setTab = (tab: "all" | "open" | "pending" | "closed" | "waiting") => {
+    setStatus(tab === "all" ? "" : tab === "open" ? "open" : tab === "pending" ? "snoozed" : tab === "waiting" ? "waiting" : "done");
   };
-  const TABS: { id: "all" | "open" | "pending" | "closed"; labelEn: string; labelBn: string; count: number }[] = [
+  const TABS: { id: "all" | "open" | "pending" | "closed" | "waiting"; labelEn: string; labelBn: string; count: number }[] = [
     { id: "all", labelEn: "All", labelBn: "সব", count: stats.total },
     { id: "open", labelEn: "Open", labelBn: "খোলা", count: stats.open },
     { id: "pending", labelEn: "Pending", labelBn: "অপেক্ষমাণ", count: stats.pending },
     { id: "closed", labelEn: "Closed", labelBn: "বন্ধ", count: stats.closed },
+    { id: "waiting", labelEn: "Waiting", labelBn: "মানুষের অপেক্ষায়", count: stats.waiting },
   ];
 
   return (
@@ -424,6 +442,7 @@ function InboxPage() {
             <option value="open">{t("inbox.statusOpen", "Open", "খোলা")}</option>
             <option value="snoozed">{t("inbox.statusPending", "Pending", "অপেক্ষমাণ")}</option>
             <option value="done">{t("inbox.statusDone", "Closed", "বন্ধ")}</option>
+            <option value="waiting">{t("inbox.statusWaiting", "Waiting", "মানুষের অপেক্ষায়")}</option>
           </select>
           <button onClick={loadList} className="btn-green shrink-0">{t("common.search", "Search", "খুঁজুন")}</button>
         </div>
@@ -508,6 +527,15 @@ function InboxPage() {
                     <span className="shrink-0 text-xs text-slate-400">{fmtDate(c.updatedAt || c.updated_at || c.lastMessageAt || c.last_message_at)}</span>
                   </span>
                   <span className="block truncate text-sm text-slate-500">{c.lastMessage || c.last_message || ""}</span>
+                  {(() => {
+                    const reason = waitingReason(c);
+                    if (!reason) return null;
+                    return (
+                      <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-amber-100 px-2 py-0.5 text-xs font-bold text-amber-800">
+                        {t("inbox.waitingBadge", "Needs a human", "মানুষের উত্তর দরকার")} — {t("inbox.waitingReason", reason.en, reason.bn)}
+                      </span>
+                    );
+                  })()}
                 </span>
               </button>
             ))}
@@ -635,6 +663,43 @@ function InboxPage() {
                     "Messenger-এ '.' লিখলে AI চালু/বন্ধ হয় — শুধু পেজের মালিকের জন্য। সুইচ বা '.' চাপলে টাইমার হ্যান্ডওভার বাতিল হয়ে যায়।",
                   )}
                 </p>
+
+                {/* Waiting banner — this chat escalated to a human (angry
+                    customer / AI couldn't answer). The AI is stopped
+                    (mode stays 'human'). The owner clears it here:
+                    Back to Open (keeps human mode — he handles it) or
+                    Done. */}
+                {(() => {
+                  const reason = selected ? waitingReason(selected.conversation) : null;
+                  if (!reason) return null;
+                  return (
+                    <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-sm font-bold text-amber-900">
+                        {t("inbox.waitingBanner", "Needs a human — the AI has stopped replying here.", "মানুষের উত্তর দরকার — এখানে AI উত্তর দেওয়া বন্ধ করেছে।")}
+                      </p>
+                      <p className="mt-0.5 text-sm text-amber-800">
+                        {t("inbox.waitingBannerReason", "Reason", "কারণ")}: {t("inbox.waitingReason", reason.en, reason.bn)}
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <button
+                          onClick={() => doAction(() => inboxApi.reopen(selectedId!), t("inbox.reopenFailed", "Moving back to Open failed", "খোলা অবস্থায় ফেরানো ব্যর্থ"))}
+                          className="rounded-lg bg-amber-600 px-3 py-2 text-sm text-white transition hover:bg-amber-700"
+                        >
+                          {t("inbox.reopen", "Back to Open", "খোলা অবস্থায় ফেরান")}
+                        </button>
+                        <button
+                          onClick={() => doAction(() => inboxApi.done(selectedId!), t("inbox.markDoneFailed", "Marking done failed", "সম্পন্ন করা ব্যর্থ"))}
+                          className="rounded-lg bg-blue-600 px-3 py-2 text-sm text-white transition hover:bg-blue-700"
+                        >
+                          {t("inbox.markDone", "Done", "সম্পন্ন")}
+                        </button>
+                      </div>
+                      <p className="mt-2 text-xs text-amber-700">
+                        {t("inbox.waitingBannerNote", "Back to Open keeps the AI off — you handle this chat. Turn the AI back on with the switch above when you're ready.", "খোলা অবস্থায় ফেরালেও AI বন্ধই থাকবে — এই চ্যাট আপনি নিজে দেখবেন। প্রস্তুত হলে উপরের সুইচ দিয়ে AI আবার চালু করুন।")}
+                      </p>
+                    </div>
+                  );
+                })()}
 
                 <div className="max-h-[420px] space-y-3 overflow-y-auto py-4">
                   {selected.messages.length === 0 && <p className="text-sm text-slate-500">{t("inbox.noMessages", "No messages yet.", "এখনো কোনো মেসেজ নেই।")}</p>}
