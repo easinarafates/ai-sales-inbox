@@ -79,7 +79,7 @@ export default function OwnerBankAccountsPage() {
   };
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("ownerBankAccountsTitle", "Bank accounts", "ব্যাংক অ্যাকাউন্ট")}</h1>
       <p className="text-sm text-slate-500 mb-4">
         {t(
@@ -115,7 +115,7 @@ export default function OwnerBankAccountsPage() {
             <button
               onClick={add}
               disabled={saving || !bankName.trim() || !accountHolder.trim() || !accountNumber.trim()}
-              className="mt-3 bg-[#ff6a4d] hover:bg-[#e04e33] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50"
+              className="mt-3 bg-[#FF5B2E] hover:bg-[#E8491F] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50"
             >
               {saving ? t("saving", "Saving…", "সেভ হচ্ছে…") : t("ownerBankAddBtn", "Add account", "অ্যাকাউন্ট যোগ করুন")}
             </button>
@@ -128,7 +128,7 @@ export default function OwnerBankAccountsPage() {
               {accounts.map((a) => (
                 <div key={a.id} className="card p-4">
                   <div className="flex justify-between gap-2 flex-wrap items-center">
-                    <span className="font-bold">{a.bankName} {a.isPrimary && <span className="text-xs font-bold bg-teal-600/10 text-teal-600 border border-teal-600/30 rounded-full px-2 py-0.5 ml-1">{t("ownerPrimary", "Primary", "প্রধান")}</span>}</span>
+                    <span className="font-bold">{a.bankName} {a.isPrimary && <span className="text-xs font-bold bg-green-600/10 text-green-600 border border-green-600/30 rounded-full px-2 py-0.5 ml-1">{t("ownerPrimary", "Primary", "প্রধান")}</span>}</span>
                     <span className="text-sm text-slate-500">{a.type === "bank" ? t("ownerBankTypeBank", "Bank", "ব্যাংক") : a.type}</span>
                   </div>
                   <p className="text-sm mt-1">{a.accountHolder} · {a.accountNumberMasked}</p>

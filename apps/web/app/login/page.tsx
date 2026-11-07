@@ -73,7 +73,7 @@ export default function LoginPage() {
           {t("auth.emailTip", "Use the exact email you signed up with — check the spelling (for example gmail vs gamil).", "সাইন আপের সময়ের হুবহু ইমেইলটা লেখো — বানান দেখে নাও (যেমন gmail নাকি gamil)।")}
         </p>
         <p className="text-center text-sm text-slate-500">
-          <Link href="/" className="text-teal-700 underline hover:text-teal-800">← {t("landing.backHome", "Back to home", "হোমে ফিরুন")}</Link>
+          <Link href="/" className="text-green-700 underline hover:text-green-800">← {t("landing.backHome", "Back to home", "হোমে ফিরুন")}</Link>
         </p>
       </form>
     </div>

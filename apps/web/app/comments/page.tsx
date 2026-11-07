@@ -53,7 +53,7 @@ export default function CommentsPage() {
     : s;
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("commentsTitle", "Comments", "কমেন্ট")}</h1>
       <p className="text-sm text-slate-500 mb-4">{t("commentsSub", "Check, answer, hide or finish post comments here.", "পোস্টের কমেন্ট এখানে যাচাই করুন, উত্তর দিন, লুকান বা শেষ করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
@@ -77,7 +77,7 @@ export default function CommentsPage() {
         <h2 className="font-bold">{t("cLogTitle", "Log a comment by hand", "হাতে একটি কমেন্ট লিখুন")}</h2>
         <input value={newPostId} onChange={(e) => setNewPostId(e.target.value)} placeholder={t("cPostIdPh", "Post ID (optional)", "পোস্ট আইডি (ঐচ্ছিক)")} className="border rounded-lg px-3 py-2" />
         <input required value={newBody} onChange={(e) => setNewBody(e.target.value)} placeholder={t("cBodyPh", "Comment text…", "কমেন্টের লেখা…")} className="border rounded-lg px-3 py-2" />
-        <button className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white rounded-lg px-4 py-2 w-fit">{t("add", "Add", "যোগ করুন")}</button>
+        <button className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white rounded-lg px-4 py-2 w-fit">{t("add", "Add", "যোগ করুন")}</button>
       </form>
 
       {loading ? (
@@ -89,13 +89,13 @@ export default function CommentsPage() {
           {comments.map((c) => (
             <div key={c.id} className="card p-4">
               <div className="flex justify-between gap-2 flex-wrap">
-                <span className="text-xs bg-[#ff6a4d]/10 text-[#ff6a4d] rounded-full px-2 py-1 h-fit">{statusLabel(c.status)}</span>
+                <span className="text-xs bg-[#FF5B2E]/10 text-[#FF5B2E] rounded-full px-2 py-1 h-fit">{statusLabel(c.status)}</span>
                 <span className="text-xs text-slate-400">{fmtDate(c.created_at)}</span>
               </div>
               <p className="mt-2 text-sm">{c.body}</p>
               {c.platform_post_id && <p className="text-xs text-slate-400 mt-1">{t("cPost", "Post:", "পোস্ট:")} {c.platform_post_id}</p>}
               {c.reply_text && (
-                <p className="text-sm bg-teal-600/5 border border-teal-600/20 rounded-lg p-2 mt-2">
+                <p className="text-sm bg-green-600/5 border border-green-600/20 rounded-lg p-2 mt-2">
                   {t("cYourReply", "Your reply:", "আপনার উত্তর:")} {c.reply_text}
                 </p>
               )}
@@ -109,7 +109,7 @@ export default function CommentsPage() {
                 <button
                   disabled={!(answerText[c.id] ?? "").trim()}
                   onClick={() => act(() => commentsApi.answer(c.id, answerText[c.id] ?? "").then(() => setAnswerText((p) => ({ ...p, [c.id]: "" }))), "cAnswerFail", "Could not send the reply.", "উত্তর পাঠানো যায়নি।")}
-                  className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white text-sm rounded-lg px-3 py-1 disabled:opacity-50"
+                  className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white text-sm rounded-lg px-3 py-1 disabled:opacity-50"
                 >
                   {t("cAnswer", "Answer", "উত্তর দিন")}
                 </button>
@@ -127,7 +127,7 @@ export default function CommentsPage() {
                       : t("cLike", "👍 Like", "👍 লাইক")}
                   </button>
                 )}
-                <button onClick={() => act(() => commentsApi.markDone(c.id), "cDoneFail", "Could not mark done.", "শেষ করা যায়নি।")} className="text-sm border border-teal-600 text-teal-600 rounded-lg px-3 py-1">
+                <button onClick={() => act(() => commentsApi.markDone(c.id), "cDoneFail", "Could not mark done.", "শেষ করা যায়নি।")} className="text-sm border border-green-600 text-green-600 rounded-lg px-3 py-1">
                   {t("cMarkDone", "Mark done", "শেষ করুন")}
                 </button>
                 <button

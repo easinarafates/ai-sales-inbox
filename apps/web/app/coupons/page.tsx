@@ -141,12 +141,12 @@ export default function CouponsPage() {
         <div className="flex flex-wrap gap-2">
           <input required value={testCode} onChange={(e) => setTestCode(e.target.value)} placeholder={t("coupons.testCodePlaceholder", "Coupon code", "কুপন কোড")} className="border rounded-lg px-3 py-2 flex-1 min-w-40" />
           <input required type="number" min="0" step="0.01" value={testSubtotal} onChange={(e) => setTestSubtotal(e.target.value)} placeholder={t("coupons.testSubtotalPlaceholder", "Order total (৳)", "অর্ডারের মোট (৳)")} className="border rounded-lg px-3 py-2 w-44" />
-          <button disabled={testing} className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700 disabled:opacity-50">
+          <button disabled={testing} className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50">
             {testing ? t("coupons.testing", "Checking…", "যাচাই হচ্ছে…") : t("coupons.testButton", "Check", "যাচাই করুন")}
           </button>
         </div>
         {testResult && (
-          <p className={`mt-3 text-sm p-3 rounded-lg ${testResult.valid ? "bg-teal-50 text-teal-800" : "bg-red-50 text-red-700"}`}>
+          <p className={`mt-3 text-sm p-3 rounded-lg ${testResult.valid ? "bg-green-50 text-green-800" : "bg-red-50 text-red-700"}`}>
             {testResult.valid
               ? `${t("coupons.validPrefix", "✅ This coupon applies — discount:", "✅ কুপনটি প্রযোজ্য — ছাড়:")} ${fmtTaka(couponDiscountPaisa(testResult))}${testResult.freeDelivery || testResult.free_delivery ? t("coupons.validFreeDelivery", " + free delivery", " + ফ্রি ডেলিভারি") : ""}`
               : `${t("coupons.invalidPrefix", "❌ ", "❌ ")}${testResult.message || t("coupons.invalidDefault", "This coupon does not apply.", "কুপনটি প্রযোজ্য নয়।")}`}

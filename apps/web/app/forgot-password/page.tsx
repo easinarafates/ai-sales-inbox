@@ -41,7 +41,7 @@ export default function ForgotPasswordPage() {
           <LanguageToggle />
         </div>
         {sent ? (
-          <p className="rounded-lg bg-teal-50 p-3 text-sm text-teal-700">
+          <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">
             {t("auth.resetLinkSent", "Request saved. No email was sent — email delivery isn't set up yet. To reset your password, please contact the site owner.", "অনুরোধ জমা হয়েছে। কোনো ইমেইল পাঠানো হয়নি — ইমেইল পাঠানো এখনো চালু হয়নি। পাসওয়ার্ড বদলাতে সাইটের মালিকের সাথে যোগাযোগ করো।")}
           </p>
         ) : (

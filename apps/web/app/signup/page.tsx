@@ -77,7 +77,7 @@ export default function SignupPage() {
           <Link href="/login" className="font-medium text-brand-dark underline hover:text-brand">{t("auth.loginLink", "Log in", "লগইন করুন")}</Link>
         </p>
         <p className="text-center text-sm text-slate-500">
-          <Link href="/" className="text-teal-700 underline hover:text-teal-800">← {t("landing.backHome", "Back to home", "হোমে ফিরুন")}</Link>
+          <Link href="/" className="text-green-700 underline hover:text-green-800">← {t("landing.backHome", "Back to home", "হোমে ফিরুন")}</Link>
         </p>
       </form>
     </div>

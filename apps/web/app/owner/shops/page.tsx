@@ -66,7 +66,7 @@ export default function OwnerShopsPage() {
   };
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("ownerShopsTitle", "Shop accounts", "দোকানের অ্যাকাউন্ট")}</h1>
       <p className="text-sm text-slate-500 mb-4">
         {t(
@@ -76,7 +76,7 @@ export default function OwnerShopsPage() {
         )}
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {message && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{message}</p>}
+      {message && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{message}</p>}
       {loading ? (
         <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
       ) : isOwner === false ? (
@@ -108,11 +108,11 @@ export default function OwnerShopsPage() {
                       {s.suspended ? (
                         <span className="text-xs font-bold bg-red-50 text-red-700 border border-red-200 rounded-full px-2 py-0.5">{t("ownerSuspended", "Suspended", "বন্ধ")}</span>
                       ) : (
-                        <span className="text-xs font-bold bg-teal-600/10 text-teal-600 border border-teal-600/30 rounded-full px-2 py-0.5">{t("ownerActive", "Active", "চালু")}</span>
+                        <span className="text-xs font-bold bg-green-600/10 text-green-600 border border-green-600/30 rounded-full px-2 py-0.5">{t("ownerActive", "Active", "চালু")}</span>
                       )}
                     </td>
                     <td className="p-3 whitespace-nowrap">
-                      <button onClick={() => openDetail(s.id)} className="text-sm text-[#e04e33] underline mr-2">{t("ownerView", "View", "দেখুন")}</button>
+                      <button onClick={() => openDetail(s.id)} className="text-sm text-[#E8491F] underline mr-2">{t("ownerView", "View", "দেখুন")}</button>
                       <button
                         onClick={() => toggleSuspend(s)}
                         disabled={busy === s.id}

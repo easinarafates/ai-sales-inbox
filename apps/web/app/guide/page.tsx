@@ -173,7 +173,7 @@ export default function GuidePage() {
   };
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("guideTitle", "Guide", "গাইড")}</h1>
       <p className="text-sm text-slate-500 mb-4">{t("guideSub", "Written step-by-step guides for every feature. These are written guides, not videos.", "প্রতিটি ফিচারের জন্য লেখা ধাপে ধাপে গাইড। এগুলো লেখা গাইড, ভিডিও নয়।")}</p>
 
@@ -182,7 +182,7 @@ export default function GuidePage() {
         <p className="text-sm text-slate-500 mb-3">{t("guidePhotoSub", "Paste a product photo link to find the matching product.", "মিলে যাওয়া প্রোডাক্ট খুঁজতে ছবির লিংক বসান।")}</p>
         <form onSubmit={searchPhoto} className="flex gap-2 flex-wrap">
           <input required value={imageRef} onChange={(e) => setImageRef(e.target.value)} placeholder="https://… / photo link" className="border rounded-lg px-3 py-2 flex-1 min-w-[220px]" />
-          <button disabled={searching} className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white rounded-lg px-4 py-2 disabled:opacity-50">
+          <button disabled={searching} className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white rounded-lg px-4 py-2 disabled:opacity-50">
             {searching ? t("guideSearching", "Searching…", "খোঁজা হচ্ছে…") : t("guideSearch", "Search", "খুঁজুন")}
           </button>
         </form>
@@ -215,7 +215,7 @@ export default function GuidePage() {
             <div key={g.id} className="card p-4">
               <button onClick={() => setOpen(isOpen ? null : g.id)} className="w-full text-left flex justify-between gap-2">
                 <span className="font-bold">{t(`guide_${g.id}`, g.en, g.bn)}</span>
-                <span className="text-[#ff6a4d]">{isOpen ? "−" : "+"}</span>
+                <span className="text-[#FF5B2E]">{isOpen ? "−" : "+"}</span>
               </button>
               {isOpen && (
                 <ol className="list-decimal list-inside text-sm text-slate-600 grid gap-1 mt-3">

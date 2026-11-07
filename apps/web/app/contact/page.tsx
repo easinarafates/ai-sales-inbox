@@ -9,9 +9,9 @@ export const metadata: Metadata = {
 
 export default function ContactPage() {
   return (
-    <main className="min-h-screen bg-[#fff8f3] text-slate-800">
+    <main className="min-h-screen bg-[#FFF1EA] text-slate-800">
       <div className="max-w-3xl mx-auto px-5 py-10">
-        <p className="text-sm font-semibold tracking-wide text-[#ff6a4d] uppercase">
+        <p className="text-sm font-semibold tracking-wide text-[#FF5B2E] uppercase">
           AI Sales Inbox
         </p>
         <h1 className="text-3xl font-bold mt-2">Contact us</h1>

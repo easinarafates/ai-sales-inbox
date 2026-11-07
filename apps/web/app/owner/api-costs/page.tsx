@@ -41,7 +41,7 @@ export default function OwnerApiCostsPage() {
     : p;
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("ownerApiCostsTitle", "API costs", "API খরচ")}</h1>
       <p className="text-sm text-slate-500 mb-4">
         {t(
@@ -62,7 +62,7 @@ export default function OwnerApiCostsPage() {
               <button
                 key={p}
                 onClick={() => setPeriod(p)}
-                className={`text-sm rounded-lg px-3 py-1 border ${period === p ? "bg-[#ff6a4d] text-white border-[#ff6a4d]" : "border-slate-300"}`}
+                className={`text-sm rounded-lg px-3 py-1 border ${period === p ? "bg-[#FF5B2E] text-white border-[#FF5B2E]" : "border-slate-300"}`}
               >
                 {p === "month" ? t("ownerPeriodMonth", "This month", "এই মাস") : p === "7d" ? `7 ${t("ownerDays", "days", "দিন")}` : `30 ${t("ownerDays", "days", "দিন")}`}
               </button>

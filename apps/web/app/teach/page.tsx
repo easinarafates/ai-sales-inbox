@@ -232,7 +232,7 @@ export default function TeachPage() {
               {k.title && <p className="font-bold">{k.title}</p>}
               <p className="text-sm whitespace-pre-wrap">{k.body || "—"}</p>
               <div className="flex gap-2 mt-3">
-                <button onClick={() => { setEditing(k); setKTitle(k.title || ""); setKBody(k.body || ""); }} className="bg-teal-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-teal-700">{t("common.edit", "Edit", "এডিট")}</button>
+                <button onClick={() => { setEditing(k); setKTitle(k.title || ""); setKBody(k.body || ""); }} className="bg-green-600 text-white px-3 py-1.5 rounded-lg text-sm hover:bg-green-700">{t("common.edit", "Edit", "এডিট")}</button>
                 <button onClick={() => deleteKnowledge(k.id)} className="bg-red-50 text-red-700 px-3 py-1.5 rounded-lg text-sm">{t("common.delete", "Delete", "মুছুন")}</button>
                 <button onClick={() => toggleVersions(k.id)} className="bg-amber-100 text-amber-800 px-3 py-1.5 rounded-lg text-sm">{t("teach.versionsTitle", "Earlier versions", "আগের সংস্করণগুলো")}</button>
               </div>

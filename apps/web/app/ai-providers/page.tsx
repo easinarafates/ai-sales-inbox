@@ -12,7 +12,7 @@ import {
 function statusBadge(p: AiProviderInfo, t: (k: string, en: string, bn: string) => string) {
   if (p.status === "connected") {
     return (
-      <span className="text-xs font-bold bg-teal-600/10 text-teal-600 border border-teal-600/30 rounded-full px-2 py-0.5">
+      <span className="text-xs font-bold bg-green-600/10 text-green-600 border border-green-600/30 rounded-full px-2 py-0.5">
         {t("aiProvConnected", "Connected", "যুক্ত আছে")}
       </span>
     );
@@ -94,7 +94,7 @@ export default function AiProvidersPage() {
     : "";
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("aiProvTitle", "AI Providers", "AI প্রোভাইডার")}</h1>
       <p className="text-sm text-slate-500 mb-4">
         {t(
@@ -110,8 +110,8 @@ export default function AiProvidersPage() {
         <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
       ) : data ? (
         <>
-          <div className="bg-teal-600/10 border border-teal-600/30 rounded-xl p-4 mb-6">
-            <p className="font-bold text-teal-600">
+          <div className="bg-green-600/10 border border-green-600/30 rounded-xl p-4 mb-6">
+            <p className="font-bold text-green-600">
               {t("aiProvCurrent", "Currently answering", "এখন উত্তর দিচ্ছে")} — {currentName} · {data.current.model}
             </p>
             <p className="text-sm mt-1">
@@ -123,7 +123,7 @@ export default function AiProvidersPage() {
               <button
                 onClick={resetToSystem}
                 disabled={saving === "system"}
-                className="mt-3 border border-teal-600 text-teal-600 rounded-lg px-3 py-1 text-sm disabled:opacity-50"
+                className="mt-3 border border-green-600 text-green-600 rounded-lg px-3 py-1 text-sm disabled:opacity-50"
               >
                 {saving === "system"
                   ? t("saving", "Saving…", "সেভ হচ্ছে…")
@@ -183,7 +183,7 @@ export default function AiProvidersPage() {
                     <button
                       onClick={() => choose(p.id)}
                       disabled={p.status === "key_missing" || saving === p.id || (isCurrent && (models[p.id] ?? p.defaultModel) === data.current.model)}
-                      className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white text-sm rounded-lg px-3 py-2 disabled:opacity-50"
+                      className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white text-sm rounded-lg px-3 py-2 disabled:opacity-50"
                     >
                       {isCurrent && (models[p.id] ?? p.defaultModel) === data.current.model
                         ? t("aiProvInUse", "In use", "ব্যবহার হচ্ছে")

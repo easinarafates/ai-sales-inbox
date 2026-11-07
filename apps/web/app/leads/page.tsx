@@ -158,7 +158,7 @@ export default function LeadsPage() {
     <div>
       <h1 className="text-2xl font-bold mb-4">{t("leads.title", "Leads", "লিড")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {runResult && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{runResult}</p>}
+      {runResult && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{runResult}</p>}
 
       <form onSubmit={submitLead} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
         <h2 className="font-bold md:col-span-2">{editing ? t("leads.editTitle", "Edit lead", "লিড এডিট করুন") : t("leads.addTitle", "Add a new lead", "নতুন লিড যোগ করুন")}</h2>

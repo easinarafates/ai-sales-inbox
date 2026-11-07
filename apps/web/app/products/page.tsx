@@ -206,11 +206,11 @@ export default function ProductsPage() {
       <h1 className="page-title">{t("products.title", "Products", "প্রোডাক্ট")}</h1>
       <p className="page-subtitle">{t("products.subtitle", "Products the AI shows and sells for you.", "AI যে প্রোডাক্টগুলো দেখায় আর বিক্রি করে।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <div className="flex gap-2 mb-4">
         <input value={q} onChange={(e) => setQ(e.target.value)} onKeyDown={(e) => e.key === "Enter" && search()} placeholder={t("products.searchPlaceholder", "Search products…", "প্রোডাক্ট খুঁজুন…")} className="flex-1 border rounded-lg px-3 py-2 bg-white" />
-        <button onClick={search} className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700">{t("common.search", "Search", "খুঁজুন")}</button>
+        <button onClick={search} className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">{t("common.search", "Search", "খুঁজুন")}</button>
       </div>
 
       <form onSubmit={addProduct} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -284,7 +284,7 @@ export default function ProductsPage() {
                   <td className="p-3">{p.size || "—"}</td>
                   <td className="p-3">{p.stock != null ? fmtNum(p.stock) : "—"}</td>
                   <td className="p-3 text-right whitespace-nowrap">
-                    <button onClick={() => startEdit(p)} className="text-teal-700 underline mr-2">{t("products.edit", "Edit", "বদলান")}</button>
+                    <button onClick={() => startEdit(p)} className="text-green-700 underline mr-2">{t("products.edit", "Edit", "বদলান")}</button>
                     <button onClick={() => deleteProduct(p)} className="text-red-700 underline mr-2">{t("products.delete", "Delete", "মুছুন")}</button>
                     <Link href={`/products/${p.id}`} className="text-brand-dark underline">{t("products.detailsLink", "Details", "বিস্তারিত")}</Link>
                   </td>

@@ -68,7 +68,7 @@ export default function CustomerDetailPage() {
       <Link href="/customers" className="text-brand-dark underline text-sm">{t("customers.allCustomersLink", "← All customers", "← সব কাস্টমার")}</Link>
       <h1 className="text-2xl font-bold my-4">{t("customers.detailTitle", "Customer profile", "কাস্টমার প্রোফাইল")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
       {!c && !loading && <div className="empty-state">{t("customers.notFound", "Customer not found.", "কাস্টমার পাওয়া যায়নি।")}</div>}
       {c && (
         <div className="space-y-4">
@@ -154,7 +154,7 @@ export default function CustomerDetailPage() {
                 placeholder={t("customers.mergePlaceholder", "ID of the customer to merge", "মার্জ করবেন এমন কাস্টমারের ID")}
                 className="flex-1 border rounded-lg px-3 py-2"
               />
-              <button disabled={merging} className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700 disabled:opacity-50">
+              <button disabled={merging} className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50">
                 {merging ? t("customers.merging", "Merging…", "মার্জ হচ্ছে…") : t("customers.mergeButton", "Merge", "মার্জ করুন")}
               </button>
             </div>

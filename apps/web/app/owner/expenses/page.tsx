@@ -83,7 +83,7 @@ export default function OwnerExpensesPage() {
     : t("ownerExpOther", "Other", "অন্যান্য");
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("ownerExpensesTitle", "Expenses", "খরচ")}</h1>
       <p className="text-sm text-slate-500 mb-4">
         {t(
@@ -114,7 +114,7 @@ export default function OwnerExpensesPage() {
             <button
               onClick={add}
               disabled={saving || !date || !amountTaka.trim()}
-              className="mt-3 bg-[#ff6a4d] hover:bg-[#e04e33] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50"
+              className="mt-3 bg-[#FF5B2E] hover:bg-[#E8491F] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50"
             >
               {saving ? t("saving", "Saving…", "সেভ হচ্ছে…") : t("ownerExpenseAddBtn", "Record expense", "খরচ লিখুন")}
             </button>

@@ -101,7 +101,7 @@ export default function PlansPage() {
         {t("plans.suggestedNote", "The prices below are suggested prices — not final prices. When you buy a plan, the monthly price is deducted from the wallet (see transactions on the Billing page).", "নিচের দামগুলো প্রস্তাবিত দাম — চূড়ান্ত দাম নয়। প্ল্যান কিনলে মাসের দাম ওয়ালেট থেকে কাটে (বিলিং পেজে লেনদেন দেখা যায়)।")}
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       {current && currentSub && (
         <div className="card p-5 mb-6">
@@ -178,7 +178,7 @@ export default function PlansPage() {
                   <span className="text-xs bg-amber-100 text-amber-800 px-2 py-1 rounded-full">{t("common.suggestedPrice", "Suggested price", "প্রস্তাবিত দাম")}</span>
                 </div>
                 {isCurrent && (
-                  <span className="text-xs bg-teal-100 text-teal-800 px-2 py-1 rounded-full self-start mt-2">
+                  <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full self-start mt-2">
                     {t("plans.currentBadge", "✓ Current plan", "✓ বর্তমান প্ল্যান")}
                   </span>
                 )}

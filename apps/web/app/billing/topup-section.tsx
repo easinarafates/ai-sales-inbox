@@ -126,7 +126,7 @@ export default function TopupSection() {
   return (
     <div>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <h2 className="font-bold mb-2">{t("topup.title", "Add money (top-up) — checked by hand", "টাকা জমা দিন (টপ-আপ) — হাতে যাচাই করে")}</h2>
       <form onSubmit={submitRequest} className="card p-4 mb-6 flex flex-wrap gap-2 items-end">

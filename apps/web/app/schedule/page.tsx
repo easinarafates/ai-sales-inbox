@@ -372,12 +372,12 @@ export default function SchedulePage() {
   };
 
   return (
-    <div className="bg-[#fff8f3]">
+    <div className="bg-[#FFF1EA]">
       <h1 className="text-2xl font-bold mb-4">
         {t("page_title", "Post Schedule", "পোস্ট শিডিউল")}
       </h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       {/* 7-day calendar */}
       <div className="card p-4 mb-6">
@@ -397,7 +397,7 @@ export default function SchedulePage() {
                 onClick={() => setSelectedDay(date)}
                 className={`rounded-lg py-2 border ${
                   selected
-                    ? "bg-[#ff6a4d] text-white border-[#ff6a4d]"
+                    ? "bg-[#FF5B2E] text-white border-[#FF5B2E]"
                     : full
                       ? "bg-red-50 border-red-200 text-red-700"
                       : count
@@ -438,7 +438,7 @@ export default function SchedulePage() {
               onClick={() => setMediaType(m)}
               className={`px-4 py-2 rounded-lg text-sm ${
                 mediaType === m
-                  ? "bg-[#ff6a4d] text-white"
+                  ? "bg-[#FF5B2E] text-white"
                   : "bg-slate-100 hover:bg-slate-200"
               }`}
             >
@@ -480,7 +480,7 @@ export default function SchedulePage() {
                 type="button"
                 onClick={addMediaUrl}
                 disabled={uploading}
-                className="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
+                className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
               >
                 {t("add_link", "Add link", "লিংক যোগ করুন")}
               </button>
@@ -506,20 +506,20 @@ export default function SchedulePage() {
             type="button"
             onClick={autoCaption}
             disabled={captionLoading}
-            className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
+            className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50"
           >
             {captionLoading
               ? t("caption_loading", "Making captions…", "ক্যাপশন বানানো হচ্ছে…")
               : t("caption_button", "Auto caption", "অটো ক্যাপশন")}
           </button>
           {captionAi && (
-            <span className="text-xs text-teal-600 self-center">
+            <span className="text-xs text-green-600 self-center">
               {t("caption_ai_note", "Made by AI from your real product data.", "আপনার আসল প্রোডাক্টের তথ্য দিয়ে AI বানিয়েছে।")}
             </span>
           )}
         </div>
         {captionAnalysis && (
-          <div className="text-sm bg-teal-50 border border-teal-200 rounded-lg px-3 py-2">
+          <div className="text-sm bg-green-50 border border-green-200 rounded-lg px-3 py-2">
             <span className="font-medium">{t("caption_media_seen", "AI saw in your media:", "AI আপনার ছবি/ভিডিওতে দেখলো:")}</span>{" "}
             {captionAnalysis}
           </div>
@@ -595,7 +595,7 @@ export default function SchedulePage() {
         </div>
         <button
           disabled={saving || uploading || dayFull}
-          className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white py-2 px-6 rounded-lg disabled:opacity-50"
+          className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white py-2 px-6 rounded-lg disabled:opacity-50"
         >
           {saving
             ? t("scheduling", "Scheduling…", "শিডিউল হচ্ছে…")
@@ -645,7 +645,7 @@ export default function SchedulePage() {
                         ))}
                       </select>
                       <input type="time" value={editTime} onChange={(e) => setEditTime(e.target.value)} className="border rounded-lg px-3 py-2 bg-white" />
-                      <button className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white px-4 py-2 rounded-lg text-sm">
+                      <button className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white px-4 py-2 rounded-lg text-sm">
                         {t("save_button", "Save", "সংরক্ষণ")}
                       </button>
                       <button type="button" onClick={() => setEditing(null)} className="bg-slate-200 px-4 py-2 rounded-lg text-sm">
@@ -667,7 +667,7 @@ export default function SchedulePage() {
                       </p>
                     )}
                     <div className="flex flex-wrap gap-2 mt-2 text-xs">
-                      <span className="bg-orange-100 text-[#ff6a4d] px-2 py-0.5 rounded">{mediaTypeLabel(postMediaType(p))}</span>
+                      <span className="bg-orange-100 text-[#FF5B2E] px-2 py-0.5 rounded">{mediaTypeLabel(postMediaType(p))}</span>
                       {(p.platforms || []).map((pl) => (
                         <span key={pl} className="bg-slate-100 px-2 py-0.5 rounded">{pl}</span>
                       ))}
@@ -679,7 +679,7 @@ export default function SchedulePage() {
                         {t("edit_button", "Edit", "এডিট")}
                       </button>
                       {p.status !== "published" && p.status !== "cancelled" && (
-                        <button onClick={() => publishNow(p.id)} className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white px-3 py-1.5 rounded-lg text-sm">
+                        <button onClick={() => publishNow(p.id)} className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white px-3 py-1.5 rounded-lg text-sm">
                           {t("publish_now_button", "Publish now", "এখনই প্রকাশ করুন")}
                         </button>
                       )}

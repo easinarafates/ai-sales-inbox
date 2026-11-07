@@ -209,7 +209,7 @@ export default function OwnerWalletPage() {
   };
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("ownerWalletTitle", "Owner wallet", "ওনার ওয়ালেট")}</h1>
       <p className="text-sm text-slate-500 mb-4">
         {t(
@@ -219,7 +219,7 @@ export default function OwnerWalletPage() {
         )}
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {message && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{message}</p>}
+      {message && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{message}</p>}
       {loading ? (
         <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
       ) : isOwner === false ? (
@@ -246,7 +246,7 @@ export default function OwnerWalletPage() {
                 className="border rounded-lg px-3 py-2 text-sm"
                 inputMode="decimal"
               />
-              <button onClick={saveThreshold} disabled={busy === "threshold" || !threshold.trim()} className="border border-[#ff6a4d] text-[#e04e33] text-sm rounded-lg px-3 py-2 disabled:opacity-50">
+              <button onClick={saveThreshold} disabled={busy === "threshold" || !threshold.trim()} className="border border-[#FF5B2E] text-[#E8491F] text-sm rounded-lg px-3 py-2 disabled:opacity-50">
                 {t("ownerThresholdSave", "Save warning amount", "সতর্কতার অঙ্ক সেভ করুন")}
               </button>
               <button onClick={runSweep} disabled={busy === "sweep"} className="border border-slate-300 text-sm rounded-lg px-3 py-2 disabled:opacity-50">
@@ -279,7 +279,7 @@ export default function OwnerWalletPage() {
             <button
               onClick={addDeposit}
               disabled={busy === "deposit" || !depAmount.trim() || (depMethod === "card" ? !depCardId : !depTrx.trim())}
-              className="mt-3 bg-[#ff6a4d] hover:bg-[#e04e33] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50"
+              className="mt-3 bg-[#FF5B2E] hover:bg-[#E8491F] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50"
             >
               {busy === "deposit" ? t("saving", "Saving…", "সেভ হচ্ছে…") : t("ownerDepositBtn", "Record deposit request", "জমার অনুরোধ লিখুন")}
             </button>
@@ -318,7 +318,7 @@ export default function OwnerWalletPage() {
                         <td className="p-2 whitespace-nowrap">
                           {d.status === "pending" && (
                             <>
-                              <button onClick={() => approveDeposit(d.id)} disabled={busy === `approve-${d.id}`} className="text-sm bg-[#ff6a4d] text-white rounded-lg px-2 py-1 mr-1 disabled:opacity-50">{t("ownerApprove", "Approve", "অনুমোদন")}</button>
+                              <button onClick={() => approveDeposit(d.id)} disabled={busy === `approve-${d.id}`} className="text-sm bg-[#FF5B2E] text-white rounded-lg px-2 py-1 mr-1 disabled:opacity-50">{t("ownerApprove", "Approve", "অনুমোদন")}</button>
                               <button onClick={() => rejectDeposit(d.id)} disabled={busy === `reject-${d.id}`} className="text-sm border border-red-200 text-red-600 rounded-lg px-2 py-1 disabled:opacity-50">{t("ownerReject", "Reject", "বাতিল")}</button>
                             </>
                           )}
@@ -346,7 +346,7 @@ export default function OwnerWalletPage() {
               <input value={cardExpMonth} onChange={(e) => setCardExpMonth(e.target.value)} placeholder={t("ownerCardExpMonthPh", "Expiry month (1–12)", "মেয়াদের মাস (১–১২)")} className="border rounded-lg px-3 py-2 text-sm" inputMode="numeric" />
               <input value={cardExpYear} onChange={(e) => setCardExpYear(e.target.value)} placeholder={t("ownerCardExpYearPh", "Expiry year", "মেয়াদের বছর")} className="border rounded-lg px-3 py-2 text-sm" inputMode="numeric" />
             </div>
-            <button onClick={addCard} disabled={busy === "card" || !cardBrand.trim() || !cardLast4.trim()} className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50">
+            <button onClick={addCard} disabled={busy === "card" || !cardBrand.trim() || !cardLast4.trim()} className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50">
               {busy === "card" ? t("saving", "Saving…", "সেভ হচ্ছে…") : t("ownerCardAddBtn", "Save card", "কার্ড সেভ করুন")}
             </button>
             {cards.length > 0 && (
@@ -356,7 +356,7 @@ export default function OwnerWalletPage() {
                     <span>{c.masked}{c.expMonth && c.expYear ? ` · ${c.expMonth}/${c.expYear}` : ""}{c.isDefault ? ` · ${t("ownerPrimary", "Primary", "প্রধান")}` : ""}</span>
                     <span className="flex gap-2 shrink-0">
                       {!c.isDefault && (
-                        <button onClick={() => setDefaultCard(c.id)} disabled={busy === `card-${c.id}`} className="text-teal-700 underline disabled:opacity-50">{t("owner.setDefaultCard", "Make primary", "প্রধান করুন")}</button>
+                        <button onClick={() => setDefaultCard(c.id)} disabled={busy === `card-${c.id}`} className="text-green-700 underline disabled:opacity-50">{t("owner.setDefaultCard", "Make primary", "প্রধান করুন")}</button>
                       )}
                       <button onClick={() => removeCard(c.id)} disabled={busy === `card-${c.id}`} className="text-red-700 underline disabled:opacity-50">{t("owner.removeCard", "Remove", "সরান")}</button>
                     </span>
@@ -386,7 +386,7 @@ export default function OwnerWalletPage() {
                       <tr key={tx.id} className="border-b last:border-0">
                         <td className="p-2 whitespace-nowrap">{fmtDate(tx.createdAt)}</td>
                         <td className="p-2">{txTypeLabel(tx.type)}{tx.provider ? ` · ${tx.provider}` : ""}</td>
-                        <td className={`p-2 ${tx.amountPaisa < 0 ? "text-red-600" : "text-teal-600"}`}>
+                        <td className={`p-2 ${tx.amountPaisa < 0 ? "text-red-600" : "text-green-600"}`}>
                           {tx.amountPaisa < 0 ? "−" : "+"}{fmtTaka(Math.abs(tx.amountPaisa))}
                         </td>
                         <td className="p-2">{tx.note ?? "—"}</td>

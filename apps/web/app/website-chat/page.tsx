@@ -46,7 +46,7 @@ export default function WebsiteChatPage() {
   };
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("chatTitle", "Website chat", "ওয়েবসাইট চ্যাট")}</h1>
       <p className="text-sm text-slate-500 mb-4">{t("chatSub", "Add a chat box to your own website. Visitor messages appear in your inbox.", "আপনার ওয়েবসাইটে একটি চ্যাট বাক্স যোগ করুন। ভিজিটরের মেসেজ আপনার ইনবক্সে আসবে।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
@@ -57,8 +57,8 @@ export default function WebsiteChatPage() {
           <div className="card p-4 mb-6">
             <h2 className="font-bold mb-2">{t("chatSnippetTitle", "Copy-paste snippet", "কপি-পেস্ট করার কোড")}</h2>
             <p className="text-sm text-slate-500 mb-3">{t("chatSnippetSub", "Paste this one line before the closing </body> tag of your website.", "আপনার ওয়েবসাইটের </body> ট্যাগের আগে এই এক লাইন বসান।")}</p>
-            <pre className="bg-[#fff8f3] border rounded-lg p-3 text-sm break-all whitespace-pre-wrap">{snippet}</pre>
-            <button onClick={copy} className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white rounded-lg px-4 py-2 mt-3">
+            <pre className="bg-[#FFF1EA] border rounded-lg p-3 text-sm break-all whitespace-pre-wrap">{snippet}</pre>
+            <button onClick={copy} className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white rounded-lg px-4 py-2 mt-3">
               {copied ? t("copied", "Copied!", "কপি হয়েছে!") : t("copySnippet", "Copy snippet", "কোড কপি করুন")}
             </button>
             <p className="text-xs text-slate-500 mt-3">

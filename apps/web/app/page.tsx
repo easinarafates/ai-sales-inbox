@@ -52,7 +52,7 @@ export default function LandingPage() {
   }, [router]);
 
   return (
-    <div className="min-h-screen bg-[#fff8f3] text-slate-800">
+    <div className="min-h-screen bg-[#FFF1EA] text-slate-800">
       {/* ---- Top bar ---- */}
       <header className="sticky top-0 z-10 border-b border-orange-100 bg-white/95 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-3 px-4 py-3 sm:px-6">
@@ -93,7 +93,7 @@ export default function LandingPage() {
       <main className="mx-auto max-w-6xl px-4 sm:px-6">
         {/* ---- Hero ---- */}
         <section className="py-14 text-center sm:py-20">
-          <p className="mx-auto inline-block rounded-full bg-teal-50 px-4 py-1.5 text-sm font-medium text-teal-700">
+          <p className="mx-auto inline-block rounded-full bg-green-50 px-4 py-1.5 text-sm font-medium text-green-700">
             {t("landing.heroBadge", "Made for Bangladeshi online shops", "বাংলাদেশি অনলাইন শপের জন্য তৈরি")}
           </p>
           <h1 className="mx-auto mt-5 max-w-3xl text-4xl font-bold leading-tight tracking-tight text-slate-900 sm:text-5xl">
@@ -190,7 +190,7 @@ export default function LandingPage() {
                   </span>
                 </div>
                 {p.popular && (
-                  <span className="mt-2 self-start rounded-full bg-teal-100 px-2 py-1 text-xs font-medium text-teal-800">
+                  <span className="mt-2 self-start rounded-full bg-green-100 px-2 py-1 text-xs font-medium text-green-800">
                     {t("landing.planPopular", "Most popular", "সবচেয়ে জনপ্রিয়")}
                   </span>
                 )}
@@ -229,22 +229,22 @@ export default function LandingPage() {
             {t("landing.footerTagline", "AI Sales Inbox — sell more, reply less.", "AI সেলস ইনবক্স — বেশি বিক্রি, কম উত্তর দেওয়া।")}
           </p>
           <div className="flex items-center gap-4">
-            <Link href="/login" className="text-teal-700 underline hover:text-teal-800">
+            <Link href="/login" className="text-green-700 underline hover:text-green-800">
               {t("landing.login", "Log in", "লগইন")}
             </Link>
-            <Link href="/signup" className="text-teal-700 underline hover:text-teal-800">
+            <Link href="/signup" className="text-green-700 underline hover:text-green-800">
               {t("landing.signup", "Sign up", "সাইন আপ")}
             </Link>
-            <Link href="/privacy" className="text-teal-700 underline hover:text-teal-800">
+            <Link href="/privacy" className="text-green-700 underline hover:text-green-800">
               {t("landing.privacy", "Privacy Policy", "প্রাইভেসি পলিসি")}
             </Link>
-            <Link href="/terms" className="text-teal-700 underline hover:text-teal-800">
+            <Link href="/terms" className="text-green-700 underline hover:text-green-800">
               {t("landing.terms", "Terms of Service", "ব্যবহারের শর্ত")}
             </Link>
-            <Link href="/about" className="text-teal-700 underline hover:text-teal-800">
+            <Link href="/about" className="text-green-700 underline hover:text-green-800">
               {t("landing.about", "About", "আমাদের সম্পর্কে")}
             </Link>
-            <Link href="/contact" className="text-teal-700 underline hover:text-teal-800">
+            <Link href="/contact" className="text-green-700 underline hover:text-green-800">
               {t("landing.contact", "Contact", "যোগাযোগ")}
             </Link>
           </div>

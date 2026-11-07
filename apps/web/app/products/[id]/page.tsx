@@ -143,7 +143,7 @@ export default function ProductDetailPage() {
     <div>
       <Link href="/products" className="text-brand-dark underline text-sm">{t("products.listLink", "← Product list", "← প্রোডাক্ট তালিকা")}</Link>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mt-3 max-w-2xl">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mt-3 max-w-2xl">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mt-3 max-w-2xl">{notice}</p>}
       <div className="card p-6 mt-3 max-w-2xl">
         <h1 className="text-2xl font-bold">{product.name}</h1>
         <p className="text-3xl font-bold text-brand-dark mt-2">{fmtTaka(productPricePaisa(product))}</p>
@@ -170,7 +170,7 @@ export default function ProductDetailPage() {
           </form>
         ) : (
           <div className="mt-6 flex gap-2 border-t pt-4">
-            <button onClick={startEdit} className="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-teal-700">{t("products.edit", "Edit", "বদলান")}</button>
+            <button onClick={startEdit} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700">{t("products.edit", "Edit", "বদলান")}</button>
             <button onClick={deleteProduct} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700">{t("products.delete", "Delete", "মুছুন")}</button>
           </div>
         )}

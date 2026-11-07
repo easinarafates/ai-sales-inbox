@@ -94,7 +94,7 @@ export default function OrderDetailPage() {
     <div>
       <Link href="/orders" className="text-brand-dark underline text-sm">{t("orders.listLink", "← Order list", "← অর্ডার তালিকা")}</Link>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mt-3">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mt-3">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mt-3">{notice}</p>}
 
       {/* Customer & delivery — who ordered, when, how to reach them, where to deliver. */}
       <div className="card p-6 mt-3">
@@ -121,7 +121,7 @@ export default function OrderDetailPage() {
           <p className="text-sm text-slate-500 mt-1">{t("orders.billDate", "Date:", "তারিখ:")} {fmtDate(order.createdAt || order.created_at)}</p>
           <p className="text-sm mt-1">{t("orders.customerLabel", "Customer:", "কাস্টমার:")} {custName}{custPhone ? ` • ${custPhone}` : ` • ${notProvided}`}</p>
           <div className="flex gap-2 mt-3">{statusBadge(order.status, lang)}
-            <span className={`text-xs px-2 py-0.5 rounded ${pay === "paid" ? "bg-teal-100 text-teal-800" : "bg-red-100 text-red-800"}`}>{pay === "paid" ? t("orders.paymentPaid", "Paid", "পরিশোধিত") : t("orders.paymentUnpaid", "Unpaid", "অপরিশোধিত")}</span>
+            <span className={`text-xs px-2 py-0.5 rounded ${pay === "paid" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>{pay === "paid" ? t("orders.paymentPaid", "Paid", "পরিশোধিত") : t("orders.paymentUnpaid", "Unpaid", "অপরিশোধিত")}</span>
           </div>
           <table className="w-full text-sm mt-4">
             <thead><tr className="table-head border-b text-left text-slate-500"><th className="py-2">{t("orders.thItem", "Item", "আইটেম")}</th><th className="py-2 text-right">{t("orders.thQty", "Quantity", "পরিমাণ")}</th><th className="py-2 text-right">{t("orders.thPrice", "Price", "দাম")}</th><th className="py-2 text-right">{t("orders.thLineTotal", "Line total", "লাইন মোট")}</th></tr></thead>
@@ -154,7 +154,7 @@ export default function OrderDetailPage() {
               </button>
             )}
             {order.status !== "on_hold" && order.status !== "delivered" && (
-              <button disabled={busy} onClick={() => changeStatus("on_hold")} className="bg-teal-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-teal-700 disabled:opacity-50">{t("orders.hold", "Put on hold", "হোল্ডে রাখুন")}</button>
+              <button disabled={busy} onClick={() => changeStatus("on_hold")} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50">{t("orders.hold", "Put on hold", "হোল্ডে রাখুন")}</button>
             )}
             {order.status === "on_hold" && (
               <button disabled={busy} onClick={() => changeStatus("pending")} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">{t("orders.releaseHold", "Release hold (pending)", "হোল্ড ছাড়ুন (অপেক্ষমাণ)")}</button>
@@ -162,7 +162,7 @@ export default function OrderDetailPage() {
             <button disabled={busy} onClick={togglePayment} className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">
               {pay === "paid" ? t("orders.markUnpaid", "Mark as unpaid", "অপরিশোধিত করুন") : t("orders.markPaid", "Mark as paid", "পরিশোধিত করুন")}
             </button>
-            <button disabled={busy} onClick={askReview} className="bg-white border border-teal-600 text-teal-700 px-4 py-2 rounded-lg text-sm hover:bg-teal-50 disabled:opacity-50">
+            <button disabled={busy} onClick={askReview} className="bg-white border border-green-600 text-green-700 px-4 py-2 rounded-lg text-sm hover:bg-green-50 disabled:opacity-50">
               {t("orders.askReview", "Ask for review", "রিভিউ চান")}
             </button>
           </div>

@@ -44,7 +44,7 @@ export default function CustomersPage() {
           placeholder={t("customers.searchPlaceholder", "Search — name, phone…", "খুঁজুন — নাম, ফোন…")}
           className="flex-1 border rounded-lg px-3 py-2 bg-white"
         />
-        <button onClick={() => load(q.trim())} className="bg-teal-600 text-white px-4 py-2 rounded-lg hover:bg-teal-700">{t("common.search", "Search", "খুঁজুন")}</button>
+        <button onClick={() => load(q.trim())} className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700">{t("common.search", "Search", "খুঁজুন")}</button>
       </div>
 
       {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : customers.length === 0 ? (

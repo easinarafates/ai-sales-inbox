@@ -60,7 +60,7 @@ export default function TeamPage() {
   };
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("teamTitle", "Team", "টিম")}</h1>
       <p className="text-sm text-slate-500 mb-4">{t("teamSub", "Invite people to help in your shop. No email is sent — share the invite link yourself.", "দোকানে সাহায্যের জন্য লোকদের আমন্ত্রণ জানান। কোনো ইমেইল পাঠানো হয় না — আমন্ত্রণের লিংকটি নিজে শেয়ার করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
@@ -72,7 +72,7 @@ export default function TeamPage() {
           <option value="member">{t("teamRoleMember", "Member", "সদস্য")}</option>
           <option value="admin">{t("teamRoleAdmin", "Admin", "অ্যাডমিন")}</option>
         </select>
-        <button disabled={saving} className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white rounded-lg px-4 py-2 w-fit disabled:opacity-50">
+        <button disabled={saving} className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white rounded-lg px-4 py-2 w-fit disabled:opacity-50">
           {saving ? t("teamInviting", "Inviting…", "আমন্ত্রণ জানানো হচ্ছে…") : t("teamInviteBtn", "Create invite", "আমন্ত্রণ তৈরি করুন")}
         </button>
         <p className="text-xs text-slate-500">{t("teamNoEmail", "No email will be sent. The invite link appears below — copy it and send it yourself.", "কোনো ইমেইল পাঠানো হবে না। আমন্ত্রণের লিংক নিচে দেখা যাবে — কপি করে নিজে পাঠান।")}</p>
@@ -89,15 +89,15 @@ export default function TeamPage() {
             <div key={inv.id} className="card p-4">
               <div className="flex justify-between gap-2 flex-wrap">
                 <span className="font-bold">{inv.email}</span>
-                <span className="text-xs bg-[#ff6a4d]/10 text-[#ff6a4d] rounded-full px-2 py-1 h-fit">{inv.status} · {inv.role}</span>
+                <span className="text-xs bg-[#FF5B2E]/10 text-[#FF5B2E] rounded-full px-2 py-1 h-fit">{inv.status} · {inv.role}</span>
               </div>
               <p className="text-xs text-slate-400 mt-1">{fmtDate(inv.created_at)}</p>
               {inv.inviteLink && (
-                <p className="text-sm break-all bg-[#fff8f3] rounded-lg p-2 mt-2">{inv.inviteLink}</p>
+                <p className="text-sm break-all bg-[#FFF1EA] rounded-lg p-2 mt-2">{inv.inviteLink}</p>
               )}
               <div className="flex gap-2 mt-3">
                 {inv.inviteLink && inv.status === "pending" && (
-                  <button onClick={() => copyLink(inv.inviteLink as string, inv.id)} className="bg-teal-600 hover:bg-teal-700 text-white text-sm rounded-lg px-3 py-1">
+                  <button onClick={() => copyLink(inv.inviteLink as string, inv.id)} className="bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg px-3 py-1">
                     {copied === inv.id ? t("copied", "Copied!", "কপি হয়েছে!") : t("copyLink", "Copy link", "লিংক কপি করুন")}
                   </button>
                 )}

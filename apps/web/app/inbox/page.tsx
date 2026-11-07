@@ -12,6 +12,7 @@ import {
   type Message,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import Icon, { type IconName } from "@/components/Icon";
 
 function convName(c: Conversation, unknownLabel: string): string {
   return (
@@ -42,7 +43,7 @@ const AVATAR_COLORS = [
   "bg-sky-100 text-sky-700",
   "bg-violet-100 text-violet-700",
   "bg-orange-100 text-orange-700",
-  "bg-teal-100 text-teal-700",
+  "bg-green-100 text-green-700",
   "bg-indigo-100 text-indigo-700",
 ];
 
@@ -73,7 +74,7 @@ const CHANNEL_BADGE: Record<string, { label: string; cls: string }> = {
   instagram: { label: "INSTAGRAM", cls: "bg-pink-100 text-pink-800" },
   whatsapp: { label: "WHATSAPP", cls: "bg-green-100 text-green-800" },
   tiktok: { label: "TIKTOK", cls: "bg-slate-800 text-white" },
-  webchat: { label: "WEBCHAT", cls: "bg-teal-100 text-teal-800" },
+  webchat: { label: "WEBCHAT", cls: "bg-green-100 text-green-800" },
   facebook_comment: { label: "COMMENT", cls: "bg-sky-100 text-sky-800" },
 };
 
@@ -106,6 +107,42 @@ function aiModeOf(c: Conversation): boolean | null {
   return null;
 }
 
+/**
+ * Conversation status mapping (backend values → spec labels). The API
+ * stores open / done / snoozed; the design calls them Open / Closed /
+ * Pending. Pending = snoozed (waiting for attention), Closed = done.
+ */
+function statusOf(c: Conversation): "open" | "pending" | "closed" {
+  const s = String(c.status || "").toLowerCase();
+  if (s === "done" || s === "closed") return "closed";
+  if (s === "snoozed" || s === "pending") return "pending";
+  return "open";
+}
+
+function StatCard({
+  icon,
+  iconCls,
+  value,
+  label,
+}: {
+  icon: IconName;
+  iconCls: string;
+  value: number;
+  label: string;
+}) {
+  return (
+    <div className="card flex items-center gap-3 p-4">
+      <span className={`flex h-12 w-12 shrink-0 items-center justify-center rounded-xl ${iconCls}`}>
+        <Icon name={icon} className="h-6 w-6" />
+      </span>
+      <span className="min-w-0">
+        <span className="block text-2xl font-bold leading-none text-slate-900">{value}</span>
+        <span className="mt-1 block truncate text-sm text-slate-500">{label}</span>
+      </span>
+    </div>
+  );
+}
+
 function InboxPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -120,6 +157,12 @@ function InboxPage() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [compact, setCompact] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  // Real stat counts, computed from the full unfiltered list (never from
+  // the search-filtered list, so searching never changes the cards).
+  const [stats, setStats] = useState({ total: 0, open: 0, pending: 0, closed: 0 });
+
   const loadList = useCallback(async () => {
     try {
       const data = await inboxApi.list({ q: q || undefined, status: status || undefined });
@@ -131,13 +174,25 @@ function InboxPage() {
     }
   }, [q, status, t]);
 
+  const loadStats = useCallback(async () => {
+    try {
+      const all = asArray(await inboxApi.list());
+      const counts = { total: all.length, open: 0, pending: 0, closed: 0 };
+      for (const c of all) counts[statusOf(c)] += 1;
+      setStats(counts);
+    } catch {
+      /* stats stay at their last good values; the list error surfaces */
+    }
+  }, []);
+
   useEffect(() => {
     if (!getToken()) {
       router.push("/login");
       return;
     }
     loadList();
-  }, [loadList, router]);
+    loadStats();
+  }, [loadList, loadStats, router]);
 
   const openThread = async (id: string) => {
     setSelectedId(id);
@@ -172,14 +227,15 @@ function InboxPage() {
   }, [selectedId]);
 
   // Auto-refresh: new customer messages and AI replies appear without a
-  // manual reload. Polls the list + the open thread every 5s while the
-  // tab is visible; pauses when the tab is hidden, and refreshes once
-  // when it becomes visible again.
+  // manual reload. Polls the list + stats + the open thread every 5s
+  // while the tab is visible; pauses when the tab is hidden, and
+  // refreshes once when it becomes visible again.
   useEffect(() => {
     if (!getToken()) return;
     const tick = () => {
       if (document.hidden) return;
       loadList();
+      loadStats();
       refreshThread();
     };
     const timer = setInterval(tick, 5000);
@@ -191,7 +247,7 @@ function InboxPage() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [loadList, refreshThread]);
+  }, [loadList, loadStats, refreshThread]);
 
   const sendReply = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -299,86 +355,195 @@ function InboxPage() {
     }
   };
 
+  // Status tabs (spec): All / Open / Pending / Closed. They drive the
+  // same status filter the search dropdown uses.
+  const activeTab = status === "" ? "all" : status === "open" ? "open" : status === "snoozed" ? "pending" : "closed";
+  const setTab = (tab: "all" | "open" | "pending" | "closed") => {
+    setStatus(tab === "all" ? "" : tab === "open" ? "open" : tab === "pending" ? "snoozed" : "done");
+  };
+  const TABS: { id: "all" | "open" | "pending" | "closed"; labelEn: string; labelBn: string; count: number }[] = [
+    { id: "all", labelEn: "All", labelBn: "সব", count: stats.total },
+    { id: "open", labelEn: "Open", labelBn: "খোলা", count: stats.open },
+    { id: "pending", labelEn: "Pending", labelBn: "অপেক্ষমাণ", count: stats.pending },
+    { id: "closed", labelEn: "Closed", labelBn: "বন্ধ", count: stats.closed },
+  ];
+
   return (
     <div>
-      <h1 className="page-title">{t("inbox.title", "Inbox", "ইনবক্স")}</h1>
-      <p className="page-subtitle">{t("inbox.subtitle", "All your customer chats in one place.", "সব কাস্টমারের চ্যাট এক জায়গায়।")}</p>
-
-      {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-
-      <div className="mb-4 flex flex-col gap-2 sm:flex-row sm:items-end sm:gap-3">
-        <div className="flex-1">
-          <label htmlFor="inbox-search" className="mb-1 block text-sm font-medium text-slate-700">{t("inbox.searchLabel", "Search chats", "চ্যাট খুঁজুন")}</label>
-          <input
-            id="inbox-search"
-            value={q}
-            onChange={(e) => setQ(e.target.value)}
-            placeholder={t("inbox.searchPlaceholder", "Search — name, phone, order number, chat words…", "খুঁজুন — নাম, ফোন, অর্ডার নম্বর, চ্যাটের শব্দ…")}
-            className="w-full"
-          />
+      {/* Welcome banner — light orange, like the reference. */}
+      <div className="relative mb-4 overflow-hidden rounded-xl bg-orange-50 px-5 py-5 sm:px-6">
+        <div className="relative flex items-start gap-4">
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-sm">
+            <Icon name="inbox" className="h-6 w-6" />
+          </span>
+          <span className="min-w-0">
+            <span className="block text-xl font-bold text-slate-900">
+              {t("inbox.bannerTitle", "Customer Inbox", "কাস্টমার ইনবক্স")}
+            </span>
+            <span className="mt-0.5 block text-sm text-slate-600">
+              {t("inbox.bannerSubtitle", "All your customer chats, comments and reviews in one place with AI support.", "তোমার সব কাস্টমার চ্যাট, কমেন্ট আর রিভিউ এক জায়গায় — AI সাপোর্টসহ।")}
+            </span>
+          </span>
         </div>
-        <select value={status} onChange={(e) => setStatus(e.target.value)} className="sm:w-44">
-          <option value="">{t("common.allStatus", "All statuses", "সব স্ট্যাটাস")}</option>
-          <option value="open">{t("inbox.statusOpen", "Open", "খোলা")}</option>
-          <option value="done">{t("inbox.statusDone", "Done", "সম্পন্ন")}</option>
-          <option value="snoozed">{t("inbox.statusSnoozed", "Snoozed", "স্নুজ করা")}</option>
-        </select>
-        <button onClick={loadList} className="shrink-0 rounded-lg bg-teal-600 px-4 py-2 text-white shadow-sm transition hover:bg-teal-700">{t("common.search", "Search", "খুঁজুন")}</button>
+        {/* Envelope illustration (inline SVG, no external image). */}
+        <svg viewBox="0 0 140 100" className="pointer-events-none absolute -right-2 -top-1 hidden h-24 w-32 text-[#FFD9C7] sm:block" aria-hidden="true">
+          <rect x="10" y="22" width="120" height="72" rx="10" fill="currentColor" />
+          <path d="M14 30 L70 66 L126 30" fill="none" stroke="#FFB59F" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </div>
+
+      {/* Four stat cards — real counts from the API. */}
+      <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <StatCard icon="inbox" iconCls="bg-green-100 text-green-600" value={stats.total} label={t("inbox.statTotal", "Total Conversations", "মোট কথোপকথন")} />
+        <StatCard icon="comments" iconCls="bg-violet-100 text-violet-600" value={stats.open} label={t("inbox.statOpen", "Open", "খোলা")} />
+        <StatCard icon="clock" iconCls="bg-orange-100 text-brand" value={stats.pending} label={t("inbox.statPending", "Pending", "অপেক্ষমাণ")} />
+        <StatCard icon="checkCircle" iconCls="bg-green-100 text-green-600" value={stats.closed} label={t("inbox.statClosed", "Closed", "বন্ধ")} />
+      </div>
+
+      {error && <p className="mb-4 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
+
+      {/* Search section — white card, green Search button. */}
+      <div className="card mb-4 p-4">
+        <p className="mb-3 text-sm font-bold text-slate-900">{t("inbox.searchLabel", "Search chats", "চ্যাট খুঁজুন")}</p>
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+          <div className="relative flex-1">
+            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
+              <Icon name="search" className="h-4 w-4" />
+            </span>
+            <input
+              ref={searchInputRef}
+              id="inbox-search"
+              value={q}
+              onChange={(e) => setQ(e.target.value)}
+              placeholder={t("inbox.searchPlaceholder", "Search by name, phone, order number, or message...", "নাম, ফোন, অর্ডার নম্বর বা মেসেজ দিয়ে খুঁজুন…")}
+              className="w-full pl-9"
+            />
+          </div>
+          <select value={status} onChange={(e) => setStatus(e.target.value)} className="sm:w-44" aria-label={t("inbox.statusFilter", "Filter by status", "স্ট্যাটাস দিয়ে ফিল্টার")}>
+            <option value="">{t("common.allStatus", "All Statuses", "সব স্ট্যাটাস")}</option>
+            <option value="open">{t("inbox.statusOpen", "Open", "খোলা")}</option>
+            <option value="snoozed">{t("inbox.statusPending", "Pending", "অপেক্ষমাণ")}</option>
+            <option value="done">{t("inbox.statusDone", "Closed", "বন্ধ")}</option>
+          </select>
+          <button onClick={loadList} className="btn-green shrink-0">{t("common.search", "Search", "খুঁজুন")}</button>
+        </div>
       </div>
 
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
         {/* Conversation list */}
-        <div className="divide-y rounded-xl border border-orange-100/70 bg-white shadow">
-          {loading && (
-            <div className="space-y-3 p-4">
-              <div className="skeleton h-12" />
-              <div className="skeleton h-12" />
-              <div className="skeleton h-12" />
-            </div>
-          )}
-          {!loading && conversations.length === 0 && (
-            <div className="empty-state m-4">
-              <p>{t("inbox.noChats", "No chats found.", "কোনো চ্যাট পাওয়া যায়নি।")}</p>
-              <p className="mt-1 text-xs">{t("inbox.noChatsHint", "No chats yet — connect your Facebook Page from Channels (or finish the Setup wizard) and new customer messages will appear here.", "এখনো কোনো চ্যাট নেই — Channels থেকে ফেসবুক পেজ যুক্ত করুন (বা Setup উইজার্ড শেষ করুন), তাহলে কাস্টমারের নতুন মেসেজ এখানে আসবে।")}</p>
-            </div>
-          )}
-          {conversations.map((c) => (
-            <button
-              key={c.id}
-              onClick={() => openThread(c.id)}
-              className={`flex w-full gap-3 p-4 text-left transition-colors hover:bg-orange-50 ${selectedId === c.id ? "bg-orange-50 ring-1 ring-inset ring-orange-200" : ""}`}
-            >
-              <CustomerAvatar name={convName(c, unknownLabel)} pictureUrl={convPicture(c)} />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-2">
-                  <span className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-medium">{convName(c, unknownLabel)}</span>
-                    <ChannelBadge conversation={c} />
-                  </span>
-                  <span className="shrink-0 text-xs text-slate-400">{fmtDate(c.updatedAt || c.updated_at || c.lastMessageAt || c.last_message_at)}</span>
+        <div className="card overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b border-[#eeeeee] px-4 py-3">
+            <div className="flex min-w-0 items-center gap-2">
+              <h2 className="text-base font-bold text-slate-900">{t("inbox.conversations", "Conversations", "কথোপকথন")}</h2>
+              {stats.open > 0 && (
+                <span className="shrink-0 rounded-full bg-orange-50 px-2 py-0.5 text-xs font-bold text-brand">
+                  {stats.open} {t("inbox.newBadge", "New", "নতুন")}
                 </span>
-                <span className="block truncate text-sm text-slate-500">{c.lastMessage || c.last_message || ""}</span>
-                {c.status && (
-                  <span className="mt-1 flex gap-2">
-                    <span className="rounded bg-blue-100 px-2 py-0.5 text-xs text-blue-800">{c.status}</span>
+              )}
+            </div>
+            <div className="flex shrink-0 items-center gap-1">
+              <button
+                onClick={() => searchInputRef.current?.focus()}
+                aria-label={t("inbox.filter", "Filter conversations", "কথোপকথন ফিল্টার করুন")}
+                title={t("inbox.filter", "Filter conversations", "কথোপকথন ফিল্টার করুন")}
+                className="rounded-lg p-2 text-slate-500 transition-colors hover:bg-orange-50 hover:text-slate-900"
+              >
+                <Icon name="filter" className="h-4 w-4" />
+              </button>
+              <button
+                onClick={() => setCompact(!compact)}
+                aria-label={t("inbox.toggleDensity", "Toggle compact list", "কমপ্যাক্ট তালিকা চালু/বন্ধ")}
+                title={t("inbox.toggleDensity", "Toggle compact list", "কমপ্যাক্ট তালিকা চালু/বন্ধ")}
+                aria-pressed={compact}
+                className={`rounded-lg p-2 transition-colors hover:bg-orange-50 hover:text-slate-900 ${compact ? "bg-orange-50 text-brand" : "text-slate-500"}`}
+              >
+                <Icon name="list" className="h-4 w-4" />
+              </button>
+            </div>
+          </div>
+
+          {/* Status tabs with real counts. */}
+          <div className="flex flex-wrap gap-1 border-b border-[#eeeeee] px-3 py-2">
+            {TABS.map((tab) => (
+              <button
+                key={tab.id}
+                onClick={() => setTab(tab.id)}
+                aria-pressed={activeTab === tab.id}
+                className={`rounded-full px-3 py-1.5 text-sm font-medium transition-colors ${
+                  activeTab === tab.id ? "bg-orange-50 text-brand" : "text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+                }`}
+              >
+                {t(`inbox.tab${tab.id}`, tab.labelEn, tab.labelBn)} ({tab.count})
+              </button>
+            ))}
+          </div>
+
+          <div className="divide-y divide-[#eeeeee]">
+            {loading && (
+              <div className="space-y-3 p-4">
+                <div className="skeleton h-12" />
+                <div className="skeleton h-12" />
+                <div className="skeleton h-12" />
+              </div>
+            )}
+            {!loading && conversations.length === 0 && (
+              <div className="empty-state m-4">
+                <p>{t("inbox.noChats", "No chats found.", "কোনো চ্যাট পাওয়া যায়নি।")}</p>
+                <p className="mt-1 text-xs">{t("inbox.noChatsHint", "No chats yet — connect your Facebook Page from Channels (or finish the Setup wizard) and new customer messages will appear here.", "এখনো কোনো চ্যাট নেই — Channels থেকে ফেসবুক পেজ যুক্ত করুন (বা Setup উইজার্ড শেষ করুন), তাহলে কাস্টমারের নতুন মেসেজ এখানে আসবে।")}</p>
+              </div>
+            )}
+            {conversations.map((c) => (
+              <button
+                key={c.id}
+                onClick={() => openThread(c.id)}
+                className={`flex w-full gap-3 text-left transition-colors hover:bg-orange-50 ${compact ? "p-2.5" : "p-4"} ${selectedId === c.id ? "bg-orange-50 ring-1 ring-inset ring-orange-200" : ""}`}
+              >
+                <CustomerAvatar name={convName(c, unknownLabel)} pictureUrl={convPicture(c)} />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center justify-between gap-2">
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="truncate font-medium text-slate-900">{convName(c, unknownLabel)}</span>
+                      <ChannelBadge conversation={c} />
+                    </span>
+                    <span className="shrink-0 text-xs text-slate-400">{fmtDate(c.updatedAt || c.updated_at || c.lastMessageAt || c.last_message_at)}</span>
                   </span>
-                )}
-              </span>
-            </button>
-          ))}
+                  <span className="block truncate text-sm text-slate-500">{c.lastMessage || c.last_message || ""}</span>
+                </span>
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Thread + customer panel */}
-        <div className="lg:col-span-2 space-y-4">
+        <div className="space-y-4 lg:col-span-2">
           {!selected && (
-            <div className="empty-state p-10">
-              {t("inbox.pickChat", "Pick a chat from the left.", "বাম দিক থেকে একটি চ্যাট বেছে নিন।")}
+            <div className="card flex min-h-[480px] flex-col items-center justify-center p-10 text-center">
+              {/* Chat illustration (inline SVG, no external image). */}
+              <svg viewBox="0 0 220 130" className="mb-4 h-28 w-44" aria-hidden="true">
+                <rect x="118" y="18" width="88" height="58" rx="16" fill="#FFE3D6" />
+                <circle cx="142" cy="47" r="5" fill="#fff" />
+                <circle cx="162" cy="47" r="5" fill="#fff" />
+                <circle cx="182" cy="47" r="5" fill="#fff" />
+                <path d="M118 62 L104 76 L128 76 Z" fill="#FFE3D6" />
+                <rect x="14" y="38" width="100" height="64" rx="16" fill="#FF5B2E" />
+                <circle cx="42" cy="70" r="6" fill="#fff" />
+                <circle cx="64" cy="70" r="6" fill="#fff" />
+                <circle cx="86" cy="70" r="6" fill="#fff" />
+                <path d="M40 102 L28 116 L52 116 Z" fill="#FF5B2E" />
+                <path d="M196 8 l10 -6 M206 18 l12 -2" stroke="#FF5B2E" strokeWidth="3" strokeLinecap="round" />
+              </svg>
+              <h2 className="text-xl font-bold text-slate-900">
+                {t("inbox.selectConversation", "Select a conversation", "একটি কথোপকথন বেছে নিন")}
+              </h2>
+              <p className="mt-2 max-w-sm text-sm text-slate-500">
+                {t("inbox.selectConversationHint", "Choose a chat from the left to view messages, reply and manage the conversation.", "বাম দিক থেকে একটি চ্যাট বেছে নিন — মেসেজ দেখুন, উত্তর দিন আর কথোপকথন পরিচালনা করুন।")}
+              </p>
             </div>
           )}
           {selected && (
             <>
               <div className="card p-4">
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-3">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#eeeeee] pb-3">
                   <div className="flex items-center gap-3">
                     <CustomerAvatar
                       name={selected.customer?.name || convName(selected.conversation, unknownLabel)}
@@ -389,7 +554,7 @@ function InboxPage() {
                     />
                     <div>
                       <div className="flex flex-wrap items-center gap-2">
-                        <h2 className="font-bold text-lg">{selected.customer?.name || convName(selected.conversation, unknownLabel)}</h2>
+                        <h2 className="text-lg font-bold text-slate-900">{selected.customer?.name || convName(selected.conversation, unknownLabel)}</h2>
                         <ChannelBadge conversation={selected.conversation} />
                       </div>
                       {selected.customer?.phone && (
@@ -409,7 +574,7 @@ function InboxPage() {
                           disabled={genderSaving}
                           onChange={(e) => changeGender(e.target.value as "male" | "female" | "unknown")}
                           aria-label={t("inbox.genderChange", "Change how the AI addresses this customer", "AI এই কাস্টমারকে কী বলে ডাকবে তা বদলান")}
-                          className="border rounded-lg px-2 py-1 text-sm"
+                          className="rounded-lg border px-2 py-1 text-sm"
                         >
                           <option value="male">{t("inbox.genderMale", "Sir (male)", "স্যার (ছেলে)")}</option>
                           <option value="female">{t("inbox.genderFemale", "Madam (female)", "ম্যাডাম (মেয়ে)")}</option>
@@ -422,17 +587,17 @@ function InboxPage() {
                           value={nameDraft}
                           onChange={(e) => setNameDraft(e.target.value)}
                           aria-label={t("inbox.nameEdit", "Edit the customer's name", "কাস্টমারের নাম ঠিক করুন")}
-                          className="border rounded-lg px-2 py-1 text-sm w-44"
+                          className="w-44 rounded-lg border px-2 py-1 text-sm"
                         />
                         <button
                           onClick={saveName}
                           disabled={nameSaving || !nameDraft.trim() || nameDraft.trim() === (selected.customer?.name || "")}
-                          className="rounded-lg bg-teal-600 px-3 py-1 text-sm text-white transition hover:bg-teal-700 disabled:opacity-50"
+                          className="rounded-lg bg-green-600 px-3 py-1 text-sm text-white transition hover:bg-green-700 disabled:opacity-50"
                         >
                           {nameSaving ? t("inbox.saving", "Saving…", "সংরক্ষণ হচ্ছে…") : t("inbox.save", "Save", "সংরক্ষণ")}
                         </button>
                         {selected.customer?.name_manually_set && (
-                          <span className="text-xs text-teal-700">
+                          <span className="text-xs text-green-700">
                             {t("inbox.nameManual", "Set by hand — Facebook won't overwrite it", "হাতে ঠিক করা — ফেসবুক আর বদলাতে পারবে না")}
                           </span>
                         )}
@@ -448,13 +613,13 @@ function InboxPage() {
                       disabled={aiMode === null}
                       onClick={toggleAiMode}
                       title={t("inbox.aiToggleTitle", "ON: the AI auto-replies. OFF: you reply yourself. Messenger '.' does the same.", "চালু: AI নিজে উত্তর দেবে। বন্ধ: আপনি নিজে উত্তর দেবেন। Messenger-এ '.' লিখলেও একই কাজ হবে।")}
-                      className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50 ${aiMode ? "bg-teal-600" : "bg-slate-300"}`}
+                      className={`relative h-6 w-11 shrink-0 rounded-full transition disabled:opacity-50 ${aiMode ? "bg-green-600" : "bg-slate-300"}`}
                     >
                       <span
                         className={`absolute top-0.5 h-5 w-5 rounded-full bg-white shadow transition-all ${aiMode ? "left-[22px]" : "left-0.5"}`}
                       />
                     </button>
-                    <span className={`text-xs font-medium ${aiMode ? "text-teal-700" : aiMode === false ? "text-amber-700" : "text-slate-500"}`}>
+                    <span className={`text-xs font-medium ${aiMode ? "text-green-700" : aiMode === false ? "text-amber-700" : "text-slate-500"}`}>
                       {aiMode === true
                         ? t("inbox.aiModeOnShort", "On — AI is replying", "চালু — AI উত্তর দিচ্ছে")
                         : aiMode === false
@@ -471,7 +636,7 @@ function InboxPage() {
                   )}
                 </p>
 
-                <div className="space-y-3 overflow-y-auto py-4 max-h-[420px] scroll-smooth">
+                <div className="max-h-[420px] space-y-3 overflow-y-auto py-4">
                   {selected.messages.length === 0 && <p className="text-sm text-slate-500">{t("inbox.noMessages", "No messages yet.", "এখনো কোনো মেসেজ নেই।")}</p>}
                   {selected.messages.map((m) => {
                     const sender = msgSender(m).toLowerCase();
@@ -488,7 +653,7 @@ function InboxPage() {
                         )}
                         <div className={`max-w-[75%] rounded-xl px-3 py-2 text-sm shadow-sm ${isMe ? "bg-brand text-white" : isAi ? "bg-violet-100 text-violet-900" : "bg-slate-100"}`}>
                           <p>{msgText(m)}</p>
-                          <p className={`text-[11px] mt-1 ${isMe ? "text-orange-100" : "text-slate-400"}`}>
+                          <p className={`mt-1 text-[11px] ${isMe ? "text-orange-100" : "text-slate-400"}`}>
                             {isAi ? t("inbox.ai", "AI", "AI") : isMe ? t("inbox.you", "You", "আপনি") : t("inbox.customer", "Customer", "কাস্টমার")} • {fmtDate(m.createdAt || m.created_at)}
                           </p>
                         </div>
@@ -497,29 +662,29 @@ function InboxPage() {
                   })}
                 </div>
 
-                <form onSubmit={sendReply} className="flex gap-2 pt-3 border-t">
+                <form onSubmit={sendReply} className="flex gap-2 border-t border-[#eeeeee] pt-3">
                   <input
                     value={reply}
                     onChange={(e) => setReply(e.target.value)}
                     placeholder={t("inbox.replyPlaceholder", "Write a reply…", "উত্তর লিখুন…")}
-                    className="flex-1 border rounded-lg px-3 py-2"
+                    className="flex-1 rounded-lg border px-3 py-2"
                   />
-                  <button disabled={sending} className="bg-brand text-white px-4 py-2 rounded-lg hover:bg-brand-dark disabled:opacity-50">
+                  <button disabled={sending} className="rounded-lg bg-brand px-4 py-2 text-white hover:bg-brand-dark disabled:opacity-50">
                     {sending ? t("inbox.sending", "Sending…", "পাঠানো হচ্ছে…") : t("inbox.send", "Send", "পাঠান")}
                   </button>
                 </form>
 
-                <div className="flex flex-wrap gap-2 mt-3">
+                <div className="mt-3 flex flex-wrap gap-2">
                   <div className="flex gap-2">
                     <input
                       value={assignUserId}
                       onChange={(e) => setAssignUserId(e.target.value)}
                       placeholder={t("inbox.assignPlaceholder", "Team member's User ID", "টিম সদস্যের User ID")}
-                      className="border rounded-lg px-3 py-2 text-sm w-44"
+                      className="w-44 rounded-lg border px-3 py-2 text-sm"
                     />
                     <button
                       onClick={() => assignUserId.trim() && doAction(() => inboxApi.assign(selectedId!, assignUserId.trim()), t("inbox.assignFailed", "Assign failed", "অ্যাসাইন ব্যর্থ"))}
-                      className="bg-teal-600 text-white px-3 py-2 rounded-lg text-sm hover:bg-teal-700"
+                      className="rounded-lg bg-green-600 px-3 py-2 text-sm text-white hover:bg-green-700"
                     >
                       {t("inbox.assign", "Assign", "অ্যাসাইন")}
                     </button>
@@ -539,7 +704,7 @@ function InboxPage() {
 
               {/* Customer profile + open orders */}
               <div className="card p-4">
-                <h3 className="font-bold mb-2">{t("inbox.profile", "Customer profile", "কাস্টমার প্রোফাইল")}</h3>
+                <h3 className="mb-2 font-bold text-slate-900">{t("inbox.profile", "Customer profile", "কাস্টমার প্রোফাইল")}</h3>
                 <div className="mb-2 flex items-center gap-3">
                   <CustomerAvatar
                     name={selected.customer?.name || unknownLabel}
@@ -556,7 +721,7 @@ function InboxPage() {
                     '.off' from a personal account. A random customer
                     typing '.' is ignored silently. */}
                 {ownerMarked ? (
-                  <p className="mt-2 rounded-lg bg-teal-50 px-3 py-2 text-sm text-teal-800">
+                  <p className="mt-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-800">
                     ✓ {t("inbox.ownerMarked", "Marked as the page owner — '.' in Messenger toggles the AI for this chat.", "পেজের মালিক হিসেবে চিহ্নিত — Messenger-এ '.' লিখলে এই চ্যাটের AI চালু/বন্ধ হবে।")}
                   </p>
                 ) : (
@@ -568,12 +733,12 @@ function InboxPage() {
                   </button>
                 )}
 
-                <h4 className="font-bold mt-4 mb-2 text-sm">{t("inbox.openOrders", "Open orders", "খোলা অর্ডার")}</h4>
+                <h4 className="mb-2 mt-4 text-sm font-bold text-slate-900">{t("inbox.openOrders", "Open orders", "খোলা অর্ডার")}</h4>
                 {(!selected.openOrders || selected.openOrders.length === 0) && (
                   <p className="text-sm text-slate-500">{t("inbox.noOpenOrders", "No open orders.", "কোনো খোলা অর্ডার নেই।")}</p>
                 )}
                 {(selected.openOrders || []).map((o) => (
-                  <div key={o.id} className="text-sm border rounded-lg p-2 mb-2 flex justify-between">
+                  <div key={o.id} className="mb-2 flex justify-between rounded-lg border border-[#eeeeee] p-2 text-sm">
                     <span>{o.orderNumber || o.order_number || o.id} • {o.status || "—"}</span>
                     <span className="font-medium">{fmtTaka(orderTotalPaisa(o))}</span>
                   </div>

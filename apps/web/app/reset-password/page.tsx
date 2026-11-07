@@ -54,7 +54,7 @@ function ResetPasswordForm() {
             {t("auth.invalidResetLink", "This reset link is invalid or has expired — please request a new one.", "এই রিসেট লিংকটি ভুল বা মেয়াদ শেষ — নতুন লিংক চেয়ে নাও।")}
           </p>
         ) : done ? (
-          <p className="rounded-lg bg-teal-50 p-3 text-sm text-teal-700">
+          <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">
             {t("auth.resetDone", "Password changed — you can now log in with your new password.", "পাসওয়ার্ড বদলে গেছে — এখন নতুন পাসওয়ার্ড দিয়ে লগইন করতে পারবে।")}
           </p>
         ) : (

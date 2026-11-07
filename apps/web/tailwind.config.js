@@ -11,12 +11,28 @@ module.exports = {
       },
       colors: {
         brand: {
-          DEFAULT: "#ff6a4d",
-          dark: "#e04e33",
-          light: "#ff8a70",
+          DEFAULT: "#FF5B2E",
+          dark: "#E8491F",
+          light: "#FFF1EA",
         },
-        background: "#fff8f3",
-        surface: "#ffffff",
+        background: "#FFFFFF",
+        surface: "#FFFFFF",
+        // The warm orange tints used across the app now come from the new
+        // light-orange family (#FFF1EA) so every existing orange-50/100/200
+        // surface renders in the spec palette without touching each page.
+        orange: {
+          50: "#FFF1EA",
+          100: "#FFE3D6",
+          200: "#FFC7AF",
+          300: "#FFA586",
+          400: "#FF7A52",
+          500: "#FF5B2E",
+          600: "#E8491F",
+          700: "#C43A17",
+          800: "#9E2F14",
+          900: "#7C2510",
+        },
+        ink: "#0F172A",
       },
     },
   },

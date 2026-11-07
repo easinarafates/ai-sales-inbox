@@ -64,7 +64,7 @@ export default function SavedRepliesPage() {
   };
 
   return (
-    <div className="bg-[#fff8f3] min-h-screen -m-6 p-6">
+    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
       <h1 className="text-2xl font-bold mb-1">{t("savedTitle", "Saved replies", "সেভ করা উত্তর")}</h1>
       <p className="text-sm text-slate-500 mb-4">{t("savedSub", "Write answers once, then send them in the inbox with one tap.", "একবার উত্তর লিখুন, তারপর ইনবক্সে এক ক্লিকে পাঠান।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
@@ -81,7 +81,7 @@ export default function SavedRepliesPage() {
           <option value="website">Website</option>
         </select>
         <div className="flex gap-2">
-          <button disabled={saving} className="bg-[#ff6a4d] hover:bg-[#e04e33] text-white rounded-lg px-4 py-2 disabled:opacity-50">
+          <button disabled={saving} className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white rounded-lg px-4 py-2 disabled:opacity-50">
             {saving ? t("saving", "Saving…", "সেভ হচ্ছে…") : t("save", "Save", "সেভ করুন")}
           </button>
           {editingId && (
@@ -102,7 +102,7 @@ export default function SavedRepliesPage() {
             <div key={r.id} className="card p-4">
               <div className="flex justify-between gap-2">
                 <h3 className="font-bold">{r.title}</h3>
-                {r.channel && <span className="text-xs bg-teal-600/10 text-teal-600 rounded-full px-2 py-1 h-fit">{r.channel}</span>}
+                {r.channel && <span className="text-xs bg-green-600/10 text-green-600 rounded-full px-2 py-1 h-fit">{r.channel}</span>}
               </div>
               <p className="text-sm text-slate-600 whitespace-pre-wrap mt-1">{r.body}</p>
               <div className="flex gap-2 mt-3">

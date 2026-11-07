@@ -77,7 +77,7 @@ export default function OrdersPage() {
                     <td className="p-3 text-slate-600 max-w-[220px]">{address || <span className="text-slate-400">{notProvided}</span>}</td>
                     <td className="p-3">{fmtTaka(orderTotalPaisa(o))}</td>
                     <td className="p-3">{statusBadge(o.status, lang)}</td>
-                    <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded ${pay === "paid" ? "bg-teal-100 text-teal-800" : "bg-red-100 text-red-800"}`}>{pay === "paid" ? t("orders.paymentPaid", "Paid", "পরিশোধিত") : t("orders.paymentUnpaid", "Unpaid", "অপরিশোধিত")}</span></td>
+                    <td className="p-3"><span className={`text-xs px-2 py-0.5 rounded ${pay === "paid" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>{pay === "paid" ? t("orders.paymentPaid", "Paid", "পরিশোধিত") : t("orders.paymentUnpaid", "Unpaid", "অপরিশোধিত")}</span></td>
                     <td className="p-3 text-slate-500">{fmtDate(o.createdAt || o.created_at)}</td>
                     <td className="p-3 text-right"><Link href={`/orders/${o.id}`} className="text-brand-dark underline">{t("common.details", "Details", "বিস্তারিত")}</Link></td>
                   </tr>

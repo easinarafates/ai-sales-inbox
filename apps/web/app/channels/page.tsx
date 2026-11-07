@@ -368,7 +368,7 @@ export default function ChannelsPage() {
       <h1 className="page-title">{t("channels.title", "Channels", "চ্যানেল")}</h1>
       <p className="page-subtitle">{t("channels.subtitle", "Connect your Facebook Page, Instagram and WhatsApp.", "ফেসবুক পেজ, ইনস্টাগ্রাম আর WhatsApp যুক্ত করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <h2 className="font-bold mb-3">{t("channels.connectTitle", "Connect a channel", "চ্যানেল যুক্ত করুন")}</h2>
       <p className="text-sm text-slate-600 mb-4">{t("channels.connectDesc", "Connect each place your customers message you — Facebook, Instagram or WhatsApp. TikTok and YouTube are coming soon.", "তোমার কাস্টমাররা যেখান থেকে মেসেজ দেয়, সেটা যুক্ত করো — Facebook, Instagram বা WhatsApp। TikTok আর YouTube শীঘ্রই আসছে।")}</p>
@@ -383,11 +383,19 @@ export default function ChannelsPage() {
                 {t(card.title, kind === "facebook" ? "Connect Facebook Page" : kind === "instagram" ? "Connect Instagram" : "Connect WhatsApp", kind === "facebook" ? "Facebook পেজ যুক্ত করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : "WhatsApp যুক্ত করুন")}
               </h3>
               <p className="text-sm text-slate-600 mt-1 mb-3">
-                {t(card.desc, kind === "facebook" ? "Log in with Facebook and pick the Page that should receive your shop's messages — no Page ID or token to type." : kind === "instagram" ? "Log in with Facebook and pick the Instagram account linked to your Page — Instagram messages will arrive in your inbox." : "Log in with Facebook and pick your WhatsApp Business number — WhatsApp messages will arrive in your inbox.", kind === "facebook" ? "Facebook দিয়ে লগইন করে যে পেজে তোমার দোকানের মেসেজ আসবে সেটা বেছে নাও — পেজ ID বা টোকেন টাইপ করতে হবে না।" : kind === "instagram" ? "Facebook দিয়ে লগইন করে তোমার পেজের সাথে যুক্ত Instagram অ্যাকাউন্টটি বেছে নাও — Instagram-এর মেসেজ ইনবক্সে আসবে।" : "Facebook দিয়ে লগইন করে তোমার WhatsApp Business নম্বরটি বেছে নাও — WhatsApp মেসেজ ইনবক্সে আসবে।")}
+                {t(card.desc, kind === "facebook" ? "Log in with Facebook and pick the Page that should receive your shop's messages — no Page ID or token to type." : kind === "instagram" ? "Log in with Facebook and pick the Instagram account linked to your Page — Instagram messages will arrive in your inbox." : "Connect your WhatsApp Business number — customer WhatsApp messages will arrive in your inbox.", kind === "facebook" ? "Facebook দিয়ে লগইন করে যে পেজে তোমার দোকানের মেসেজ আসবে সেটা বেছে নাও — পেজ ID বা টোকেন টাইপ করতে হবে না।" : kind === "instagram" ? "Facebook দিয়ে লগইন করে তোমার পেজের সাথে যুক্ত Instagram অ্যাকাউন্টটি বেছে নাও — Instagram-এর মেসেজ ইনবক্সে আসবে।" : "তোমার WhatsApp Business নম্বরটি যুক্ত করো — কাস্টমারের WhatsApp মেসেজ ইনবক্সে আসবে।")}
               </p>
+              {/* WhatsApp connects via Facebook Login (WABA OAuth) — that
+                  stays as a small secondary note only; the card leads
+                  with the WhatsApp Business number. */}
+              {kind === "whatsapp" && (
+                <p className="text-xs text-slate-500 -mt-1 mb-3">
+                  {t("channels.whatsappNote", "Sign-in happens with Facebook, because WhatsApp Business is part of Meta.", "লগইন Facebook দিয়ে হবে, কারণ WhatsApp Business Meta-এরই অংশ।")}
+                </p>
+              )}
               {connected.length > 0 && (
                 <p className="text-sm mb-3">
-                  <span className="bg-teal-100 text-teal-800 text-xs px-2 py-0.5 rounded">{t("channels.connected", "Connected", "যুক্ত আছে")}</span>{" "}
+                  <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded">{t("channels.connected", "Connected", "যুক্ত আছে")}</span>{" "}
                   <span className="text-slate-600">{connected.map((c) => channelDisplayName(c)).join(", ")}</span>
                 </p>
               )}
@@ -447,7 +455,7 @@ export default function ChannelsPage() {
               <ul className="divide-y">
                 {waRows.map(({ waba, number }) => (
                   <li key={number.id} className="flex items-center gap-3 py-2">
-                    <span className="w-10 h-10 rounded-full bg-teal-100 text-teal-700 flex items-center justify-center font-bold">{whatsappNumberLabel(number).slice(0, 1)}</span>
+                    <span className="w-10 h-10 rounded-full bg-green-100 text-green-700 flex items-center justify-center font-bold">{whatsappNumberLabel(number).slice(0, 1)}</span>
                     <span className="flex-1 min-w-0">
                       <span className="block font-medium truncate">{whatsappNumberLabel(number)}</span>
                       <span className="block text-xs text-slate-500 truncate">{waba.name}</span>
@@ -546,7 +554,7 @@ export default function ChannelsPage() {
                   <td className="p-3 font-medium">{platformLabel(channelPlatform(c))}</td>
                   <td className="p-3">{channelDisplayName(c)}</td>
                   <td className="p-3">
-                    <span className={`text-xs px-2 py-0.5 rounded ${channelNeedsApproval(c) ? "bg-amber-100 text-amber-800" : c.status === "active" ? "bg-teal-100 text-teal-800" : "bg-slate-100 text-slate-600"}`}>
+                    <span className={`text-xs px-2 py-0.5 rounded ${channelNeedsApproval(c) ? "bg-amber-100 text-amber-800" : c.status === "active" ? "bg-green-100 text-green-800" : "bg-slate-100 text-slate-600"}`}>
                       {channelNeedsApproval(c) ? t("channels.needsApproval", "Needs approval", "অনুমোদন লাগবে") : c.status || "—"}
                     </span>
                   </td>

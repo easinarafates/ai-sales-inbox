@@ -136,7 +136,7 @@ export default function CourierPage() {
         {t("courier.title", "Courier", "কুরিয়ার")}
       </h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
-      {notice && <p className="bg-teal-50 text-teal-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
+      {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <div className="bg-amber-50 border border-amber-200 text-amber-800 text-sm p-4 rounded-xl mb-6">
         <p className="font-bold mb-1">{t("courier.notConnectedTitle", "⚠️ The real courier is not connected yet", "⚠️ আসল কুরিয়ার এখনো যুক্ত হয়নি")}</p>
@@ -180,12 +180,12 @@ export default function CourierPage() {
             className="w-full border rounded-lg px-3 py-2"
           />
         </div>
-        <button disabled={tracking} className="bg-teal-600 text-white px-5 py-2 rounded-lg hover:bg-teal-700 disabled:opacity-50">
+        <button disabled={tracking} className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50">
           {tracking ? t("courier.tracking", "Searching…", "খুঁজছি…") : t("courier.trackButton", "Track", "ট্র্যাক করুন")}
         </button>
       </form>
       {trackResult && (
-        <div className={`rounded-xl shadow p-4 mb-6 text-sm ${trackResult.available ? "bg-teal-50 text-teal-800" : "bg-white text-slate-700"}`}>
+        <div className={`rounded-xl shadow p-4 mb-6 text-sm ${trackResult.available ? "bg-green-50 text-green-800" : "bg-white text-slate-700"}`}>
           {trackResult.available ? (
             <p>
               <span className="font-bold">{t("courier.trackAvailable", "Parcel status:", "পার্সেলের অবস্থা:")} </span>

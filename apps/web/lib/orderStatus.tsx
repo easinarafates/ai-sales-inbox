@@ -21,7 +21,7 @@ export function statusBadge(status?: string, lang: Lang = "en") {
     pending: "bg-yellow-100 text-yellow-800", on_hold: "bg-slate-200 text-slate-700",
     approved: "bg-blue-100 text-blue-800", processing: "bg-indigo-100 text-indigo-800",
     ready_to_ship: "bg-cyan-100 text-cyan-800", in_transit: "bg-violet-100 text-violet-800",
-    delivered: "bg-teal-100 text-teal-800",
+    delivered: "bg-green-100 text-green-800",
   };
   return (
     <span className={`text-xs px-2 py-0.5 rounded ${colors[status || ""] || "bg-slate-100"}`}>
