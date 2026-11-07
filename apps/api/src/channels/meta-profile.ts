@@ -31,6 +31,11 @@
  * - The Page's OWN picture DOES work (GET /{page-id}?fields=picture)
  *   — but it is the Page's photo, never a customer's, so it is never
  *   stored as a customer photo.
+ * - GET /{psid}/picture?redirect=false was ALSO probed live (2026-11-07,
+ *   both Page tokens, v21.0 + v27.0): 400 GraphMethodException #100/33
+ *   on every attempt — the same object-access block as the direct PSID
+ *   read. It adds nothing beyond the paths above, so it is NOT wired in
+ *   as a fallback; do not re-probe it for this sender.
  * - The pipeline below already stores a photo whenever Graph returns
  *   one, so other (e.g. email-registered) customers' photos WILL show
  *   automatically when Meta returns them — no code change needed for
@@ -53,6 +58,11 @@
  *   missing) — never on every message.
  * - Only missing fields are filled in; a stored name/picture is never
  *   overwritten.
+ * - A MANUALLY uploaded photo (picture_source='manual', set by the shop
+ *   owner from the Inbox) is never overwritten or cleared by a Meta
+ *   refresh — the refresh skips the picture fill entirely for these
+ *   customers, even when Graph returns a different photo or none at
+ *   all. A Meta photo is stored with picture_source='meta'.
  * - Tokens are never put in a URL or a log line (Bearer header only).
  * - A photo is used only when Graph actually returns one; never invent
  *   a photo URL — the Inbox falls back to initials.
@@ -236,6 +246,12 @@ export async function fetchMetaProfile(input: {
  * Skips the fetch entirely when the customer already has both, or when
  * there is no Page token. Never throws — a failure is logged by the
  * caller and the message flow continues.
+ *
+ * Manual-photo protection: when picture_source is 'manual' the stored
+ * picture is the shop owner's upload — the refresh never touches it
+ * (not even when Graph returns a different photo or no photo). Only
+ * the name is still filled in when missing. A photo Graph returns for
+ * a customer with no photo yet is stored with picture_source='meta'.
  */
 export async function enrichCustomerProfileIfNeeded(input: {
   workspaceId: string;
@@ -244,12 +260,17 @@ export async function enrichCustomerProfileIfNeeded(input: {
   customerId: string;
   customerName: string | null;
   customerPictureUrl: string | null;
+  /** 'manual' = shop-owner upload (never overwritten); 'meta' = from Graph; null = no photo yet. */
+  customerPictureSource?: string | null;
   pageToken: string | null;
   /** Messenger: the Page ID — enables the conversations-endpoint fallback. */
   pageId?: string | null;
 }): Promise<void> {
   if (!input.pageToken) return;
-  if (input.customerName && input.customerPictureUrl) return;
+  const pictureIsManual = input.customerPictureSource === 'manual';
+  const needName = !input.customerName;
+  const needPicture = !input.customerPictureUrl && !pictureIsManual;
+  if (!needName && !needPicture) return;
   const profile = await fetchMetaProfile({
     platform: input.platform,
     senderId: input.senderId,
@@ -258,11 +279,18 @@ export async function enrichCustomerProfileIfNeeded(input: {
   });
   if (!profile) return;
   const name = input.customerName ?? profile.name;
-  const pictureUrl = input.customerPictureUrl ?? profile.pictureUrl;
-  if (name === input.customerName && pictureUrl === input.customerPictureUrl) return;
+  const pictureUrl = pictureIsManual
+    ? input.customerPictureUrl
+    : (input.customerPictureUrl ?? profile.pictureUrl);
+  const pictureSource = pictureIsManual
+    ? 'manual'
+    : !input.customerPictureUrl && profile.pictureUrl
+      ? 'meta'
+      : (input.customerPictureSource ?? null);
+  if (name === input.customerName && pictureUrl === input.customerPictureUrl && pictureSource === (input.customerPictureSource ?? null)) return;
   await query(
     input.workspaceId,
-    'UPDATE customers SET name = $1, picture_url = $2, updated_at = now() WHERE workspace_id = $3 AND id = $4',
-    [name, pictureUrl, input.workspaceId, input.customerId],
+    'UPDATE customers SET name = $1, picture_url = $2, picture_source = $3, updated_at = now() WHERE workspace_id = $4 AND id = $5',
+    [name, pictureUrl, pictureSource, input.workspaceId, input.customerId],
   );
 }

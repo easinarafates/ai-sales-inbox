@@ -94,7 +94,9 @@ async function main() {
     ...parseEnvFile(path.join(API_DIR, '.env')),
     PORT: String(PORT),
     USE_PGLITE: 'true',
-    DATABASE_URL: `file:${dataDir}`,
+    // PGlite only honours pglite:// URLs (a file: URL silently falls
+    // back to the shared dev .pglite-data — must not happen here).
+    DATABASE_URL: `pglite://${dataDir}`,
   };
   // No Blob token in this harness: the base64 path stores on disk, and
   // the upload-token route must answer 503.
