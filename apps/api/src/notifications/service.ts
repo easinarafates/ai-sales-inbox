@@ -13,11 +13,13 @@
 import { query } from '../db/pool';
 
 export interface NotificationInput {
-  type: 'angry_customer' | 'off_topic';
+  type: 'angry_customer' | 'off_topic' | 'cancel_request';
   title: string;
   body: string;
   conversationId?: string | null;
   customerId?: string | null;
+  /** The order this notification is about (cancel requests only). */
+  orderId?: string | null;
 }
 
 export async function createNotification(
@@ -27,8 +29,8 @@ export async function createNotification(
   try {
     const { rows } = await query<{ id: string }>(
       workspaceId,
-      `INSERT INTO notifications (workspace_id, type, title, body, conversation_id, customer_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+      `INSERT INTO notifications (workspace_id, type, title, body, conversation_id, customer_id, order_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
       [
         workspaceId,
         input.type,
@@ -36,6 +38,7 @@ export async function createNotification(
         input.body,
         input.conversationId ?? null,
         input.customerId ?? null,
+        input.orderId ?? null,
       ],
     );
     return rows[0]?.id ?? null;

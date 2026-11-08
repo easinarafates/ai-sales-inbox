@@ -608,7 +608,39 @@ export const ordersApi = {
     api.post<{ sent: boolean; delivery?: string; error?: string | null; invoiceUrl: string | null; orderNumber: string | null }>(
       `/api/orders/${id}/receipt`, {}
     ),
+  /** Cancel requests: the owner's queue (pending first). */
+  cancelRequests: (status?: string) =>
+    api.get<{ requests: CancelRequest[]; pendingCount: number }>(
+      `/api/orders/cancel-requests${status ? `?status=${encodeURIComponent(status)}` : ""}`
+    ),
+  /** Approve a cancel request: the order becomes cancelled + the customer is told. */
+  approveCancelRequest: (id: string) =>
+    api.post<{ request: { id: string; status: string }; order: Order; sent: boolean; sendError: string | null }>(
+      `/api/orders/cancel-requests/${id}/approve`, {}
+    ),
+  /** Decline a cancel request: the order stays as-is; the owner handles it manually. */
+  declineCancelRequest: (id: string) =>
+    api.post<{ request: { id: string; status: string } }>(
+      `/api/orders/cancel-requests/${id}/decline`, {}
+    ),
 };
+
+/** A customer's request to cancel an order (pending = waiting for the owner). */
+export interface CancelRequest {
+  id: string;
+  order_id: string;
+  customer_id: string | null;
+  conversation_id: string | null;
+  reason: string | null;
+  status: "pending" | "approved" | "declined";
+  decided_at: string | null;
+  created_at: string;
+  order_number: string | null;
+  order_status: string | null;
+  total_paisa: number | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+}
 
 export interface OrderCustomer {
   id: string;

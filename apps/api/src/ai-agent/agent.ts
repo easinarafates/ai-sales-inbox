@@ -55,6 +55,9 @@ import { deliverOutgoingMessage, deliverOutgoingImageMessage, type DeliveryResul
 import { detectAnger, detectGibberish, detectOffTopic, escalateConversation, isCantAnswerReply } from '../inbox/escalation';
 import {
   BENGALI_PRODUCT_ALIASES,
+  detectAcknowledgment,
+  acknowledgmentKind,
+  detectCancelRequest,
   detectFastReplyQuestion,
   detectGreeting,
   detectProductListRequest,
@@ -62,6 +65,7 @@ import {
   matchShowProduct,
   ROMANIZED_PRODUCT_ALIASES,
 } from './detect-intent';
+import { extractOrderNumber, requestOrderCancellation } from '../orders/cancel';
 import { analyseCustomerImage, transcribeCustomerAudio } from './media';
 
 /** Flat MVP estimate per AI reply (paisa). Real per-token pricing plugs in here later. Must stay under the 20-paisa gate. */
@@ -881,6 +885,43 @@ export async function processBatch(
     [workspaceId, conversationId],
   );
 
+  // Order cancellation — NEVER instant. A clear cancel ask creates a
+  // PENDING cancel request for the owner to approve (orders/cancel.ts)
+  // + an owner notification (bell + order view), and the customer gets
+  // the professional reply ("আমরা প্রতিনিধির কাছে অর্ডার ক্যান্সেলের
+  // জন্য অনুরোধ করছি"). The order itself stays in its current status.
+  // Delivered / already-cancelled orders get an honest reply and NO
+  // request. Runs before the LLM so the wording is guaranteed.
+  const cancelMsg = [...batchedMessages].reverse().find((m) => detectCancelRequest(m.body));
+  if (cancelMsg && customer?.id) {
+    const outcome = await requestOrderCancellation(toolDb, workspaceId, {
+      customerId: customer.id,
+      conversationId,
+      reason: cancelMsg.body,
+      orderNumber: extractOrderNumber(cancelMsg.body),
+    });
+    const csent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, outcome.replyText);
+    if (!csent.sent) return { replied: false, reason: 'send_failed', confidence: 0.9 };
+    const cost = await chargeDeterministic();
+    return { replied: true, reason: `cancel_request_${outcome.outcome}`, confidence: 0.95, costPaisa: cost };
+  }
+
+  // Acknowledgment — "OK" / "ঠিক আছে" / "হ্যাঁ" / "ধন্যবাদ" gets a
+  // SHORT polite reply and nothing more: no question ("আপনি কি কিছু
+  // বলতে যাচ্ছেন?"), no product push. A bare "হ্যাঁ" after a yes/no
+  // question is still just acknowledged — the customer says more when
+  // they want to.
+  if (detectAcknowledgment(latestText)) {
+    const sal = genderSalutation(replyGender);
+    const reply = acknowledgmentKind(latestText) === 'thanks'
+      ? (sal ? `আপনাকেও ধন্যবাদ, ${sal}।` : 'আপনাকেও ধন্যবাদ।')
+      : (sal ? `ঠিক আছে ${sal}, ধন্যবাদ।` : 'ঠিক আছে, ধন্যবাদ।');
+    const asent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+    if (!asent.sent) return { replied: false, reason: 'send_failed', confidence: 0.9 };
+    const acost = await chargeDeterministic();
+    return { replied: true, reason: 'acknowledged', confidence: 0.95, costPaisa: acost };
+  }
+
   // Photo → product match (the CORE behaviour): the customer sent a photo
   // saying they want that product. Gemini vision matches it against the
   // REAL catalog (customer photo + product photos, see ai-agent/media.ts);
@@ -1262,6 +1303,28 @@ export async function processBatch(
         return { replied: true, reason: 'order_confirmed', confidence: 0.95, costPaisa: charged ? replyCost : 0 };
       }
       // Confirmation send failed — fall through to the second LLM call.
+    }
+    // A request_order_cancellation tool call gets its exact professional
+    // reply sent deterministically too — the wording ("আমরা প্রতিনিধির
+    // কাছে অর্ডার ক্যান্সেলের জন্য অনুরোধ করছি") must reach the customer
+    // verbatim, never reworded by the second LLM call.
+    const cancelCall = results.find(
+      (r) =>
+        r.tool === 'request_order_cancellation' &&
+        typeof (r.result as Record<string, unknown> | null)?.replyText === 'string',
+    );
+    if (cancelCall) {
+      const replyText = String((cancelCall.result as Record<string, unknown>).replyText);
+      const cancelSent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, replyText);
+      if (cancelSent.sent) {
+        const cancelProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens);
+        const charged = await chargeForReply(
+          workspaceId, conversationId, inputTokens, outputTokens, replyCost, provider, allowance.mode === 'included',
+          { model: ai.model, providerCostPaisa: cancelProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null },
+        );
+        return { replied: true, reason: 'cancel_request_created', confidence: 0.95, costPaisa: charged ? replyCost : 0 };
+      }
+      // Cancel reply send failed — fall through to the second LLM call.
     }
     // Second-call prompt is SHORT on purpose: the full prompt (~2700
     // tokens) doubles input tokens and burns quota on the follow-up, and

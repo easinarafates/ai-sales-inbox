@@ -378,6 +378,150 @@ ordersRouter.get('/customers/:customerId', async (req: AuthRequest, res: Respons
 });
 
 /**
+ * GET /api/orders/cancel-requests — the owner's cancel-request queue:
+ * pending first, then decided, newest first. Each row carries the order
+ * number + customer so the owner can approve / decline from the Orders
+ * page. (Registered before GET /:id so Express never treats
+ * "cancel-requests" as an order id.)
+ */
+ordersRouter.get('/cancel-requests', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const status = typeof req.query.status === 'string' ? req.query.status : null;
+  const params: unknown[] = [workspaceId];
+  let where = 'WHERE r.workspace_id = $1';
+  if (status === 'pending' || status === 'approved' || status === 'declined') {
+    params.push(status);
+    where += ` AND r.status = $${params.length}`;
+  }
+  const { rows } = await query(
+    workspaceId,
+    `SELECT r.id, r.order_id, r.customer_id, r.conversation_id, r.reason, r.status, r.decided_at, r.created_at,
+            o.order_number, o.status AS order_status, o.total_paisa, o.created_at AS order_created_at,
+            c.name AS customer_name, c.phone AS customer_phone
+     FROM order_cancel_requests r
+     LEFT JOIN orders o ON o.id = r.order_id AND o.workspace_id = $1
+     LEFT JOIN customers c ON c.id = r.customer_id AND c.workspace_id = $1
+     ${where}
+     ORDER BY CASE WHEN r.status = 'pending' THEN 0 ELSE 1 END, r.created_at DESC LIMIT 100`,
+    params,
+  );
+  const pending = rows.filter((r) => (r as { status: string }).status === 'pending').length;
+  res.json({ requests: rows, pendingCount: pending });
+});
+
+/**
+ * POST /api/orders/cancel-requests/:id/approve — the owner (or their
+ * representative) approves a cancellation. The order becomes 'cancelled'
+ * (logged in order_events) and the customer is told by Messenger
+ * ("আপনার অর্ডারটি ক্যান্সেল করা হয়েছে।"). Only a pending request can
+ * be approved; an order that is already delivered / cancelled / returned
+ * / damaged is refused honestly (409).
+ */
+ordersRouter.post('/cancel-requests/:id/approve', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const request = await queryOne<{ id: string; order_id: string; customer_id: string | null; conversation_id: string | null; status: string; reason: string | null }>(
+    workspaceId,
+    'SELECT id, order_id, customer_id, conversation_id, status, reason FROM order_cancel_requests WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, req.params.id],
+  );
+  if (!request) {
+    res.status(404).json({ error: 'Cancel request not found' });
+    return;
+  }
+  if (request.status !== 'pending') {
+    res.status(409).json({ error: `This cancel request was already ${request.status}.` });
+    return;
+  }
+  const order = await queryOne<{ id: string; status: string; order_number: string | null }>(
+    workspaceId,
+    'SELECT id, status, order_number FROM orders WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, request.order_id],
+  );
+  if (!order) {
+    res.status(404).json({ error: 'Order not found' });
+    return;
+  }
+  if (order.status === 'cancelled') {
+    res.status(409).json({ error: 'This order is already cancelled.' });
+    return;
+  }
+  if (order.status === 'delivered' || order.status === 'returned' || order.status === 'damaged') {
+    res.status(409).json({ error: `This order is already ${order.status} and cannot be cancelled.` });
+    return;
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      "UPDATE order_cancel_requests SET status = 'approved', decided_at = now(), updated_at = now() WHERE workspace_id = $1 AND id = $2",
+      [workspaceId, req.params.id],
+    );
+    await client.query(
+      "UPDATE orders SET status = 'cancelled', updated_at = now() WHERE workspace_id = $1 AND id = $2",
+      [workspaceId, order.id],
+    );
+    await client.query(
+      "INSERT INTO order_events (workspace_id, order_id, from_status, to_status, note) VALUES ($1, $2, $3, 'cancelled', 'Cancelled by owner — cancel request approved')",
+      [workspaceId, order.id, order.status],
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK').catch(() => undefined);
+    console.error('[orders/cancel-approve]', err);
+    res.status(500).json({ error: 'Approval failed' });
+    return;
+  } finally {
+    client.release();
+  }
+  // Tell the customer (Messenger). The order is cancelled either way —
+  // a failed send (e.g. 24h window expired) is reported honestly, never
+  // faked, and the owner can message the customer by hand from the Inbox.
+  let sent = false;
+  let sendError: string | null = null;
+  if (request.conversation_id) {
+    const customer = request.customer_id
+      ? await queryOne<{ gender: string | null }>(
+          workspaceId,
+          'SELECT gender FROM customers WHERE workspace_id = $1 AND id = $2',
+          [workspaceId, request.customer_id],
+        )
+      : null;
+    const sal = customer?.gender === 'male' ? 'স্যার' : customer?.gender === 'female' ? 'ম্যাডাম' : '';
+    const text = sal
+      ? `${sal}, আপনার অর্ডারটি (${order.order_number ?? ''}) ক্যান্সেল করা হয়েছে।`
+      : `আপনার অর্ডারটি (${order.order_number ?? ''}) ক্যান্সেল করা হয়েছে।`;
+    const result = await deliverOutgoingMessage(workspaceId, request.conversation_id, text);
+    sent = result.sent;
+    sendError = result.error ?? null;
+  } else {
+    sendError = 'এই অর্ডারের কোনো মেসেঞ্জার চ্যাট নেই — কাস্টমারকে নিজে জানান।';
+  }
+  const full = await loadFullOrder(workspaceId, order.id);
+  res.json({ request: { id: request.id, status: 'approved' }, order: full?.order ?? { id: order.id, status: 'cancelled' }, sent, sendError });
+});
+
+/**
+ * POST /api/orders/cancel-requests/:id/decline — the owner declines a
+ * cancellation. The order stays exactly as it is; NO message is sent
+ * automatically — the owner handles it with the customer manually from
+ * the Inbox. Only a pending request can be declined.
+ */
+ordersRouter.post('/cancel-requests/:id/decline', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { rows } = await query(
+    workspaceId,
+    `UPDATE order_cancel_requests SET status = 'declined', decided_at = now(), updated_at = now()
+     WHERE workspace_id = $1 AND id = $2 AND status = 'pending' RETURNING id, order_id, status`,
+    [workspaceId, req.params.id],
+  );
+  if (rows.length === 0) {
+    res.status(409).json({ error: 'Cancel request not found or already decided.' });
+    return;
+  }
+  res.json({ request: rows[0] });
+});
+
+/**
  * GET /api/orders/lookup?q=... — the scan box: look an order up by its
  * order number (ASI-0001, or a prefix), a courier tracking number, or an
  * invoice token. Returns the full order, or 404 with an honest message.

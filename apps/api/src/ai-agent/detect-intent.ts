@@ -117,7 +117,10 @@ export function detectFastReplyQuestion(text: string | null | undefined): boolea
 }
 
 // ---------------------------------------------------------------------------
-// "What products do you have?" — list request, answered with photos.
+// "What products do you have?" — list request, answered with a clean TEXT
+// list (one product per line). Includes Banglish (Romanized Bengali):
+// "ki ki product ase" must hit the free deterministic list flow, not
+// fall through to a token-costly LLM call.
 // ---------------------------------------------------------------------------
 
 const LIST_REQUEST_PATTERNS = [
@@ -127,6 +130,13 @@ const LIST_REQUEST_PATTERNS = [
   /প্রোডাক্টগুলো|পণ্যগুলো/,
   /কি কি আছে|কী কী আছে/,
   /তোমাদের (কাছে )?কি আছে/,
+  /ki ki product/i,
+  /ki ki ponno/i,
+  /ki ki ase/i,
+  /sob product/i,
+  /kon kon product/i,
+  /product (gulo|gula|guli)/i,
+  /tomader kache ki ase/i,
   /what products/i,
   /show (me )?(all |your )?products/i,
   /all products/i,
@@ -209,4 +219,86 @@ export function matchShowProduct(
   scored.sort((a, b) => b.best - a.best);
   if (scored.length > 1 && scored[0].best === scored[1].best) return null;
   return scored[0].product;
+}
+
+// ---------------------------------------------------------------------------
+// Order-cancellation request detection (2026-11-08, user report).
+//
+// The AI must NEVER cancel an order on its own — a cancel ask creates a
+// PENDING request for the owner to approve (see orders/cancel.ts). This
+// detector catches clear cancel asks deterministically (no AI call), so
+// the professional reply + request + owner notification are guaranteed.
+// Conservative: a cancel word AND an order word, a cancel word with a
+// request verb ("ক্যান্সেল করুন", "cancel koro"), or the bare word
+// ("cancel", "ক্যান্সেল") alone. A coupon context ("কুপন বাতিল") is
+// NOT an order cancel. Vague intent ("আমি আর নিতে চাই না") is left to
+// the LLM + the request_order_cancellation tool (prompt rule 16).
+// ---------------------------------------------------------------------------
+
+const CANCEL_WORDS = ['ক্যান্সেল', 'ক্যানসেল', 'বাতিল', 'cancel', 'batil', 'cancle'];
+const CANCEL_ORDER_WORDS = ['অর্ডার', 'order'];
+const CANCEL_REQUEST_VERBS = ['করুন', 'করো', 'চাই', 'দিন', 'দেন', 'koro', 'korun', 'chai', 'please', 'plz'];
+
+/** Is this message asking to cancel an order? */
+export function detectCancelRequest(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const lower = text.toLowerCase();
+  // A coupon context is not an order cancel ("কুপন বাতিল").
+  if (lower.includes('কুপন') || lower.includes('coupon')) return false;
+  const hasCancel = CANCEL_WORDS.some((w) => lower.includes(w));
+  if (!hasCancel) return false;
+  const hasOrder = CANCEL_ORDER_WORDS.some((w) => lower.includes(w));
+  const hasVerb = CANCEL_REQUEST_VERBS.some((w) => lower.includes(w));
+  if (hasOrder || hasVerb) return true;
+  // The bare word alone ("cancel", "ক্যান্সেল") is a cancel ask.
+  const bare = lower.trim().replace(/[.!?।,\s]+$/g, '');
+  return CANCEL_WORDS.includes(bare);
+}
+
+// ---------------------------------------------------------------------------
+// Acknowledgment detection (2026-11-08, user report).
+//
+// When a customer says just "OK" / "ঠিক আছে" / "হ্যাঁ" / "ধন্যবাদ", the
+// AI used to ask "স্যার, আপনি ওকে বলছেন, আপনি কি কিছু বলতে যাচ্ছেন?" —
+// unprofessional. An acknowledgment gets a SHORT polite reply and
+// nothing more: no question, no product push. This detector fires only
+// when the WHOLE message is an acknowledgment (a trailing salutation —
+// "ধন্যবাদ স্যার", "ওকে স্যার" — is stripped first). "হ্যাঁ, জিন্স নিবো"
+// or "ঠিক আছে, দাম কত?" carry more content and are NOT acknowledgments.
+// ---------------------------------------------------------------------------
+
+const ACK_PHRASES = new Set([
+  // Bengali.
+  'ঠিক আছে', 'ঠিকাছে', 'ঠিক', 'হ্যাঁ', 'হ্যা', 'হাঁ', 'জি', 'জ্বি',
+  'আচ্ছা', 'বুঝেছি', 'বুঝলাম', 'ধন্যবাদ', 'ওকে', 'হুম', 'হম',
+  'আচ্ছা ঠিক আছে', 'ঠিক আছে ধন্যবাদ', 'শুকরিয়া',
+  // Banglish / English.
+  'ok', 'okk', 'okay', 'thik ache', 'thik ase', 'thik ace', 'ha', 'hya',
+  'yeah', 'yes', 'thanks', 'thank you', 'thank u', 'got it', 'understood',
+  'alright', 'fine', 'hmm', 'hm', 'ji', 'accha', 'bujhlam', 'bujhesi',
+  'dhonnobad', 'shukriya',
+]);
+
+const ACK_THANKS_PHRASES = new Set([
+  'ধন্যবাদ', 'thanks', 'thank you', 'thank u', 'dhonnobad', 'shukriya', 'শুকরিয়া',
+]);
+
+function normalizeAcknowledgment(text: string): string {
+  let t = text.trim().toLowerCase();
+  t = t.replace(/[.!?।,]+$/g, '').trim();
+  // A trailing salutation ("ধন্যবাদ স্যার", "ওকে স্যার") is still just an acknowledgment.
+  t = t.replace(/[\s,]+(স্যার|ম্যাডাম|sir|madam)$/u, '').trim();
+  return t.replace(/\s+/g, ' ');
+}
+
+/** Is this message ONLY an acknowledgment (OK / ঠিক আছে / হ্যাঁ / ধন্যবাদ)? */
+export function detectAcknowledgment(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return ACK_PHRASES.has(normalizeAcknowledgment(text));
+}
+
+/** 'thanks' for a thank-you ("ধন্যবাদ" / "thanks"), 'ack' for the rest. */
+export function acknowledgmentKind(text: string | null | undefined): 'thanks' | 'ack' {
+  if (!text) return 'ack';
+  return ACK_THANKS_PHRASES.has(normalizeAcknowledgment(text)) ? 'thanks' : 'ack';
 }

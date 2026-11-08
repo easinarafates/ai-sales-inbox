@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   courierApi, ordersApi, orderItemsOf, orderTotalPaisa,
-  type CourierProviderOption, type Order, type Shipment,
+  type CancelRequest, type CourierProviderOption, type Order, type Shipment,
 } from "@/lib/api";
 import {
   ORDER_STATUSES, PAYMENT_METHODS, handledByLabel, orderSourceLabel,
@@ -40,11 +40,20 @@ export default function OrderDetailPanel({
   const [providers, setProviders] = useState<CourierProviderOption[]>([]);
   const [showCouriers, setShowCouriers] = useState(false);
   const [shipmentState, setShipmentState] = useState<Shipment | null>(shipment ?? null);
+  const [cancelReq, setCancelReq] = useState<CancelRequest | null>(null);
 
   useEffect(() => { setShipmentState(shipment ?? null); }, [shipment]);
   useEffect(() => {
     courierApi.provider().then((d) => setProviders(d.providers ?? [])).catch(() => setProviders([]));
   }, []);
+  // Pending cancel request for THIS order (the customer asked to cancel;
+  // the owner approves / declines here — the AI never cancels on its own).
+  useEffect(() => {
+    setCancelReq(null);
+    ordersApi.cancelRequests("pending")
+      .then((d) => setCancelReq((d.requests ?? []).find((r) => r.order_id === order.id) ?? null))
+      .catch(() => setCancelReq(null));
+  }, [order.id]);
 
   const items = orderItemsOf(order);
   const pay = order.paymentStatus || order.payment_status;
@@ -103,6 +112,25 @@ export default function OrderDetailPanel({
     } finally { setBusy(false); }
   };
 
+  const decideCancel = async (approve: boolean) => {
+    if (!cancelReq) return;
+    setBusy(true); setError(""); setNotice("");
+    try {
+      if (approve) {
+        const r = await ordersApi.approveCancelRequest(cancelReq.id);
+        if (r.order) onOrderChange(r.order);
+      } else {
+        await ordersApi.declineCancelRequest(cancelReq.id);
+      }
+      setCancelReq(null);
+      setNotice(approve
+        ? t("orders.cancelApprovedNotice", "Order cancelled and the customer was told.", "অর্ডার ক্যান্সেল হয়েছে, কাস্টমারকে জানানো হয়েছে।")
+        : t("orders.cancelDeclinedNotice", "Cancel request declined — the order stays as-is.", "ক্যান্সেলের অনুরোধ প্রত্যাখ্যান করা হয়েছে — অর্ডার যেমন ছিল তেমনই আছে।"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("orders.actionFailed", "Could not do that.", "কাজটি করা যায়নি।"));
+    } finally { setBusy(false); }
+  };
+
   const copyInvoice = async () => {
     if (!invoiceUrl) return;
     try { await navigator.clipboard.writeText(invoiceUrl); setNotice(t("orders.linkCopied", "Invoice link copied.", "ইনভয়েস লিংক কপি হয়েছে।")); }
@@ -120,6 +148,23 @@ export default function OrderDetailPanel({
       </div>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg">{error}</p>}
       {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg">{notice}</p>}
+
+      {/* Pending cancel request — the customer asked to cancel; the owner approves / declines. */}
+      {cancelReq && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+          <p className="font-bold text-sm text-amber-900">{t("orders.cancelRequestTitle", "Customer wants to cancel this order", "কাস্টমার এই অর্ডারটি ক্যান্সেল করতে চাচ্ছেন")}</p>
+          {cancelReq.reason && <p className="text-sm text-amber-800 mt-1">“{cancelReq.reason}”</p>}
+          <p className="text-xs text-amber-700 mt-1">{t("orders.cancelRequestHint", "Approving cancels the order and tells the customer. Declining leaves the order as-is.", "অনুমোদন করলে অর্ডার ক্যান্সেল হবে এবং কাস্টমারকে জানানো হবে। প্রত্যাখ্যান করলে অর্ডার যেমন ছিল তেমনই থাকবে।")}</p>
+          <div className="flex gap-2 mt-3">
+            <button disabled={busy} onClick={() => decideCancel(true)} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700 disabled:opacity-50">
+              {t("orders.approveCancel", "Approve cancel", "ক্যান্সেল অনুমোদন")}
+            </button>
+            <button disabled={busy} onClick={() => decideCancel(false)} className="bg-white border px-4 py-2 rounded-lg text-sm disabled:opacity-50">
+              {t("orders.declineCancel", "Decline", "প্রত্যাখ্যান")}
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Who ordered + where to deliver + who talked to them */}
       <div className="card p-4">

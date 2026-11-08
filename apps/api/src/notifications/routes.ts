@@ -23,6 +23,7 @@ interface NotificationRow {
   body: string;
   conversation_id: string | null;
   customer_id: string | null;
+  order_id: string | null;
   customer_name: string | null;
   is_read: boolean;
   created_at: string;
@@ -33,7 +34,7 @@ notificationsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const limit = Math.max(1, Math.min(50, Number(req.query.limit ?? 20) || 20));
   const { rows } = await query<NotificationRow>(
     workspaceId,
-    `SELECT n.id, n.type, n.title, n.body, n.conversation_id, n.customer_id,
+    `SELECT n.id, n.type, n.title, n.body, n.conversation_id, n.customer_id, n.order_id,
             cu.name AS customer_name, n.is_read, n.created_at
      FROM notifications n
      LEFT JOIN customers cu ON cu.id = n.customer_id AND cu.workspace_id = $1

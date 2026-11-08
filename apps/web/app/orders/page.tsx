@@ -4,14 +4,14 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   asArray, getToken, ordersApi, orderTotalPaisa,
-  type Order, type OrderCustomer,
+  type CancelRequest, type Order, type OrderCustomer,
 } from "@/lib/api";
 import { ORDER_STATUSES, orderSourceLabel, orderStatusLabel, statusBadge } from "@/lib/orderStatus";
 import { useI18n } from "@/lib/i18n";
 import CustomerAvatar from "@/components/CustomerAvatar";
 import OrderDetailPanel from "@/components/OrderDetailPanel";
 
-type View = "orders" | "customers" | "report";
+type View = "orders" | "customers" | "report" | "cancel-requests";
 
 interface ReportData {
   date: string;
@@ -35,6 +35,9 @@ export default function OrdersPage() {
   const [loading, setLoading] = useState(true);
   const [selected, setSelected] = useState<Order | null>(null);
   const [openCustomer, setOpenCustomer] = useState<string | null>(null);
+  const [cancelRequests, setCancelRequests] = useState<CancelRequest[]>([]);
+  const [cancelPending, setCancelPending] = useState(0);
+  const [cancelBusy, setCancelBusy] = useState<string | null>(null);
   const [customerDetail, setCustomerDetail] = useState<Record<string, { totalPaisa: number; orders: Order[]; cancelled: number; returned: number; delivered: number; lastOrderAt: string | null }>>({});
 
   const load = useCallback(async () => {
@@ -67,15 +70,41 @@ export default function OrdersPage() {
     }
   }, [t]);
 
+  const loadCancelRequests = useCallback(async () => {
+    try {
+      const d = await ordersApi.cancelRequests();
+      setCancelRequests(d.requests ?? []);
+      setCancelPending(d.pendingCount ?? 0);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("orders.loadFailed", "Could not load orders.", "অর্ডার লোড করা যায়নি।"));
+    }
+  }, [t]);
+
+  const decideCancel = async (id: string, approve: boolean) => {
+    setCancelBusy(id); setError("");
+    try {
+      if (approve) await ordersApi.approveCancelRequest(id);
+      else await ordersApi.declineCancelRequest(id);
+      await loadCancelRequests();
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("orders.actionFailed", "Could not do that.", "কাজটি করা যায়নি।"));
+    } finally {
+      setCancelBusy(null);
+    }
+  };
+
   useEffect(() => {
     if (!getToken()) { router.push("/login"); return; }
     load();
-  }, [load, router]);
+    loadCancelRequests();
+  }, [load, loadCancelRequests, router]);
 
   useEffect(() => {
     if (view === "customers") loadCustomers();
     if (view === "report") loadReport();
-  }, [view, loadCustomers, loadReport]);
+    if (view === "cancel-requests") loadCancelRequests();
+  }, [view, loadCustomers, loadReport, loadCancelRequests]);
 
   const filtered = orders.filter((o) => !filterStatus || o.status === filterStatus);
 
@@ -155,11 +184,12 @@ export default function OrdersPage() {
       </div>
       {scanError && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{scanError}</p>}
 
-      {/* Views: Orders / Customers / Report */}
+      {/* Views: Orders / Customers / Report / Cancel requests */}
       <div className="flex gap-2 mb-4">
-        {(["orders", "customers", "report"] as View[]).map((v) => (
+        {(["orders", "customers", "report", "cancel-requests"] as View[]).map((v) => (
           <button key={v} onClick={() => setView(v)} className={`px-4 py-2 rounded-lg text-sm ${view === v ? "bg-brand text-white" : "bg-white border"}`}>
-            {v === "orders" ? t("orders.viewOrders", "Orders", "অর্ডার") : v === "customers" ? t("orders.viewCustomers", "Customers", "কাস্টমার") : t("orders.viewReport", "Report", "রিপোর্ট")}
+            {v === "orders" ? t("orders.viewOrders", "Orders", "অর্ডার") : v === "customers" ? t("orders.viewCustomers", "Customers", "কাস্টমার") : v === "report" ? t("orders.viewReport", "Report", "রিপোর্ট") : t("orders.viewCancelRequests", "Cancel requests", "ক্যান্সেলের অনুরোধ")}
+            {v === "cancel-requests" && cancelPending > 0 ? ` (${cancelPending})` : ""}
           </button>
         ))}
       </div>
@@ -272,6 +302,48 @@ export default function OrdersPage() {
           </div>
         ) : (
           <div className="space-y-2"><div className="skeleton h-24" /><div className="skeleton h-24" /></div>
+        )
+      )}
+
+      {view === "cancel-requests" && (
+        cancelRequests.length === 0 ? (
+          <div className="empty-state">{t("orders.noCancelRequests", "No cancel requests.", "কোনো ক্যান্সেলের অনুরোধ নেই।")}</div>
+        ) : (
+          <div className="space-y-2">
+            {cancelRequests.map((r) => (
+              <div key={r.id} className="card p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="font-medium">{r.customer_name || "—"} <span className="text-slate-500 font-normal">· {t("orders.thOrder", "Order", "অর্ডার")} {r.order_number || r.order_id.slice(0, 8)}</span></p>
+                    <p className="text-xs text-slate-500 mt-1">{r.customer_phone || ""} · {t("orders.thStatus", "Status", "স্ট্যাটাস")}: {r.order_status || "—"} · {fmtDate(r.created_at)}</p>
+                    {r.reason && <p className="text-sm text-slate-600 mt-2">“{r.reason}”</p>}
+                    <p className="text-xs mt-2">
+                      {r.status === "pending"
+                        ? <span className="bg-amber-100 text-amber-800 px-2 py-1 rounded">{t("orders.cancelPending", "Waiting for approval", "অনুমোদনের অপেক্ষায়")}</span>
+                        : r.status === "approved"
+                          ? <span className="bg-red-100 text-red-800 px-2 py-1 rounded">{t("orders.cancelApproved", "Approved — order cancelled", "অনুমোদিত — অর্ডার ক্যান্সেল হয়েছে")}</span>
+                          : <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded">{t("orders.cancelDeclined", "Declined — order unchanged", "প্রত্যাখ্যাত — অর্ডার যেমন ছিল তেমনই আছে")}</span>}
+                    </p>
+                  </div>
+                  {r.status === "pending" && (
+                    <div className="flex flex-col gap-2 shrink-0">
+                      <button disabled={cancelBusy === r.id} onClick={() => decideCancel(r.id, true)} className="bg-red-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-red-700 disabled:opacity-50">
+                        {t("orders.approveCancel", "Approve cancel", "ক্যান্সেল অনুমোদন")}
+                      </button>
+                      <button disabled={cancelBusy === r.id} onClick={() => decideCancel(r.id, false)} className="bg-white border px-4 py-2 rounded-lg text-sm disabled:opacity-50">
+                        {t("orders.declineCancel", "Decline", "প্রত্যাখ্যান")}
+                      </button>
+                    </div>
+                  )}
+                </div>
+                {r.conversation_id && (
+                  <Link href={`/inbox?conversation=${r.conversation_id}`} className="text-brand-dark underline text-sm mt-3 inline-block">
+                    {t("orders.openChat", "Open chat →", "চ্যাট খুলুন →")}
+                  </Link>
+                )}
+              </div>
+            ))}
+          </div>
         )
       )}
 

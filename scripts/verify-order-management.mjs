@@ -244,6 +244,37 @@ async function main() {
   check('cron sweep runs the auto follow-up', cronSrc.includes('runAutoFollowups'));
   check('in-process sweep runs the auto follow-up', indexSrc.includes('runAutoFollowups'));
 
+  // ---- Order cancellation + professional acknowledgments (static) ----
+  const mig31 = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/31-order-cancel-requests.sql'), 'utf8');
+  check('migration 31: order_cancel_requests table (pending/approved/declined)', mig31.includes('CREATE TABLE IF NOT EXISTS order_cancel_requests') && mig31.includes("'pending', 'approved', 'declined'"));
+  check('migration 31: at most one pending request per order (partial unique index)', mig31.includes('idx_cancel_requests_one_pending') && mig31.includes("WHERE status = 'pending'"));
+  check('migration 31: notifications.order_id (cancel request links to its order)', mig31.includes('ALTER TABLE notifications ADD COLUMN IF NOT EXISTS order_id'));
+  const cancelSvc = fs.readFileSync(path.join(ROOT, 'apps/api/src/orders/cancel.ts'), 'utf8');
+  check('cancel service: requestOrderCancellation + extractOrderNumber', cancelSvc.includes('export async function requestOrderCancellation') && cancelSvc.includes('export function extractOrderNumber'));
+  check('cancel service: professional reply ("প্রতিনিধির কাছে অর্ডার ক্যান্সেলের জন্য অনুরোধ করছি")', cancelSvc.includes('প্রতিনিধির কাছে আপনার অর্ডার ক্যান্সেলের জন্য অনুরোধ করছি'));
+  check('cancel service: honest edge cases (delivered / cancelled / no order, no request)', cancelSvc.includes('already_delivered') && cancelSvc.includes('already_cancelled') && cancelSvc.includes('no_order'));
+  check('cancel service: owner notification (cancel_request, order number in the body)', cancelSvc.includes("type: 'cancel_request'") && cancelSvc.includes('অর্ডার ক্যান্সেলের অনুরোধ'));
+  const notifSvc = fs.readFileSync(path.join(ROOT, 'apps/api/src/notifications/service.ts'), 'utf8');
+  check('notifications: cancel_request type + order_id column', notifSvc.includes("'cancel_request'") && notifSvc.includes('orderId'));
+  const detectSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/detect-intent.ts'), 'utf8');
+  check('detect-intent: detectCancelRequest (Bengali + Banglish + English, coupon excluded)', detectSrc.includes('export function detectCancelRequest') && detectSrc.includes('ক্যান্সেল') && detectSrc.includes('coupon'));
+  check('detect-intent: detectAcknowledgment + acknowledgmentKind (whole message only)', detectSrc.includes('export function detectAcknowledgment') && detectSrc.includes('export function acknowledgmentKind'));
+  check('prompts: rule 16 (cancel via tool, never update_order to cancelled) + rule 17 (short acknowledgment, no question)', promptsSrc.includes('16. অর্ডার ক্যান্সেল') && promptsSrc.includes('request_order_cancellation') && promptsSrc.includes('17. শুধু স্বীকৃতি'));
+  check('prompts: request_order_cancellation listed in the tool list (rule 7)', promptsSrc.includes('request_order_cancellation {"orderNumber"'));
+  check('agent: deterministic cancel handler (cancel_request_) + ack handler (acknowledged)', agentSrc.includes('detectCancelRequest') && agentSrc.includes('cancel_request_') && agentSrc.includes('detectAcknowledgment') && agentSrc.includes("reason: 'acknowledged'"));
+  check('agent: cancel tool result sent deterministically (verbatim reply)', agentSrc.includes("r.tool === 'request_order_cancellation'") && agentSrc.includes('cancelSent'));
+  check('tools: request_order_cancellation tool registered', toolsSrc.includes('request_order_cancellation: requestOrderCancellation'));
+  check('orders routes: cancel-requests list + approve + decline endpoints', routesSrc.includes("'/cancel-requests'") && routesSrc.includes('/approve') && routesSrc.includes('/decline'));
+  check('orders routes: approve cancels the order + tells the customer (deliverOutgoingMessage)', routesSrc.includes("status = 'cancelled'") && routesSrc.includes('ক্যান্সেল করা হয়েছে'));
+  const declineIdx = routesSrc.indexOf("'/cancel-requests/:id/decline'");
+  const declineSection = declineIdx >= 0 ? routesSrc.slice(declineIdx, declineIdx + 1500) : '';
+  check('orders routes: decline leaves the order unchanged (no auto message)', routesSrc.includes("status = 'declined'") && !declineSection.includes('deliverOutgoingMessage') && !declineSection.includes('sendMessage'));
+  const apiLibSrc = fs.readFileSync(path.join(ROOT, 'apps/web/lib/api.ts'), 'utf8');
+  check('web api: cancelRequests + approveCancelRequest + declineCancelRequest', apiLibSrc.includes('cancelRequests') && apiLibSrc.includes('approveCancelRequest') && apiLibSrc.includes('declineCancelRequest'));
+  check('web orders page: cancel-requests view + pending badge + approve/decline', listSrc.includes('cancel-requests') && listSrc.includes('cancelPending') && listSrc.includes('decideCancel'));
+  const panel2Src = fs.readFileSync(path.join(ROOT, 'apps/web/components/OrderDetailPanel.tsx'), 'utf8');
+  check('web panel: pending cancel-request notice + approve/decline for this order', panel2Src.includes('cancelReq') && panel2Src.includes('decideCancel'));
+
   // ---------- Boot 1: full order flow (PGlite, demo mode) ----------
   const stamp = Date.now();
   const port = 4024;
@@ -429,6 +460,83 @@ token = signup.data?.token ?? '';
       return hit ? hit.body : null;
     });
     check('boot 1: memory — no orders → AI says honestly there is no order yet', !!noFound, (noFound ?? '').slice(0, 200));
+
+    // 13) ORDER CANCELLATION — request → owner notification → owner
+    // approval (never instant). The customer has ASI-0001 + ASI-0002,
+    // both pending; the most recent cancellable order is ASI-0002.
+    // (sendAndGetLatestOut waits for a NEW outgoing reply after the
+    // ask, so the queue has processed the message before we check.)
+    async function sendAndGetLatestOut(text) {
+      const before = (await threadOut(api, convId)).out.length;
+      await sendWebchat(api, 'site-ordmgmt', 'wc-ordmgmt-1', 'Order Test Customer', text);
+      return pollFor(async () => {
+        const { out } = await threadOut(api, convId);
+        return out.length > before ? (out[out.length - 1]?.body ?? null) : null;
+      });
+    }
+    const cancelAsk = await sendWebchat(api, 'site-ordmgmt', 'wc-ordmgmt-1', 'Order Test Customer', 'অর্ডার ক্যান্সেল করুন');
+    check('boot 1: cancel — ask accepted', cancelAsk.status === 200, `status=${cancelAsk.status}`);
+    const cancelReply = await pollFor(async () => {
+      const { out } = await threadOut(api, convId);
+      const hit = out.find((m) => (m.body ?? '').includes('প্রতিনিধির কাছে'));
+      return hit ? hit.body : null;
+    });
+    check('boot 1: cancel — professional reply ("প্রতিনিধির কাছে অর্ডার ক্যান্সেলের জন্য অনুরোধ করছি")', !!cancelReply && cancelReply.includes('অর্ডার ক্যান্সেলের জন্য অনুরোধ করছি'), (cancelReply ?? '').slice(0, 200));
+    const cancelList1 = await api('/api/orders/cancel-requests');
+    const pendingReq = (cancelList1.data?.requests ?? []).find((r) => r.status === 'pending');
+    check('boot 1: cancel — one PENDING request created (latest order ASI-0002)', !!pendingReq && pendingReq.order_number === 'ASI-0002' && cancelList1.data?.pendingCount === 1, JSON.stringify(cancelList1.data ?? {}));
+    const notifs = await api('/api/notifications');
+    const cancelNotif = (notifs.data?.notifications ?? []).find((n) => n.type === 'cancel_request');
+    check('boot 1: cancel — owner notification (bell) with the order number', !!cancelNotif && (cancelNotif.body ?? '').includes('ASI-0002'), JSON.stringify(cancelNotif ?? {}));
+    const order2AfterAsk = await api(`/api/orders/${pendingReq?.order_id ?? ''}`);
+    check('boot 1: cancel — the order is NOT cancelled yet (still pending)', order2AfterAsk.data?.order?.status === 'pending', `status=${order2AfterAsk.data?.order?.status}`);
+    // Repeat ask — no duplicate request.
+    await sendWebchat(api, 'site-ordmgmt', 'wc-ordmgmt-1', 'Order Test Customer', 'অর্ডার ক্যান্সেল করুন');
+    const alreadyReply = await pollFor(async () => {
+      const { out } = await threadOut(api, convId);
+      const hit = out.find((m) => (m.body ?? '').includes('ইতিমধ্যে'));
+      return hit ? hit.body : null;
+    });
+    check('boot 1: cancel — repeat ask gets "ইতিমধ্যে" (already sent)', !!alreadyReply, (alreadyReply ?? '').slice(0, 200));
+    const cancelList2 = await api('/api/orders/cancel-requests');
+    check('boot 1: cancel — still ONE pending request (no duplicate)', cancelList2.data?.pendingCount === 1, JSON.stringify(cancelList2.data ?? {}));
+    // Owner approves → order cancelled + customer told.
+    const approve = await api(`/api/orders/cancel-requests/${pendingReq.id}/approve`, { method: 'POST', body: {} });
+    check('boot 1: cancel — owner approves → order cancelled + customer told (sent)', approve.status === 200 && approve.data?.order?.status === 'cancelled' && approve.data?.sent === true, `status=${approve.status} ${JSON.stringify(approve.data ?? {}).slice(0, 200)}`);
+    const cancelledMsg = await pollFor(async () => {
+      const { out } = await threadOut(api, convId);
+      const hit = out.find((m) => (m.body ?? '').includes('ক্যান্সেল করা হয়েছে'));
+      return hit ? hit.body : null;
+    });
+    check('boot 1: cancel — customer got the cancellation message', !!cancelledMsg, (cancelledMsg ?? '').slice(0, 200));
+    // Decline: a new request for ASI-0001, owner declines → order unchanged.
+    const secondAskReply = await sendAndGetLatestOut('অর্ডার ক্যান্সেল করুন');
+    check('boot 1: cancel — second ask gets the professional reply again', !!secondAskReply && secondAskReply.includes('প্রতিনিধির কাছে'), (secondAskReply ?? '').slice(0, 200));
+    const cancelList3 = await api('/api/orders/cancel-requests');
+    const pendingReq2 = (cancelList3.data?.requests ?? []).find((r) => r.status === 'pending');
+    check('boot 1: cancel — new pending request for the next order (ASI-0001)', !!pendingReq2 && pendingReq2.order_number === 'ASI-0001', JSON.stringify(cancelList3.data ?? {}));
+    const decline = await api(`/api/orders/cancel-requests/${pendingReq2.id}/decline`, { method: 'POST', body: {} });
+    check('boot 1: cancel — owner declines → 200, request declined', decline.status === 200 && decline.data?.request?.status === 'declined', `status=${decline.status}`);
+    const order1AfterDecline = await api(`/api/orders/${orderId}`);
+    check('boot 1: cancel — declined order stays pending (unchanged)', order1AfterDecline.data?.order?.status === 'pending', `status=${order1AfterDecline.data?.order?.status}`);
+    // Cancel on an already-cancelled order → honest reply, no request.
+    await api(`/api/orders/${orderId}/status`, { method: 'PATCH', body: { status: 'cancelled' } });
+    const alreadyCancelledReply = await sendAndGetLatestOut('অর্ডার ক্যান্সেল করুন');
+    check('boot 1: cancel — already-cancelled order → honest reply, no request', !!alreadyCancelledReply && alreadyCancelledReply.includes('ইতিমধ্যে ক্যান্সেল করা হয়েছে'), (alreadyCancelledReply ?? '').slice(0, 200));
+    const cancelList4 = await api('/api/orders/cancel-requests');
+    check('boot 1: cancel — no pending request after the already-cancelled ask', cancelList4.data?.pendingCount === 0, JSON.stringify(cancelList4.data ?? {}));
+
+    // 14) PROFESSIONAL ACKNOWLEDGMENTS — "OK" / "ঠিক আছে" / "ধন্যবাদ"
+    // get a SHORT polite reply, no question, no product push. (A normal
+    // product question right after still gets a full reply — no regression.)
+    const ackOk = await sendAndGetLatestOut('OK');
+    check('boot 1: ack — "OK" → short polite acknowledgment, NO question, NO product push', !!ackOk && ackOk.includes('ঠিক আছে') && !ackOk.includes('?') && !/জিন্স|শার্ট|টি-শার্ট|প্যান্ট|Jeans|Shirt/.test(ackOk), (ackOk ?? '').slice(0, 200));
+    const ackThik = await sendAndGetLatestOut('ঠিক আছে');
+    check('boot 1: ack — "ঠিক আছে" → same short acknowledgment', !!ackThik && ackThik.includes('ঠিক আছে') && !ackThik.includes('?'), (ackThik ?? '').slice(0, 200));
+    const ackThanks = await sendAndGetLatestOut('ধন্যবাদ');
+    check('boot 1: ack — "ধন্যবাদ" → "আপনাকেও ধন্যবাদ", NO question', !!ackThanks && ackThanks.includes('আপনাকেও ধন্যবাদ') && !ackThanks.includes('?'), (ackThanks ?? '').slice(0, 200));
+    const priceAfterAck = await sendAndGetLatestOut('জিন্সের দাম কত?');
+    check('boot 1: ack — a normal price question still gets a full reply (no regression)', !!priceAfterAck && /৫০০|500|জিন্স|Jeans/.test(priceAfterAck), (priceAfterAck ?? '').slice(0, 200));
   } finally {
     run1.stop();
     await sleep(2000);
@@ -446,6 +554,20 @@ token = signup.data?.token ?? '';
   check('driver 1: AI order delivery charge is Dhaka ৳100', Number(drvJson?.deliveryChargePaisa) === 10000, `charge=${drvJson?.deliveryChargePaisa ?? ''}`);
   check('driver 1: REGRESSION AI order recipient is Rina (orders.customer_name)', drvJson?.orderCustomerName === 'Rina', `customer_name=${drvJson?.orderCustomerName ?? ''}`);
   check('driver 1: REGRESSION AI order does NOT rename the customer', drvJson?.customerNameAfter === 'Order Test Customer', `name=${drvJson?.customerNameAfter ?? ''}`);
+
+  // ---------- Driver 3: request_order_cancellation tool (same PGlite data dir) ----------
+  // The AI tool path (for phrasings the deterministic detector misses):
+  // first ask creates the request, repeat ask is already_pending, and
+  // delivered / cancelled orders are refused honestly with no request.
+  const cancelDrv = await runDriver('cancel-driver.ts', dataDir, [workspaceId, customerId, convId]);
+  let cancelJson = null;
+  try { cancelJson = JSON.parse((cancelDrv.out.match(/\{[\s\S]*\}/) ?? [''])[0] || 'null'); } catch { /* not JSON */ }
+  check('driver 3: cancel tool runs', cancelDrv.code === 0 && !!cancelJson && !cancelJson.error, `code=${cancelDrv.code} ${cancelDrv.err.slice(-300)}`);
+  check('driver 3: first ask → created + professional reply ("প্রতিনিধির কাছে")', cancelJson?.first?.cancelOutcome === 'created' && typeof cancelJson?.first?.replyText === 'string' && cancelJson.first.replyText.includes('প্রতিনিধির কাছে'), JSON.stringify(cancelJson?.first ?? {}));
+  check('driver 3: repeat ask → already_pending (no duplicate request)', cancelJson?.second?.cancelOutcome === 'already_pending', JSON.stringify(cancelJson?.second ?? {}));
+  check('driver 3: delivered order → already_delivered (honest, no request)', cancelJson?.delivered?.cancelOutcome === 'already_delivered' && (cancelJson?.delivered?.replyText ?? '').includes('ডেলিভার হয়ে গেছে'), JSON.stringify(cancelJson?.delivered ?? {}));
+  check('driver 3: cancelled order → already_cancelled (honest, no request)', cancelJson?.cancelled?.cancelOutcome === 'already_cancelled' && (cancelJson?.cancelled?.replyText ?? '').includes('ইতিমধ্যে ক্যান্সেল করা হয়েছে'), JSON.stringify(cancelJson?.cancelled ?? {}));
+  check('driver 3: exactly ONE request row exists (the first ask only)', (cancelJson?.requestStatuses ?? []).length === 1 && cancelJson.requestStatuses[0] === 'pending', JSON.stringify(cancelJson?.requestStatuses ?? []));
 
   // ---------- Driver 2: auto re-engagement follow-up (same PGlite data dir) ----------
   // Six backdated scenarios; the driver schedules twice (no duplicates)

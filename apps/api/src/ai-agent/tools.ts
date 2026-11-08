@@ -6,6 +6,7 @@
  */
 import { buildBillText, buildConfirmationText } from '../orders/bill';
 import { resolveOrderContact } from '../orders/contact';
+import { requestOrderCancellation as requestOrderCancellationService } from '../orders/cancel';
 import { findUnknownPlaceNames, unknownPlaceAskLine } from '../orders/bangladesh';
 import { newInvoiceToken, nextOrderNumber } from '../orders/order-helpers';
 import { config } from '../config';
@@ -312,6 +313,38 @@ const updateOrder: ToolFn = async (db, workspaceId, args) => {
 };
 
 /**
+ * 4b. Request an order cancellation — the ONLY way the AI handles a
+ * cancel. The AI NEVER cancels an order itself (update_order cannot
+ * move an order to 'cancelled' — see tool 4). This tool creates a
+ * PENDING cancel request + an owner notification (bell + order view)
+ * and returns the exact professional reply for the customer
+ * ("আমরা প্রতিনিধির কাছে অর্ডার ক্যান্সেলের জন্য অনুরোধ করছি") — the
+ * order stays in its current status until the owner approves it.
+ * Delivered / already-cancelled orders get an honest reply and NO
+ * request. A repeat ask returns the existing pending request.
+ */
+const requestOrderCancellation: ToolFn = async (db, workspaceId, args) => {
+  const customerId = asString(args.customerId);
+  const conversationId = asString(args.conversationId) || null;
+  if (!customerId) return { error: 'request_order_cancellation needs customerId' };
+  const result = await requestOrderCancellationService(db, workspaceId, {
+    customerId,
+    conversationId,
+    reason: asString(args.reason),
+    orderNumber: asString(args.orderNumber) || null,
+  });
+  return {
+    cancelOutcome: result.outcome,
+    cancelRequestCreated: result.created,
+    requestId: result.requestId,
+    orderId: result.orderId,
+    orderNumber: result.orderNumber,
+    orderStatus: result.orderStatus,
+    replyText: result.replyText,
+  };
+};
+
+/**
  * 5. Coupons — Phase 2: validate a coupon row if one exists, otherwise say
  * coupons are not available. NEVER invent a discount.
  */
@@ -412,6 +445,7 @@ export const tools: Record<string, ToolFn> = {
   send_product_photos: sendProductPhotos,
   create_order: createOrder,
   update_order: updateOrder,
+  request_order_cancellation: requestOrderCancellation,
   apply_coupon: applyCoupon,
   check_stock: checkStock,
   track_parcel: trackParcel,
