@@ -44,6 +44,7 @@ import { setupRouter } from './setup/routes';
 import { aiProvidersRouter } from './ai-providers/routes';
 import { ownerRouter } from './owner/routes';
 import { notificationsRouter } from './notifications/routes';
+import { deliveryChargesRouter } from './delivery-charges/routes';
 import { processOwnerWalletDeductions } from './owner/sweep';
 import { processDueHandovers } from './handover/engine';
 import { cronRouter } from './cron/routes';
@@ -143,6 +144,7 @@ app.use('/api', teamRouter); // /api/team/invites
 app.use('/api', setupRouter); // /api/setup/*
 app.use('/api', aiProvidersRouter); // /api/ai-providers (get + select)
 app.use('/api/notifications', notificationsRouter); // /api/notifications (header bell — owner escalation alerts)
+app.use('/api/delivery-charges', deliveryChargesRouter); // /api/delivery-charges (owner-set delivery charges per zone)
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 

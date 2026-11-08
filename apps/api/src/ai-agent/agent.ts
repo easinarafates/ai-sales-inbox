@@ -39,6 +39,7 @@
 import { pool, query, queryOne } from '../db/pool';
 import { checkAiReplyAllowance, UPGRADE_NOTICE, type AiReplyAllowance } from '../subscriptions/service';
 import { buildUserPrompt, SYSTEM_PROMPT, type AgentContext } from './prompts';
+import { deliveryChargeSummaryText, getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import { addressingLine, genderSalutation, normalizeCustomerGender, type CustomerGender } from '../customers/gender';
 import { runTool, type ToolDb } from './tools';
 import {
@@ -479,6 +480,8 @@ async function runDemoReply(
   knowledge: { title: string | null; body: string }[],
   allowance: AiReplyAllowance,
   gender: CustomerGender = 'unknown',
+  /** Requirement C: the owner's configured delivery charges (one Bengali line). */
+  deliveryChargeSummary = '',
 ): Promise<ProcessBatchResult> {
   const text = batchedMessages.map((m) => m.body).join(' ');
   const keywords = demoKeywords(text);
@@ -514,9 +517,11 @@ async function runDemoReply(
       items: [{ productId: product.id, quantity: 1 }],
     });
     if (typeof created.orderId === 'string') {
+      // Requirement B: the short confirmation (name, phone, address,
+      // items, delivery charge, total, "অর্ডার কনফার্ম করা হলো") — the
+      // exact text the tool built, not a reworded reply.
       reply =
-        `${DEMO_LABEL}আপনার অর্ডার তৈরি হয়েছে! ✅\n` +
-        `${String(created.billText ?? '')}\nশীঘ্রই আমরা আপনার সাথে যোগাযোগ করবো। ধন্যবাদ!`;
+        `${DEMO_LABEL}${String(created.confirmationText ?? created.billText ?? '')}`;
     } else {
       reply = `${DEMO_LABEL}দুঃখিত, অর্ডারটি তৈরি করা যায়নি। একজন মানুষ শীঘ্রই আপনাকে সাহায্য করবে।`;
       confidence = 0.5;
@@ -552,24 +557,35 @@ async function runDemoReply(
     const list = matched.map((p) => `• ${p.name} — ${taka(p.pricePaisa)} (${p.stock > 0 ? 'স্টকে আছে' : 'স্টক শেষ'})`).join('\n');
     reply = `${DEMO_LABEL}আপনার প্রশ্নের সাথে মিলে এমন প্রোডাক্টগুলো:\n${list}\nকোনটি সম্পর্কে জানতে চান?`;
   } else {
-    // Knowledge book: answer only from a stored knowledge item.
-    const hit = knowledge.find((k) =>
-      keywords.some((kw) => (k.title ?? '').includes(kw) || k.body.includes(kw)),
-    );
-    if (hit) {
-      reply = `${DEMO_LABEL}${hit.body}`;
-      confidence = 0.8;
+    // Requirement C: a delivery-charge question is answered from the
+    // owner's CONFIGURED charges, never the knowledge book (the taught
+    // knowledge item goes stale when the owner changes the charges).
+    const asksDeliveryCharge =
+      (/ডেলিভারি/i.test(text) && /চার্জ|কত|টাকা/i.test(text)) ||
+      (/delivery/i.test(text) && /charge|koto|cost|how much/i.test(text));
+    if (asksDeliveryCharge && deliveryChargeSummary) {
+      reply = `${DEMO_LABEL}${deliveryChargeSummary}`;
+      confidence = 0.9;
     } else {
-      reply = `${DEMO_LABEL}দুঃখিত, এই প্রশ্নের উত্তর আমার কাছে নেই। একজন মানুষ শীঘ্রই আপনাকে উত্তর দেবে। ধন্যবাদ!`;
-      confidence = 0.5;
-      await recordUnanswered(workspaceId, text);
-      await runTool(toolDb, workspaceId, 'create_ticket', {
-        conversationId,
-        customerId: customerId ?? '',
-        reason: `Demo mode could not answer: ${text.slice(0, 200)}`,
-      });
-      // Can't-answer fallback reply — the chat needs a human.
-      await escalateConversation(workspaceId, conversationId, 'cant_answer');
+      // Knowledge book: answer only from a stored knowledge item.
+      const hit = knowledge.find((k) =>
+        keywords.some((kw) => (k.title ?? '').includes(kw) || k.body.includes(kw)),
+      );
+      if (hit) {
+        reply = `${DEMO_LABEL}${hit.body}`;
+        confidence = 0.8;
+      } else {
+        reply = `${DEMO_LABEL}দুঃখিত, এই প্রশ্নের উত্তর আমার কাছে নেই। একজন মানুষ শীঘ্রই আপনাকে উত্তর দেবে। ধন্যবাদ!`;
+        confidence = 0.5;
+        await recordUnanswered(workspaceId, text);
+        await runTool(toolDb, workspaceId, 'create_ticket', {
+          conversationId,
+          customerId: customerId ?? '',
+          reason: `Demo mode could not answer: ${text.slice(0, 200)}`,
+        });
+        // Can't-answer fallback reply — the chat needs a human.
+        await escalateConversation(workspaceId, conversationId, 'cant_answer');
+      }
     }
   }
 
@@ -1041,7 +1057,7 @@ export async function processBatch(
     }
   }
 
-  const [{ rows: historyRows }, { rows: openOrders }, { rows: knowledge }, { rows: products }] = await Promise.all([
+  const [{ rows: historyRows }, { rows: openOrders }, { rows: knowledge }, { rows: products }, deliveryRules] = await Promise.all([
     query<{ direction: string; body: string | null }>(
       workspaceId,
       `SELECT direction, body FROM messages WHERE workspace_id = $1 AND conversation_id = $2
@@ -1064,6 +1080,13 @@ export async function processBatch(
       'SELECT id, name, price_paisa, stock FROM products WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 20',
       [workspaceId],
     ),
+    // Requirement C: the owner's configured delivery charges (seeded with
+    // the ৳100/৳130 defaults on first use). The AI quotes these, never a
+    // hardcoded number.
+    getDeliveryChargeRules(
+      { query: (text: string, params?: unknown[]) => query(workspaceId, text, params ?? []) },
+      workspaceId,
+    ),
   ]);
 
   // Gender-aware addressing: the stored gender (inferred from the name,
@@ -1080,6 +1103,7 @@ export async function processBatch(
     knowledge,
     products: products.map((p) => ({ id: p.id, name: p.name, pricePaisa: Number(p.price_paisa), stock: Number(p.stock) })),
     messages: batchedMessages.map((m) => m.body),
+    deliveryCharges: deliveryChargeSummaryText(deliveryRules),
   };
 
   // PRODUCT-PUSH LIMIT (2026-11-08): don't dump products at the customer
@@ -1131,6 +1155,7 @@ export async function processBatch(
       ctx.knowledge,
       allowance,
       customerGender,
+      ctx.deliveryCharges ?? '',
     );
     // Alert a human that the real AI provider is down / not configured.
     await runTool(toolDb, workspaceId, 'create_ticket', {
@@ -1164,6 +1189,32 @@ export async function processBatch(
       results.push({ tool: call.tool, result });
     }
     toolResultAmounts = toolResultAmountsFrom(results);
+    // Requirement B: a successful create_order gets the SHORT confirmation
+    // message (name, phone, address, items, delivery charge, total,
+    // "অর্ডার কনফার্ম করা হলো") sent deterministically — the exact text
+    // the tool built, not a reworded LLM reply. Sending it here skips the
+    // second LLM call (saves tokens) and guarantees the format. If the
+    // send fails, fall through to the normal second-call path so the
+    // customer still gets a reply.
+    const createdOrder = results.find(
+      (r) =>
+        r.tool === 'create_order' &&
+        typeof (r.result as Record<string, unknown> | null)?.orderId === 'string' &&
+        typeof (r.result as Record<string, unknown> | null)?.confirmationText === 'string',
+    );
+    if (createdOrder) {
+      const confirmationText = String((createdOrder.result as Record<string, unknown>).confirmationText);
+      const confirmSent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, confirmationText);
+      if (confirmSent.sent) {
+        const confirmProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens);
+        const charged = await chargeForReply(
+          workspaceId, conversationId, inputTokens, outputTokens, replyCost, provider, allowance.mode === 'included',
+          { model: ai.model, providerCostPaisa: confirmProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null },
+        );
+        return { replied: true, reason: 'order_confirmed', confidence: 0.95, costPaisa: charged ? replyCost : 0 };
+      }
+      // Confirmation send failed — fall through to the second LLM call.
+    }
     // Second-call prompt is SHORT on purpose: the full prompt (~2700
     // tokens) doubles input tokens and burns quota on the follow-up, and
     // a 429/503 there used to send the model's placeholder reply as-is.

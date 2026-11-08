@@ -29,6 +29,10 @@ export interface OrderForBooking {
   customerName?: string | null;
   customerPhone?: string | null;
   customerAddress?: string | null;
+  /** Requirement C: the delivery charge (paisa) from the owner's configured
+   * rules, resolved by the caller. When absent, the hardcoded fallback
+   * below (Dhaka ৳100 / outside ৳130) is used. */
+  deliveryChargePaisa?: number;
 }
 
 export interface BookingResult {
@@ -145,16 +149,19 @@ export class PathaoCourierProvider implements CourierProvider {
  */
 
 /** Shop delivery-charge rule (also taught to the AI in knowledge_items):
- * Dhaka → ৳100, everywhere else in Bangladesh → ৳130; ৳130 when unclear. */
+ * Dhaka → ৳100, everywhere else in Bangladesh → ৳130; ৳130 when unclear.
+ * This is only the FALLBACK — the configured rules (delivery-charges
+ * service) win whenever the caller resolved them (requirement C). */
 export function deliveryChargeForAddress(address: string | null | undefined): number {
   const a = (address ?? '').toLowerCase();
   if (a.includes('dhaka') || a.includes('ঢাকা')) return 100;
   return 130;
 }
 
-/** COD amount in BDT: order product total + delivery charge. */
+/** COD amount in BDT: order product total + delivery charge (configured when given). */
 export function codAmountBdt(order: OrderForBooking): number {
-  return Math.round(Number(order.totalPaisa) / 100) + deliveryChargeForAddress(order.customerAddress);
+  const delivery = typeof order.deliveryChargePaisa === 'number' ? Math.round(order.deliveryChargePaisa / 100) : deliveryChargeForAddress(order.customerAddress);
+  return Math.round(Number(order.totalPaisa) / 100) + delivery;
 }
 
 /** Normalize a Bangladeshi mobile number to 11-digit 01XXXXXXXXX, or null. */

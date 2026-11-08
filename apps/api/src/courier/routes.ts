@@ -25,6 +25,7 @@ import {
   SteadfastCourierProvider,
   type OrderForBooking,
 } from './provider';
+import { getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import { processDueShipmentChecks } from './tracking-check';
 
 export const courierRouter = Router();
@@ -110,6 +111,14 @@ courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) 
     : null;
   // The order snapshot (taken when the order was placed) is the delivery
   // contact the courier must use; the customer row is only a fallback.
+  const deliveryAddress = order.delivery_address ?? customer?.address ?? null;
+  // Requirement C: the COD includes the delivery charge from the owner's
+  // configured rules (not the hardcoded ৳100/৳130).
+  const chargeRules = await getDeliveryChargeRules(
+    { query: (text: string, params?: unknown[]) => query(workspaceId, text, params ?? []) },
+    workspaceId,
+  );
+  const { chargePaisa: deliveryChargePaisa } = resolveDeliveryCharge(chargeRules, deliveryAddress);
   const orderForBooking: OrderForBooking = {
     id: order.id,
     customerId: order.customer_id,
@@ -117,7 +126,8 @@ courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) 
     status: order.status,
     customerName: order.customer_name ?? customer?.name ?? null,
     customerPhone: order.customer_phone ?? customer?.phone ?? null,
-    customerAddress: order.delivery_address ?? customer?.address ?? null,
+    customerAddress: deliveryAddress,
+    deliveryChargePaisa,
   };
 
   const provider = getCourierProvider();

@@ -41,3 +41,30 @@ export function buildBillText(orderId: string, lines: BillLine[], totalPaisa: nu
     delivery,
   ].join('\n');
 }
+
+/**
+ * Order confirmation message (requirement B, 2026-11-08) — the SHORT
+ * message the AI sends in the Messenger chat when the order is confirmed.
+ * Compact, a few lines: customer name, delivery address, phone number,
+ * what was ordered, the delivery charge, the total amount to pay, and
+ * "অর্ডার কনফার্ম করা হলো". The total is the grand total (products +
+ * delivery charge) — the amount the customer pays on delivery.
+ */
+export function buildConfirmationText(
+  lines: BillLine[],
+  totalPaisa: number,
+  deliveryChargePaisa: number,
+  contact: BillContact,
+): string {
+  const items = lines.map((l) => `• ${l.name} × ${l.quantity} — ${formatTaka(l.pricePaisa * l.quantity)}`).join('\n');
+  const grandTotal = totalPaisa + deliveryChargePaisa;
+  return [
+    'অর্ডার কনফার্ম করা হলো ✅',
+    `নাম: ${contact.name ?? '—'}`,
+    `ফোন: ${contact.phone ?? '—'}`,
+    `ঠিকানা: ${contact.address ?? '—'}`,
+    items,
+    `ডেলিভারি চার্জ: ${formatTaka(deliveryChargePaisa)}`,
+    `মোট: ${formatTaka(grandTotal)}`,
+  ].join('\n');
+}

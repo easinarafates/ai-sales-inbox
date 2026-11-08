@@ -25,6 +25,15 @@
  * reported as missing; the UI shows 'দেওয়া হয়নি' / 'Not provided' for it.
  */
 
+import {
+  assessAddressCompleteness,
+  fullAddressAskLine,
+  invalidPhoneAskLine,
+  missingAddressAskLine,
+  normalizeBdPhone,
+  type MissingAddressPiece,
+} from './bangladesh';
+
 export interface ContactDb {
   query<T = Record<string, unknown>>(text: string, params?: unknown[]): Promise<{ rows: T[]; rowCount: number }>;
 }
@@ -47,6 +56,19 @@ export interface OrderContact {
   missingAddress: boolean;
 }
 
+export interface ResolveOrderContactOptions {
+  /**
+   * AI orders only: strict contact validation. Refuses when the phone is
+   * not a valid Bangladeshi mobile number (11 digits, starts with 01),
+   * or when the address is present but not complete enough to deliver
+   * (no district, or no upazila/area detail). "Dhaka" alone is not
+   * enough. The manual POST /api/orders path does NOT set this (the
+   * owner may create an order with a partial address and fill it in
+   * later) — it only requires a phone + address to be present.
+   */
+  requireValidContact?: boolean;
+}
+
 function asNonEmpty(v: unknown, maxLen: number): string | null {
   if (typeof v !== 'string') return null;
   const t = v.trim();
@@ -59,7 +81,19 @@ export async function resolveOrderContact(
   workspaceId: string,
   customerId: string,
   input: OrderContactInput,
-): Promise<{ contact: OrderContact | null; error?: string; missingPhone?: boolean; missingAddress?: boolean }> {
+  options?: ResolveOrderContactOptions,
+): Promise<{
+  contact: OrderContact | null;
+  error?: string;
+  missingPhone?: boolean;
+  missingAddress?: boolean;
+  /** Requirement A: which address pieces are missing (district / area). */
+  missingAddressParts?: MissingAddressPiece[];
+  /** Phone refinement: the phone given is not a valid Bangladeshi mobile number. */
+  invalidPhone?: boolean;
+  /** The invalid phone number as given (for the ask-again message). */
+  givenPhone?: string | null;
+}> {
   const { rows } = await db.query<{
     id: string;
     name: string | null;
@@ -98,9 +132,53 @@ export async function resolveOrderContact(
     };
   }
 
+  // Phone refinement (requirement A, AI orders only): a Bangladeshi
+  // mobile number is 11 digits starting with 01. A wrong-length number
+  // (10 or 8 digits) or one not starting with 01 is INVALID — never
+  // accept it, never confirm an order with it. The AI says so politely
+  // and asks for the correct 11-digit number. An invalid phone is never
+  // stored. (The manual order path does not enforce this.)
+  const normalizedPhone = options?.requireValidContact ? normalizeBdPhone(phone) : (phone as string | null);
+  if (options?.requireValidContact && !normalizedPhone) {
+    return {
+      contact: null,
+      error: `Cannot create the order yet — the phone number "${phone}" is not a valid Bangladeshi mobile number (it must be 11 digits starting with 01). Tell the customer politely that the number is not correct and ask for the correct 11-digit number in one short Bengali line: "${invalidPhoneAskLine()}" Do not confirm the order until a valid number is given.`,
+      missingPhone: false,
+      missingAddress: false,
+      invalidPhone: true,
+      givenPhone: phone,
+    };
+  }
+
+  // Requirement A (AI orders only): the address must be complete enough
+  // to deliver — a district AND an upazila/area detail. "Dhaka" alone
+  // has no area; "বাসা ১২, রোড ৫" with no district has no district.
+  // Refuse with the exact missing piece(s) so the AI asks for JUST that
+  // piece in one short line, instead of confirming an undeliverable order.
+  // A bare district name ("Dhaka") gets the FULL-address ask instead.
+  if (options?.requireValidContact) {
+    const completeness = assessAddressCompleteness(address);
+    if (!completeness.complete) {
+      const askLine = completeness.bareDistrict
+        ? fullAddressAskLine()
+        : missingAddressAskLine(completeness.missing);
+      return {
+        contact: null,
+        error: `Cannot create the order yet — the delivery address is incomplete (missing: ${completeness.missing.join(', ')}). Ask the customer for JUST the missing piece in one short Bengali line: "${askLine}" Do not confirm the order until the address is complete.`,
+        missingPhone: false,
+        missingAddress: true,
+        missingAddressParts: completeness.missing,
+      };
+    }
+  }
+
   // Store what the customer just gave on their row, so the next order and
-  // the Inbox already know it. Name: never overwrite the owner's hand
-  // correction (name_manually_set) — the owner's correction is final.
+  // the Inbox already know it. The phone is stored NORMALIZED (11-digit
+  // 01XXXXXXXXX) — a +880/880/spaced form is stored in its canonical
+  // form. Name: never overwrite the owner's hand correction
+  // (name_manually_set) — the owner's correction is final. The name is
+  // never a blocker: a given name is used as-is, and a missing name
+  // never stops an order (the customer's Facebook name is used instead).
   if (givenPhone || givenAddress || (givenName && !stored.name_manually_set)) {
     await db.query(
       `UPDATE customers SET
@@ -109,14 +187,14 @@ export async function resolveOrderContact(
          name = CASE WHEN $4::boolean THEN name ELSE COALESCE($5, name) END,
          updated_at = now()
        WHERE workspace_id = $1 AND id = $6`,
-      [workspaceId, givenPhone, givenAddress, stored.name_manually_set === true, givenName, customerId],
+      [workspaceId, givenPhone ? normalizedPhone : null, givenAddress, stored.name_manually_set === true, givenName, customerId],
     );
   }
 
   return {
     contact: {
       customerName: name,
-      customerPhone: phone,
+      customerPhone: normalizedPhone,
       deliveryAddress: address,
       missingPhone: false,
       missingAddress: false,

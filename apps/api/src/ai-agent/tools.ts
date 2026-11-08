@@ -4,8 +4,10 @@
  * Every tool filters by workspace_id. No tool ever invents a price, stock
  * level, discount or delivery time — values come only from the tables.
  */
-import { buildBillText } from '../orders/bill';
+import { buildBillText, buildConfirmationText } from '../orders/bill';
 import { resolveOrderContact } from '../orders/contact';
+import { findUnknownPlaceNames, unknownPlaceAskLine } from '../orders/bangladesh';
+import { getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import { decrementStockForOrderItems } from '../products/stock';
 import { matchProductByImage } from './tools-image-match';
 import { linkOrderToAttribution } from '../analytics/attribution';
@@ -126,16 +128,34 @@ const createOrder: ToolFn = async (db, workspaceId, args) => {
   const conversationId = asString(args.conversationId) || null;
   const items = Array.isArray(args.items) ? args.items : [];
   if (!customerId || items.length === 0) return { error: 'create_order needs customerId and items' };
-  // Who is this order for? Refuse without a phone + delivery address.
-  const { contact, error, missingPhone, missingAddress } = await resolveOrderContact(db, workspaceId, customerId, {
+  // Who is this order for? Refuse without a phone + delivery address —
+  // and (AI orders only, requirement A) refuse when the address is
+  // present but not complete enough to deliver (no district, or no
+  // upazila/area detail). The missing piece is named so the AI asks
+  // for JUST that piece in one short line.
+  const { contact, error, missingPhone, missingAddress, missingAddressParts, invalidPhone, givenPhone } = await resolveOrderContact(db, workspaceId, customerId, {
     customerName: args.customerName,
     customerPhone: args.customerPhone,
     deliveryAddress: args.deliveryAddress,
     name: args.name,
     phone: args.phone,
     address: args.address,
-  });
-  if (!contact) return { error: error ?? 'create_order needs the customer phone number and delivery address', missingPhone: missingPhone ?? false, missingAddress: missingAddress ?? false };
+  }, { requireValidContact: true });
+  if (!contact) return { error: error ?? 'create_order needs the customer phone number and delivery address', missingPhone: missingPhone ?? false, missingAddress: missingAddress ?? false, missingAddressParts: missingAddressParts ?? [], invalidPhone: invalidPhone ?? false, givenPhone: givenPhone ?? null };
+  // Light address verification (requirement A refinement): the place
+  // names in the address are checked against the local district/upazila
+  // lists. An unmatched name only earns a polite "please double-check"
+  // prompt — never a hard block. The order is NOT created until the
+  // customer confirms the place (the LLM calls create_order again with
+  // placeConfirmed: true after the customer confirms).
+  const unknownPlaces = findUnknownPlaceNames(contact.deliveryAddress);
+  if (unknownPlaces.length > 0 && args.placeConfirmed !== true) {
+    return {
+      error: `The delivery address names a place that does not match a real Bangladeshi district/upazila: "${unknownPlaces.join(', ')}". Ask the customer to double-check it in one short Bengali line: "${unknownPlaceAskLine(unknownPlaces)}" Do NOT create the order yet. If the customer confirms the place is correct, call create_order again with placeConfirmed: true.`,
+      needsPlaceConfirmation: true,
+      unknownPlaces,
+    };
+  }
   let totalPaisa = 0;
   const lines: { name: string; quantity: number; pricePaisa: number }[] = [];
   const priced: { productId: string; quantity: number; pricePaisa: number }[] = [];
@@ -188,14 +208,24 @@ const createOrder: ToolFn = async (db, workspaceId, args) => {
   } catch (err) {
     console.error('[tool:create_order] stock decrement failed:', (err as Error).message);
   }
+  // Requirement B + C: the order confirmation carries the delivery
+  // charge from the owner's configured rules (never hardcoded) and the
+  // grand total (products + delivery) — the amount the customer pays.
+  const chargeRules = await getDeliveryChargeRules(db, workspaceId);
+  const { chargePaisa: deliveryChargePaisa } = resolveDeliveryCharge(chargeRules, contact.deliveryAddress);
+  const grandTotalPaisa = totalPaisa + deliveryChargePaisa;
+  const confirmationContact = {
+    name: contact.customerName,
+    phone: contact.customerPhone,
+    address: contact.deliveryAddress,
+  };
   return {
     orderId,
     totalPaisa,
-    billText: buildBillText(orderId, lines, totalPaisa, {
-      name: contact.customerName,
-      phone: contact.customerPhone,
-      address: contact.deliveryAddress,
-    }),
+    deliveryChargePaisa,
+    grandTotalPaisa,
+    billText: buildBillText(orderId, lines, totalPaisa, confirmationContact),
+    confirmationText: buildConfirmationText(lines, totalPaisa, deliveryChargePaisa, confirmationContact),
     outOfStock,
     customerName: contact.customerName,
     customerPhone: contact.customerPhone,

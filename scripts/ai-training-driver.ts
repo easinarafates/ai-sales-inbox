@@ -9,8 +9,11 @@
 // No secrets are printed.
 import { pool } from '../apps/api/src/db/pool';
 import { processBatch } from '../apps/api/src/ai-agent/agent';
+import { runTool } from '../apps/api/src/ai-agent/tools';
 import { detectAnger, detectGibberish, detectOffTopic } from '../apps/api/src/inbox/escalation';
-import { detectGreeting, matchShowProduct } from '../apps/api/src/ai-agent/detect-intent';
+import { detectGreeting, detectProductListRequest, matchShowProduct } from '../apps/api/src/ai-agent/detect-intent';
+import { assessAddressCompleteness, findUnknownPlaceNames, normalizeBdPhone } from '../apps/api/src/orders/bangladesh';
+import { getDeliveryChargeRules, resolveDeliveryCharge, setDeliveryChargeRules } from '../apps/api/src/delivery-charges/service';
 
 const [workspaceId, jeansId, tshirtId, shirtId, channelId] = process.argv.slice(2);
 if (!workspaceId || !jeansId || !tshirtId || !shirtId || !channelId) {
@@ -176,6 +179,21 @@ async function main(): Promise<void> {
   ].map((c) => ({ ...c, ok: c.got === c.expected }));
   out.banglishShowUnitAllOk = (out.banglishShowUnit as { ok: boolean }[]).every((c) => c.ok);
 
+  // --- Unit matrix 5: Banglish list-request (must hit the free
+  // deterministic list flow, not fall through to the LLM) ---
+  const listCases: [string, boolean][] = [
+    ['ki ki product ase', true],
+    ['ki ki product ache', true],
+    ['sob product dekhao', true],
+    ['product gulo ki ki', true],
+    ['tomader kache ki ase', true],
+    ['কি কি প্রোডাক্ট আছে?', true],
+    ['জিন্সের দাম কত?', false],
+    ['jins er dam koto', false],
+  ];
+  out.banglishListUnit = listCases.map(([text, expected]) => ({ text: text.slice(0, 30), expected, got: detectProductListRequest(text), ok: detectProductListRequest(text) === expected }));
+  out.banglishListUnitAllOk = (out.banglishListUnit as { ok: boolean }[]).every((c) => c.ok);
+
   // --- Shop knowledge (delivery charge) for the normal-regression flow.
   // Boot 1 already created it via the API; only insert if missing. ---
   await pool.query(
@@ -286,7 +304,7 @@ async function main(): Promise<void> {
   // --- Normal regression via processBatch (demo mode): each stays open + gets a reply ---
   const normalFlows: [string, string][] = [
     ['জিন্সের দাম কত?', '500'],
-    ['ঢাকার বাইরে ডেলিভারি চার্জ কত?', '১৩০'],
+    ['ঢাকার বাইরে ডেলিভারি চার্জ কত?', '130'],
     ['jins ase?', 'Jeans'],
     ['টি-শার্টের স্টক আছে?', 'T-shirt'],
   ];
@@ -302,6 +320,168 @@ async function main(): Promise<void> {
     });
   }
   out.normalFlowsAllOk = (out.normalFlows as { ok: boolean }[]).every((c) => c.ok);
+
+  // --- Order flow (requirements A + B + C): phone, address, place, confirmation, charges ---
+  const toolDb = pool as unknown as Parameters<typeof runTool>[0];
+  const chargeDb = { query: (text: string, params?: unknown[]) => pool.query(text, params as never[]) };
+
+  // Unit: phone validation (11 digits, starts with 01).
+  const phoneCases: [string, string | null][] = [
+    ['01712345678', '01712345678'],
+    ['+8801712345678', '01712345678'],
+    ['8801712345678', '01712345678'],
+    ['01712 345678', '01712345678'],
+    ['0171234567', null], // 10 digits
+    ['17123456', null], // 8 digits
+    ['02123456789', null], // not 01
+    ['017123456789', null], // 12 digits
+    ['', null],
+  ];
+  out.phoneUnit = phoneCases.map(([given, expected]) => ({ given, expected, got: normalizeBdPhone(given), ok: normalizeBdPhone(given) === expected }));
+  out.phoneUnitAllOk = (out.phoneUnit as { ok: boolean }[]).every((c) => c.ok);
+
+  // Unit: address completeness.
+  const addressCases: [string, boolean, boolean][] = [
+    ['Dhaka', false, true], // bare district
+    ['মাগুরা', false, true], // bare district (Bengali)
+    ['বাসা ১২, রোড ৫, ধানমন্ডি, ঢাকা', true, false],
+    ['বাসা ১২, রোড ৫', false, false], // no district
+    ['গ্রাম কাশিনাথপুর, পাবনা', true, false],
+  ];
+  out.addressUnit = addressCases.map(([text, complete, bare]) => {
+    const got = assessAddressCompleteness(text);
+    return { text: text.slice(0, 30), complete: got.complete, bareDistrict: got.bareDistrict, ok: got.complete === complete && got.bareDistrict === bare };
+  });
+  out.addressUnitAllOk = (out.addressUnit as { ok: boolean }[]).every((c) => c.ok);
+
+  // Unit: light place verification (village/house details never flag).
+  const placeCases: [string, string[]][] = [
+    ['বাসা ১২, রোড ৫, ধানমন্ডি, ঢাকা', []],
+    ['গ্রাম কাশিনাথপুর, পাবনা', []],
+    ['বাসা ১২, রোড ৫, মাগুরা, ঢাক্কা', ['ঢাক্কা']],
+    ['বাসা ৫, মাগুরা সদর, মাগুরা', []],
+  ];
+  out.placeUnit = placeCases.map(([text, expected]) => {
+    const got = findUnknownPlaceNames(text);
+    return { text: text.slice(0, 30), expected, got, ok: JSON.stringify(got) === JSON.stringify(expected) };
+  });
+  out.placeUnitAllOk = (out.placeUnit as { ok: boolean }[]).every((c) => c.ok);
+
+  // Tool: create_order with an invalid phone (10 digits) → refuses, no order.
+  {
+    const { customerId, conversationId } = await seedConversation('Order Phone Customer');
+    const r = await runTool(toolDb, workspaceId, 'create_order', {
+      customerId, conversationId,
+      items: [{ productId: jeansId, quantity: 1 }],
+      customerName: 'Order Phone Customer', customerPhone: '0171234567', deliveryAddress: 'বাসা ১২, রোড ৫, ধানমন্ডি, ঢাকা',
+    });
+    const orders = await pool.query('SELECT id FROM orders WHERE workspace_id = $1 AND customer_id = $2', [workspaceId, customerId]);
+    out.orderInvalidPhone = { result: r, orderCount: orders.rows.length, ok: !r.orderId && r.invalidPhone === true && orders.rows.length === 0 };
+  }
+
+  // Tool: create_order with a bare-district address ("Dhaka") → refuses, asks for the FULL address.
+  {
+    const { customerId, conversationId } = await seedConversation('Order Bare Customer');
+    const r = await runTool(toolDb, workspaceId, 'create_order', {
+      customerId, conversationId,
+      items: [{ productId: jeansId, quantity: 1 }],
+      customerName: 'Order Bare Customer', customerPhone: '01712345678', deliveryAddress: 'Dhaka',
+    });
+    const orders = await pool.query('SELECT id FROM orders WHERE workspace_id = $1 AND customer_id = $2', [workspaceId, customerId]);
+    out.orderBareDistrict = { result: r, orderCount: orders.rows.length, ok: !r.orderId && (r.missingAddressParts as string[] | undefined)?.includes('area') === true && orders.rows.length === 0 };
+  }
+
+  // Tool: create_order with an unknown place → needs confirmation, no order; with placeConfirmed → order created.
+  {
+    const { customerId, conversationId } = await seedConversation('Order Place Customer');
+    const r1 = await runTool(toolDb, workspaceId, 'create_order', {
+      customerId, conversationId,
+      items: [{ productId: jeansId, quantity: 1 }],
+      customerName: 'Order Place Customer', customerPhone: '01712345678', deliveryAddress: 'বাসা ১২, রোড ৫, মাগুরা, ঢাক্কা',
+    });
+    const before = await pool.query('SELECT id FROM orders WHERE workspace_id = $1 AND customer_id = $2', [workspaceId, customerId]);
+    const r2 = await runTool(toolDb, workspaceId, 'create_order', {
+      customerId, conversationId,
+      items: [{ productId: jeansId, quantity: 1 }],
+      customerName: 'Order Place Customer', customerPhone: '01712345678', deliveryAddress: 'বাসা ১২, রোড ৫, মাগুরা, ঢাক্কা',
+      placeConfirmed: true,
+    });
+    const after = await pool.query('SELECT id FROM orders WHERE workspace_id = $1 AND customer_id = $2', [workspaceId, customerId]);
+    out.orderUnknownPlace = {
+      first: r1, second: r2, beforeCount: before.rows.length, afterCount: after.rows.length,
+      ok: !r1.orderId && r1.needsPlaceConfirmation === true && before.rows.length === 0 && typeof r2.orderId === 'string' && after.rows.length === 1,
+    };
+  }
+
+  // Tool: valid order → confirmation text (name, phone, address, items, delivery charge, total, "অর্ডার কনফার্ম করা হলো").
+  {
+    const { customerId, conversationId } = await seedConversation('Order Good Customer');
+    const r = await runTool(toolDb, workspaceId, 'create_order', {
+      customerId, conversationId,
+      items: [{ productId: jeansId, quantity: 1 }],
+      customerName: 'Order Good Customer', customerPhone: '01712345678', deliveryAddress: 'বাসা ১২, রোড ৫, ধানমন্ডি, ঢাকা',
+    });
+    const conf = String(r.confirmationText ?? '');
+    out.orderConfirmation = {
+      result: r, confirmationText: conf,
+      ok: typeof r.orderId === 'string'
+        && r.deliveryChargePaisa === 10000 && r.grandTotalPaisa === 60000
+        && conf.includes('অর্ডার কনফার্ম করা হলো') && conf.includes('Order Good Customer')
+        && conf.includes('01712345678') && conf.includes('ধানমন্ডি') && conf.includes('Jeans')
+        && conf.includes('৳100') && conf.includes('৳600'),
+    };
+  }
+
+  // Tool: order without an explicit name → still created (uses the stored/Facebook name), no name fuss.
+  {
+    const { customerId, conversationId } = await seedConversation('Order NoName Customer');
+    const r = await runTool(toolDb, workspaceId, 'create_order', {
+      customerId, conversationId,
+      items: [{ productId: jeansId, quantity: 1 }],
+      customerPhone: '01712345678', deliveryAddress: 'বাসা ১২, রোড ৫, ধানমন্ডি, ঢাকা',
+    });
+    const conf = String(r.confirmationText ?? '');
+    out.orderNoName = {
+      result: r, confirmationText: conf,
+      ok: typeof r.orderId === 'string' && conf.includes('Order NoName Customer') && conf.includes('অর্ডার কনফার্ম করা হলো'),
+    };
+  }
+
+  // Requirement C: set a custom charge → the AI quotes it AND the order total uses it.
+  {
+    // Set inside-Dhaka to ৳150 (was ৳100) for this workspace.
+    await setDeliveryChargeRules(chargeDb, workspaceId, [
+      { scope: 'inside_dhaka', chargePaisa: 15000 },
+      { scope: 'outside_dhaka', chargePaisa: 13000 },
+    ]);
+    const rules = await getDeliveryChargeRules(chargeDb, workspaceId);
+    const resolved = resolveDeliveryCharge(rules, 'বাসা ১২, রোড ৫, ধানমন্ডি, ঢাকা');
+    // The AI (demo mode) quotes the configured charge for a delivery-charge question.
+    const { conversationId: dcConv } = await seedConversation('Charge Customer');
+    const dcResult = await processBatch(workspaceId, dcConv, [{ body: 'ঢাকার ভিতরে ডেলিভারি চার্জ কত?' }]);
+    const dcBodies = await outMessages(dcConv);
+    const dcText = dcBodies.join('\n');
+    // An order for a Dhaka address uses the configured ৳150 charge (500 + 150 = 650).
+    const { customerId, conversationId } = await seedConversation('Order Charge Customer');
+    const r = await runTool(toolDb, workspaceId, 'create_order', {
+      customerId, conversationId,
+      items: [{ productId: jeansId, quantity: 1 }],
+      customerName: 'Order Charge Customer', customerPhone: '01712345678', deliveryAddress: 'বাসা ১২, রোড ৫, ধানমন্ডি, ঢাকা',
+    });
+    out.deliveryChargeCustom = {
+      rules: rules.map((x) => ({ scope: x.scope, chargePaisa: x.chargePaisa })),
+      resolved, dcResult, dcText: dcText.slice(0, 200), orderResult: r,
+      ok: resolved.chargePaisa === 15000
+        && dcResult.replied === true && dcText.includes('150')
+        && typeof r.orderId === 'string' && r.deliveryChargePaisa === 15000 && r.grandTotalPaisa === 65000
+        && String(r.confirmationText ?? '').includes('৳150') && String(r.confirmationText ?? '').includes('৳650'),
+    };
+    // Restore the defaults for the remaining tests.
+    await setDeliveryChargeRules(chargeDb, workspaceId, [
+      { scope: 'inside_dhaka', chargePaisa: 10000 },
+      { scope: 'outside_dhaka', chargePaisa: 13000 },
+    ]);
+  }
 
   console.log('DRIVER_RESULT ' + JSON.stringify(out));
   await pool.end();

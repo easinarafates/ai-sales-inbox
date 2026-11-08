@@ -10,9 +10,11 @@ import {
 } from "@/lib/api";
 import {
   courierApi,
+  deliveryChargesApi,
   shipmentOrderId,
   shipmentTrackingNumber,
   type CourierProviderInfo,
+  type DeliveryChargeRule,
   type Shipment,
   type TrackResult,
 } from "@/lib/courier";
@@ -60,6 +62,14 @@ export default function CourierPage() {
   const [loading, setLoading] = useState(true);
   const [booking, setBooking] = useState(false);
   const [tracking, setTracking] = useState(false);
+  // Delivery charges (owner settings — requirement C): the AI quotes these
+  // and the order total uses them. Defaults: Dhaka ৳100 / outside ৳130.
+  const [insideDhaka, setInsideDhaka] = useState("100");
+  const [outsideDhaka, setOutsideDhaka] = useState("130");
+  const [districtRules, setDistrictRules] = useState<{ district: string; charge: string }[]>([]);
+  const [newDistrict, setNewDistrict] = useState("");
+  const [newDistrictCharge, setNewDistrictCharge] = useState("");
+  const [savingCharges, setSavingCharges] = useState(false);
 
   const shipmentStatusLabel = (s?: string | null) => {
     if (!s) return "—";
@@ -69,20 +79,61 @@ export default function CourierPage() {
 
   const load = useCallback(async () => {
     try {
-      const [orderData, shipmentData, providerData] = await Promise.all([
+      const [orderData, shipmentData, providerData, chargeData] = await Promise.all([
         ordersApi.list(),
         courierApi.listShipments(),
         courierApi.providerInfo().catch(() => null),
+        deliveryChargesApi.list().catch(() => null),
       ]);
       setOrders(asArray(orderData));
       setShipments(shipmentData);
       if (providerData) setProviderInfo(providerData);
+      if (chargeData) applyChargeRules(chargeData.rules || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("courier.loadFailed", "Could not load courier information.", "কুরিয়ার তথ্য লোড করা যায়নি।"));
     } finally {
       setLoading(false);
     }
   }, [t]);
+
+  const applyChargeRules = (rules: DeliveryChargeRule[]) => {
+    const inside = rules.find((r) => r.scope === "inside_dhaka");
+    const outside = rules.find((r) => r.scope === "outside_dhaka");
+    if (inside) setInsideDhaka(String(Math.round(inside.chargePaisa / 100)));
+    if (outside) setOutsideDhaka(String(Math.round(outside.chargePaisa / 100)));
+    setDistrictRules(
+      rules
+        .filter((r) => r.scope === "district")
+        .map((r) => ({ district: r.district || "", charge: String(Math.round(r.chargePaisa / 100)) }))
+    );
+  };
+
+  const saveCharges = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    const inside = Math.max(0, Math.floor(Number(insideDhaka) || 0));
+    const outside = Math.max(0, Math.floor(Number(outsideDhaka) || 0));
+    const rules: { scope: "inside_dhaka" | "outside_dhaka" | "district"; district?: string | null; chargePaisa: number }[] = [
+      { scope: "inside_dhaka", chargePaisa: inside * 100 },
+      { scope: "outside_dhaka", chargePaisa: outside * 100 },
+    ];
+    for (const d of districtRules) {
+      const name = d.district.trim();
+      if (!name) continue;
+      rules.push({ scope: "district", district: name, chargePaisa: Math.max(0, Math.floor(Number(d.charge) || 0)) * 100 });
+    }
+    setSavingCharges(true);
+    try {
+      const res = await deliveryChargesApi.save(rules);
+      applyChargeRules(res.rules || []);
+      setNotice(t("courier.chargesSaved", "Delivery charges saved — the AI will quote these from now on.", "ডেলিভারি চার্জ সংরক্ষণ করা হয়েছে — এখন থেকে AI এই চার্জই বলবে।"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("courier.chargesSaveFailed", "Could not save delivery charges.", "ডেলিভারি চার্জ সংরক্ষণ করা যায়নি।"));
+    } finally {
+      setSavingCharges(false);
+    }
+  };
 
   useEffect(() => {
     if (!getToken()) {
@@ -202,6 +253,99 @@ export default function CourierPage() {
           </p>
         )}
       </div>
+
+      {/* Delivery charges (owner settings — requirement C). The AI quotes
+          these charges and the order total (COD) uses them. Defaults:
+          Dhaka ৳100 / outside Dhaka ৳130. */}
+      <form onSubmit={saveCharges} className="card p-4 mb-6">
+        <p className="font-bold mb-1">
+          {t("courier.chargesTitle", "Delivery charges", "ডেলিভারি চার্জ")}
+        </p>
+        <p className="text-xs text-slate-500 mb-3">
+          {t("courier.chargesNote", "The AI quotes these charges to customers, and the order total (cash on delivery) includes them. Change a charge and save — the AI will use the new charge from then on.", "AI কাস্টমারকে এই চার্জই বলবে, আর অর্ডারের মোট টাকায় (ক্যাশ অন ডেলিভারি) এই চার্জই যোগ হবে। চার্জ বদলে সংরক্ষণ করুন — তারপর থেকে AI নতুন চার্জ বলবে।")}
+        </p>
+        <div className="flex flex-wrap gap-4 items-end">
+          <div>
+            <label className="block text-sm font-medium mb-1">{t("courier.insideDhaka", "Inside Dhaka (৳)", "ঢাকার ভেতরে (৳)")}</label>
+            <input
+              type="number"
+              min={0}
+              value={insideDhaka}
+              onChange={(e) => setInsideDhaka(e.target.value)}
+              className="w-28 border rounded-lg px-3 py-2"
+            />
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-1">{t("courier.outsideDhaka", "Outside Dhaka (৳)", "ঢাকার বাইরে (৳)")}</label>
+            <input
+              type="number"
+              min={0}
+              value={outsideDhaka}
+              onChange={(e) => setOutsideDhaka(e.target.value)}
+              className="w-28 border rounded-lg px-3 py-2"
+            />
+          </div>
+          <button disabled={savingCharges} className="bg-brand text-white px-5 py-2 rounded-lg hover:bg-brand-dark disabled:opacity-50">
+            {savingCharges ? t("courier.saving", "Saving…", "সংরক্ষণ হচ্ছে…") : t("courier.saveCharges", "Save charges", "চার্জ সংরক্ষণ করুন")}
+          </button>
+        </div>
+        <div className="mt-4">
+          <p className="text-sm font-medium mb-2">{t("courier.perDistrict", "Per-district charge (optional)", "জেলা অনুযায়ী চার্জ (ঐচ্ছিক)")}</p>
+          {districtRules.map((d, i) => (
+            <div key={i} className="flex flex-wrap gap-2 items-center mb-2">
+              <input
+                value={d.district}
+                onChange={(e) => setDistrictRules(districtRules.map((r, j) => (j === i ? { ...r, district: e.target.value } : r)))}
+                placeholder={t("courier.districtPlaceholder", "District, e.g. Magura", "জেলা, যেমন: মাগুরা")}
+                className="border rounded-lg px-3 py-2 w-48"
+              />
+              <input
+                type="number"
+                min={0}
+                value={d.charge}
+                onChange={(e) => setDistrictRules(districtRules.map((r, j) => (j === i ? { ...r, charge: e.target.value } : r)))}
+                placeholder="৳"
+                className="border rounded-lg px-3 py-2 w-24"
+              />
+              <button
+                type="button"
+                onClick={() => setDistrictRules(districtRules.filter((_, j) => j !== i))}
+                className="text-red-600 text-sm px-2 py-1"
+              >
+                {t("courier.remove", "Remove", "সরান")}
+              </button>
+            </div>
+          ))}
+          <div className="flex flex-wrap gap-2 items-center">
+            <input
+              value={newDistrict}
+              onChange={(e) => setNewDistrict(e.target.value)}
+              placeholder={t("courier.districtPlaceholder", "District, e.g. Magura", "জেলা, যেমন: মাগুরা")}
+              className="border rounded-lg px-3 py-2 w-48"
+            />
+            <input
+              type="number"
+              min={0}
+              value={newDistrictCharge}
+              onChange={(e) => setNewDistrictCharge(e.target.value)}
+              placeholder="৳"
+              className="border rounded-lg px-3 py-2 w-24"
+            />
+            <button
+              type="button"
+              disabled={!newDistrict.trim()}
+              onClick={() => {
+                setDistrictRules([...districtRules, { district: newDistrict.trim(), charge: newDistrictCharge || "0" }]);
+                setNewDistrict("");
+                setNewDistrictCharge("");
+              }}
+              className="bg-slate-100 text-slate-700 text-sm px-4 py-2 rounded-lg hover:bg-slate-200 disabled:opacity-50"
+            >
+              {t("courier.addDistrict", "Add district", "জেলা যোগ করুন")}
+            </button>
+          </div>
+        </div>
+      </form>
 
       <form onSubmit={bookCourier} className="card p-4 mb-6 flex flex-wrap gap-2 items-end">
         <div className="flex-1 min-w-64">

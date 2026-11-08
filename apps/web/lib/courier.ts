@@ -83,6 +83,21 @@ export interface ShipmentCheckSummary {
   errors: string[];
 }
 
+export type DeliveryChargeScope = "inside_dhaka" | "outside_dhaka" | "district";
+
+export interface DeliveryChargeRule {
+  id: string;
+  scope: DeliveryChargeScope;
+  district: string | null;
+  chargePaisa: number;
+}
+
+export const deliveryChargesApi = {
+  list: () => api.get<{ rules: DeliveryChargeRule[] }>("/api/delivery-charges"),
+  save: (rules: { scope: DeliveryChargeScope; district?: string | null; chargePaisa: number }[]) =>
+    api.put<{ rules: DeliveryChargeRule[] }>("/api/delivery-charges", { rules }),
+};
+
 export const courierApi = {
   book: (orderId: string) =>
     api.post<BookCourierResult>("/api/courier/bookings", { orderId }),

@@ -392,7 +392,7 @@ async function main() {
     // 8) Normal regression: price + delivery + Banglish stay open with replies.
     for (const [sender, text, needle] of [
       ['wc-n1', 'জিন্সের দাম কত?', '500'],
-      ['wc-n2', 'ঢাকার বাইরে ডেলিভারি চার্জ কত?', '১৩০'],
+      ['wc-n2', 'ঢাকার বাইরে ডেলিভারি চার্জ কত?', '130'],
       ['wc-n3', 'jins ase?', 'Jeans'],
     ]) {
       const m = await sendWebchat(api, 'site-aitrain', sender, 'Normal Customer', text);
@@ -424,6 +424,7 @@ async function main() {
     check('driver 1: greeting unit matrix all correct', driverResult.greetingUnitAllOk === true, JSON.stringify((driverResult.greetingUnit ?? []).filter((c) => !c.ok)));
     check('driver 1: normal-chat unit matrix — no detector fires on normal messages', driverResult.normalUnitAllOk === true, JSON.stringify((driverResult.normalUnit ?? []).filter((c) => !c.ok)));
     check('driver 1: Banglish show-match (jins/shart/tishart → right product)', driverResult.banglishShowUnitAllOk === true, JSON.stringify(driverResult.banglishShowUnit ?? []));
+    check('driver 1: Banglish list-request unit matrix all correct', driverResult.banglishListUnitAllOk === true, JSON.stringify((driverResult.banglishListUnit ?? []).filter((c) => !c.ok)));
     const bp = driverResult.banglishPrice ?? {};
     check('driver 1: Banglish price → Bengali reply with ৳500, open', bp.result?.replied === true && bp.state?.status === 'open' && bp.bengaliReply === true, JSON.stringify({ r: bp.result, s: bp.state }));
     const lf = driverResult.listFormat ?? {};
@@ -441,6 +442,22 @@ async function main() {
     const of = driverResult.offTopic ?? {};
     check('driver 1: off-topic → waiting + notification row, no reply', of.result?.replied === false && of.state?.status === 'waiting' && of.state?.escalation_reason === 'off_topic' && of.outMessages === 0 && !!of.notification && of.notification.type === 'off_topic', JSON.stringify({ r: of.result, s: of.state, n: of.notification }));
     check('driver 1: normal flows all stay open + get a reply', driverResult.normalFlowsAllOk === true, JSON.stringify((driverResult.normalFlows ?? []).filter((c) => !c.ok)));
+    // --- Order flow (requirements A + B + C) ---
+    check('driver 1: phone unit — 11-digit 01 valid, 10/8 digits + non-01 invalid', driverResult.phoneUnitAllOk === true, JSON.stringify((driverResult.phoneUnit ?? []).filter((c) => !c.ok)));
+    check('driver 1: address unit — bare district flagged, full address passes', driverResult.addressUnitAllOk === true, JSON.stringify((driverResult.addressUnit ?? []).filter((c) => !c.ok)));
+    check('driver 1: place unit — village/house details never flag, typo does', driverResult.placeUnitAllOk === true, JSON.stringify((driverResult.placeUnit ?? []).filter((c) => !c.ok)));
+    const ip = driverResult.orderInvalidPhone ?? {};
+    check('driver 1: order with 10-digit phone → refused (invalidPhone), no order', ip.ok === true, JSON.stringify({ r: ip.result, n: ip.orderCount }));
+    const bd = driverResult.orderBareDistrict ?? {};
+    check('driver 1: order with bare "Dhaka" address → refused, asks for full address, no order', bd.ok === true, JSON.stringify({ r: bd.result, n: bd.orderCount }));
+    const up = driverResult.orderUnknownPlace ?? {};
+    check('driver 1: order with unknown place → needs confirmation, no order; confirmed → created', up.ok === true, JSON.stringify({ first: up.first, second: up.second, before: up.beforeCount, after: up.afterCount }));
+    const oc = driverResult.orderConfirmation ?? {};
+    check('driver 1: valid order → confirmation (name, phone, address, items, delivery ৳100, total ৳600, "অর্ডার কনফার্ম করা হলো")', oc.ok === true, JSON.stringify({ r: oc.result, c: (oc.confirmationText ?? '').slice(0, 200) }));
+    const nn = driverResult.orderNoName ?? {};
+    check('driver 1: order without an explicit name → still created (stored name used), no name fuss', nn.ok === true, JSON.stringify({ r: nn.result, c: (nn.confirmationText ?? '').slice(0, 200) }));
+    const dc = driverResult.deliveryChargeCustom ?? {};
+    check('driver 1: custom delivery charge ৳150 → AI quotes it + order total uses it (500+150=650)', dc.ok === true, JSON.stringify({ r: dc.orderResult, resolved: dc.resolved, dc: (dc.dcText ?? '').slice(0, 120) }));
   }
 
   // ---------- Driver 2: live Gemini (photo match, voice, Banglish LLM) ----------
