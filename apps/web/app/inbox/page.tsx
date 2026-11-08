@@ -390,28 +390,6 @@ function InboxPage() {
 
   return (
     <div>
-      {/* Welcome banner — light orange, like the reference. */}
-      <div className="relative mb-4 overflow-hidden rounded-xl bg-orange-50 px-5 py-5 sm:px-6">
-        <div className="relative flex items-start gap-4">
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-xl bg-brand text-white shadow-sm">
-            <Icon name="inbox" className="h-6 w-6" />
-          </span>
-          <span className="min-w-0">
-            <span className="block text-xl font-bold text-slate-900">
-              {t("inbox.bannerTitle", "Customer Inbox", "কাস্টমার ইনবক্স")}
-            </span>
-            <span className="mt-0.5 block text-sm text-slate-600">
-              {t("inbox.bannerSubtitle", "All your customer chats, comments and reviews in one place with AI support.", "তোমার সব কাস্টমার চ্যাট, কমেন্ট আর রিভিউ এক জায়গায় — AI সাপোর্টসহ।")}
-            </span>
-          </span>
-        </div>
-        {/* Envelope illustration (inline SVG, no external image). */}
-        <svg viewBox="0 0 140 100" className="pointer-events-none absolute -right-2 -top-1 hidden h-24 w-32 text-[#FFD9C7] sm:block" aria-hidden="true">
-          <rect x="10" y="22" width="120" height="72" rx="10" fill="currentColor" />
-          <path d="M14 30 L70 66 L126 30" fill="none" stroke="#FFB59F" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </div>
-
       {/* Four stat cards — real counts from the API. */}
       <div className="mb-4 grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard icon="inbox" iconCls="bg-green-100 text-green-600" value={stats.total} label={t("inbox.statTotal", "Total Conversations", "মোট কথোপকথন")} />

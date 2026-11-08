@@ -74,7 +74,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     let cancelled = false;
     const load = async () => {
       try {
-        const data = await api.get<{ notifications: BellNotification[]; unreadCount: number }>("/notifications?limit=20");
+        const data = await api.get<{ notifications: BellNotification[]; unreadCount: number }>("/api/notifications?limit=20");
         if (cancelled) return;
         setNotifications(data.notifications ?? []);
         setUnreadCount(data.unreadCount ?? 0);
@@ -93,7 +93,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const openNotification = async (n: BellNotification) => {
     setBellOpen(false);
     try {
-      await api.post(`/notifications/${n.id}/read`);
+      await api.post(`/api/notifications/${n.id}/read`);
       setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
       setUnreadCount((c) => Math.max(0, c - (n.is_read ? 0 : 1)));
     } catch {
