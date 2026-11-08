@@ -17,8 +17,22 @@
  * logs it honestly; the text confirmation + invoice link still go out,
  * and a broken-Bengali image is NEVER sent.
  */
-import chromium from '@sparticuz/chromium';
-import puppeteer from 'puppeteer-core';
+// NOTE (2026-11-08): @sparticuz/chromium and puppeteer-core are ESM-only
+// ("type": "module"). The API is compiled to CommonJS, so a static
+// `import` here becomes a `require()` at runtime and CRASHES the whole
+// module on Vercel ("require() of ES Module ... not supported") — which
+// broke ALL AI replies, not just invoice images. They MUST be loaded with
+// a genuine dynamic import() inside the render function (the only place
+// they are used), never at the top of this file.
+//
+// CAREFUL: TypeScript's CommonJS emit rewrites a syntactic `import()` to
+// `require()` too (via __importStar), which fails the same way on
+// Vercel's Node. So the import is done through the Function constructor:
+// it is evaluated at runtime, so the import() survives compilation
+// untouched and loads the ESM packages properly.
+const dynamicImport = new Function('specifier', 'return import(specifier);') as <T>(
+  specifier: string,
+) => Promise<T>;
 import { INVOICE_FONT_BOLD_B64, INVOICE_FONT_REGULAR_B64 } from './invoice-font';
 import { formatTaka } from './bill';
 import { PAYMENT_METHOD_BN } from './public-invoice';
@@ -107,6 +121,15 @@ td{border-bottom:1px solid #eee;padding:8px 4px}
 
 /** Render invoice HTML to a PNG buffer with headless Chromium. Null on any failure. */
 export async function renderInvoiceImagePng(html: string, timeoutMs = 60000): Promise<Buffer | null> {
+  // Genuine dynamic import() (see the note at the top of this file).
+  // A syntactic import() here would be rewritten to require() by
+  // TypeScript's CommonJS emit and fail on Vercel's Node.
+  const { default: chromium } = await dynamicImport<typeof import('@sparticuz/chromium')>(
+    '@sparticuz/chromium',
+  );
+  const { default: puppeteer } = await dynamicImport<typeof import('puppeteer-core')>(
+    'puppeteer-core',
+  );
   let browser: Awaited<ReturnType<typeof puppeteer.launch>> | null = null;
   try {
     browser = await puppeteer.launch({
