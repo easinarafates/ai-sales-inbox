@@ -115,7 +115,7 @@ td{border-bottom:1px solid #eee;padding:8px 4px}
 </style></head><body>
 <h1>${esc(d.shopName)}</h1>
 <div class="sub">ইনভয়েস / রসিদ</div>
-<div><span class="badge">অর্ডার কনফার্ম করা হয়েছে ✅</span></div>
+<div><span class="badge">অর্ডার কনফার্ম করা হয়েছে</span></div>
 <div class="sec">
 <div><span class="label">অর্ডার নম্বর:</span> <b>${esc(d.orderNumber)}</b></div>
 <div><span class="label">তারিখ:</span> ${esc(dateText)}</div>
