@@ -45,13 +45,18 @@ import {
  * webhook lookup.
  *
  * NOTE (Meta-side setup): the instagram_basic + instagram_manage_messages
- * scopes are granted through Facebook Login for Business. In Development
- * mode the app admin can grant them for their own account; public shops
- * need App Review (advanced access) later.
+ * scopes are granted through Facebook Login for Business. Publishing
+ * needs instagram_content_publish too (added 2026-11-08) — a channel
+ * connected before that scope was added carries only the old scopes
+ * (stored in channels.scopes, migration 34) and the publisher fails
+ * honestly with a "reconnect Instagram" message until the owner
+ * reconnects. In Development mode the app admin can grant them for
+ * their own account; public shops need App Review (advanced access)
+ * later.
  */
 export const instagramOAuthRouter = Router();
 
-const SCOPES = ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_manage_messages', 'instagram_manage_comments'];
+const SCOPES = ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_manage_messages', 'instagram_manage_comments', 'instagram_content_publish'];
 
 /** One Page enriched with its linked Instagram account (null = none linked). */
 export interface IgPickPage extends FbPickPage {
@@ -141,6 +146,7 @@ async function createInstagramChannel(
     sourceId: page.id,
     userToken,
     connectedByUserId,
+    scopes: SCOPES.join(','),
     duplicateMessage: 'This Instagram account is already connected to this workspace.',
   });
 }

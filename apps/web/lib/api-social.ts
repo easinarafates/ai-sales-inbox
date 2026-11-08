@@ -57,6 +57,15 @@ export interface TiktokStatus {
   businessMessagingConfigured: boolean;
 }
 
+export interface InstagramStatus {
+  connected: boolean;
+  channelId: string | null;
+  channelName: string | null;
+  scopes: string | null;
+  hasPublishScope: boolean;
+  needsReconnectForPublish: boolean;
+}
+
 async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const token = getToken();
   const headers: Record<string, string> = {
@@ -126,4 +135,8 @@ export const tiktokApi = {
       method: "POST",
       body: JSON.stringify({}),
     }),
+};
+
+export const instagramApi = {
+  status: () => request<InstagramStatus>("/api/instagram/status"),
 };

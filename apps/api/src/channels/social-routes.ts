@@ -14,6 +14,10 @@ import {
   replyYoutubeComment,
 } from './youtube';
 import {
+  getInstagramChannel,
+  hasInstagramPublishScope,
+} from './instagram-post';
+import {
   fetchTikTokCommentReplies,
   fetchTikTokComments,
   fetchTikTokDMThread,
@@ -47,6 +51,8 @@ import {
  *   GET  /youtube/videos    — the channel's own videos (live)
  *   GET  /youtube/comments?videoId= — live comments (all channel threads when no videoId)
  *   POST /youtube/comments/:commentId/reply {text} — reply (needs youtube.force-ssl)
+ *  Instagram:
+ *   GET  /instagram/status  — connected? publish scope (instagram_content_publish)? needs reconnect?
  *  TikTok:
  *   GET  /tiktok/status     — connected? configured? audited? DM approved? Business Messaging?
  *   GET  /tiktok/videos     — the account's videos, Display API (live)
@@ -91,6 +97,24 @@ socialApiRouter.get('/youtube/status', async (req: AuthRequest, res: Response) =
       maxUploadsPerDay: quota.maxUploadsPerDay,
     },
     note: 'YouTube Data API কোটা: প্রতিদিন ১০,০০০ ইউনিট; একটি ভিডিও আপলোড ~১,৬০০ ইউনিট (দিনে সর্বোচ্চ ৬টি)। কোটা শেষ হলে প্রকাশ ব্যর্থ হবে — ভুয়া সফল দেখানো হবে না।',
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Instagram
+// ---------------------------------------------------------------------------
+
+socialApiRouter.get('/instagram/status', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const channel = await getInstagramChannel(workspaceId);
+  res.json({
+    connected: !!channel,
+    channelId: channel?.external_id ?? null,
+    channelName: channel?.display_name ?? null,
+    scopes: channel?.scopes ?? null,
+    hasPublishScope: hasInstagramPublishScope(channel),
+    needsReconnectForPublish: !!channel && !hasInstagramPublishScope(channel),
+    note: 'Instagram পোস্ট প্রকাশের জন্য instagram_content_publish অনুমতি লাগে — অনুমতি ছাড়া যুক্ত অ্যাকাউন্টে পোস্ট ব্যর্থ হবে, Channels পেজ থেকে Instagram আবার যুক্ত (reconnect) করতে হবে।',
   });
 });
 

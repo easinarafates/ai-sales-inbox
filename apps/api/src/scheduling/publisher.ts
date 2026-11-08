@@ -15,6 +15,12 @@ import {
   YOUTUBE_MAX_UPLOADS_PER_DAY,
 } from '../channels/youtube';
 import {
+  getInstagramChannel,
+  hasInstagramPublishScope,
+  instagramReconnectMessage,
+  publishInstagramPost,
+} from '../channels/instagram-post';
+import {
   fetchTikTokPublishStatus,
   getTikTokAccessToken,
   initTikTokVideoPublish,
@@ -44,10 +50,14 @@ import {
  * until PUBLISH_COMPLETE); only PUBLISH_COMPLETE counts as published, and
  * the publish_id is stored in scheduled_posts.publish_ref so a later
  * sweep resumes polling the SAME publish instead of uploading twice.
- * Instagram / Messenger / WhatsApp are not post platforms for this app:
- * Instagram publishing (media containers) is not built yet and Messenger /
- * WhatsApp are messaging channels — they are logged as failed with a
- * plain reason instead of pretending to publish.
+ * Instagram leg: real Instagram Graph API publish (media container
+ * + media_publish — see channels/instagram-post.ts). Image posts
+ * (one image, or a carousel for several) and video posts (reels)
+ * publish for real; only a real Instagram media id counts as
+ * published. Needs instagram_content_publish on the token: a channel
+ * connected without it fails honestly with a "reconnect Instagram"
+ * message (like the YouTube read-only case). Text-only posts fail
+ * honestly — Instagram needs media.
  *
  * YouTube leg: resumable upload via the YouTube Data API v3
  * (videos.insert, part=snippet,status). A post counts as published ONLY
@@ -164,8 +174,12 @@ async function setStatus(
  *   audit -> failure logged, platform skipped. A still-processing
  *   publish goes back to 'scheduled' with its publish_id kept (never
  *   'failed', never a second upload).
- * - instagram / messenger / whatsapp / anything else -> failure logged
- *   with a plain reason (not built / not a post platform); never faked.
+ * - instagram -> REAL Instagram Graph publish (media container +
+ *   media_publish). Only a real Instagram media id counts as
+ *   published; a channel without instagram_content_publish fails
+ *   honestly with a reconnect message.
+ * - messenger / whatsapp / anything else -> failure logged
+ *   with a plain reason (not a post platform); never faked.
  * Retries a failed publish up to 3 attempts total, then status 'failed'.
  * Returns the updated post row.
  */
@@ -447,6 +461,89 @@ export async function publishScheduledPost(
         continue;
       }
 
+      // Instagram — real Graph publish (media container +
+      // media_publish). Only a real Instagram media id counts as
+      // published. Needs instagram_content_publish on the token.
+      if (platform === 'instagram') {
+        if (post.media_type === 'text' || !post.media_urls || post.media_urls.length === 0) {
+          if (attempt === 1) {
+            await logAttempt(
+              workspaceId,
+              postId,
+              platform,
+              attempt,
+              'failed',
+              'Instagram-এ শুধু ছবি বা ভিডিও পোস্ট করা যায় — এই পোস্টে মিডিয়া নেই (Instagram needs an image or a video)',
+            );
+          }
+          attemptFailed = true;
+          continue;
+        }
+        const igChannel = await getInstagramChannel(workspaceId);
+        if (!igChannel) {
+          if (attempt === 1) {
+            await logAttempt(
+              workspaceId,
+              postId,
+              platform,
+              attempt,
+              'failed',
+              'কোনো Instagram অ্যাকাউন্ট যুক্ত নেই — Channels পেজ থেকে Connect Instagram দিয়ে অ্যাকাউন্ট যুক্ত করুন (no Instagram account connected)',
+            );
+          }
+          attemptFailed = true;
+          continue;
+        }
+        if (!hasInstagramPublishScope(igChannel)) {
+          if (attempt === 1) {
+            await logAttempt(workspaceId, postId, platform, attempt, 'failed', instagramReconnectMessage());
+          }
+          attemptFailed = true;
+          continue;
+        }
+        const igToken = decryptPageToken(igChannel);
+        if (!igToken) {
+          if (attempt === 1) {
+            await logAttempt(
+              workspaceId,
+              postId,
+              platform,
+              attempt,
+              'failed',
+              'Instagram টোকেন পড়া যায়নি — অ্যাকাউন্টটি আবার যুক্ত করুন (stored Instagram token could not be read — reconnect Instagram)',
+            );
+          }
+          attemptFailed = true;
+          continue;
+        }
+        const result = await publishInstagramPost({
+          igUserId: igChannel.external_id,
+          pageToken: igToken,
+          caption: post.caption,
+          mediaUrls: post.media_urls ?? [],
+          mediaType: post.media_type,
+        });
+        if (result.ok && result.mediaId) {
+          console.log(
+            `[publisher] post ${postId} -> instagram (attempt ${attempt}): published as ${result.mediaId}`,
+          );
+          await logAttempt(workspaceId, postId, platform, attempt, 'published', null);
+          platformPostId = result.mediaId;
+          publishedAny = true;
+        } else {
+          attemptFailed = true;
+          await logAttempt(
+            workspaceId,
+            postId,
+            platform,
+            attempt,
+            'failed',
+            result.needsReconnect ? instagramReconnectMessage() : (result.error ?? 'Instagram publishing failed'),
+          );
+        }
+        continue;
+      }
+
       // Facebook — the real publish. Logged once for setup failures
       // (no Page / bad token), every attempt for real Graph failures.
       if (platform === 'facebook') {
@@ -511,11 +608,9 @@ export async function publishScheduledPost(
       // Anything else is not published by this app — say so plainly.
       if (attempt === 1) {
         const reason =
-          platform === 'instagram'
-            ? 'Instagram-এ পোস্ট প্রকাশ এখনো যুক্ত হয়নি — আপাতত Instagram অ্যাপ থেকে পোস্ট করুন (Instagram publishing is not connected yet)'
-            : platform === 'messenger' || platform === 'whatsapp'
-              ? `${platform} মেসেজের চ্যানেল, পোস্টের প্ল্যাটফর্ম নয় (not a post platform)`
-              : `এই প্ল্যাটফর্মে প্রকাশ এখনো যুক্ত হয়নি (publishing not supported for ${platform})`;
+          platform === 'messenger' || platform === 'whatsapp'
+            ? `${platform} মেসেজের চ্যানেল, পোস্টের প্ল্যাটফর্ম নয় (not a post platform)`
+            : `এই প্ল্যাটফর্মে প্রকাশ এখনো যুক্ত হয়নি (publishing not supported for ${platform})`;
         await logAttempt(workspaceId, postId, platform, attempt, 'failed', reason);
       }
       attemptFailed = true;

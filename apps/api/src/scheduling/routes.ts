@@ -721,16 +721,16 @@ schedulingRouter.post('/scheduled-posts', async (req: AuthRequest, res: Response
     res.status(400).json({ error: 'অন্তত একটি প্ল্যাটফর্ম বেছে নিন (facebook)' });
     return;
   }
-  // Publishable platforms: Facebook (Graph), YouTube (Data API v3
-  // resumable upload) and TikTok (Content Posting API, audit-gated in
-  // the publisher). Instagram publishing is not built yet, and
+  // Publishable platforms: Facebook (Graph), Instagram (Graph media
+  // containers), YouTube (Data API v3 resumable upload) and TikTok
+  // (Content Posting API, audit-gated in the publisher).
   // Messenger/WhatsApp are message channels, never post platforms.
   // Reject them here instead of letting a post sit in 'failed' after
   // its scheduled time.
-  const unsupported = plats.filter((p) => p !== 'facebook' && p !== 'youtube' && p !== 'tiktok');
+  const unsupported = plats.filter((p) => p !== 'facebook' && p !== 'instagram' && p !== 'youtube' && p !== 'tiktok');
   if (unsupported.length > 0) {
     res.status(400).json({
-      error: `Only Facebook, YouTube and TikTok posts can be published right now — ${unsupported.join(', ')} ${unsupported.length === 1 ? 'is' : 'are'} coming soon. (এখন শুধু ফেসবুক, YouTube আর TikTok পোস্ট প্রকাশ করা যায় — ${unsupported.join(', ')} শীঘ্রই আসছে।)`,
+      error: `Only Facebook, Instagram, YouTube and TikTok posts can be published right now — ${unsupported.join(', ')} ${unsupported.length === 1 ? 'is' : 'are'} coming soon. (এখন শুধু ফেসবুক, Instagram, YouTube আর TikTok পোস্ট প্রকাশ করা যায় — ${unsupported.join(', ')} শীঘ্রই আসছে।)`,
     });
     return;
   }
@@ -759,6 +759,13 @@ schedulingRouter.post('/scheduled-posts', async (req: AuthRequest, res: Response
   if (videoOnly.length > 0 && mt !== 'video') {
     res.status(400).json({
       error: `${videoOnly.join(' + ')}-এ শুধু ভিডিও পোস্ট করা যায় — ভিডিও ছাড়া শিডিউল করা যাবে না (${videoOnly.join(' + ')} posts must be videos)`,
+    });
+    return;
+  }
+  // Instagram needs an image or a video (no text-only posts).
+  if (plats.includes('instagram') && mt === 'text') {
+    res.status(400).json({
+      error: 'Instagram-এ শুধু ছবি বা ভিডিও পোস্ট করা যায় — ছবি/ভিডিও ছাড়া শিডিউল করা যাবে না (Instagram posts need an image or a video)',
     });
     return;
   }

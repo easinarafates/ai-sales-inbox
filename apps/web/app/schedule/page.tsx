@@ -20,14 +20,14 @@ import {
   type MediaType,
   type ScheduledPost,
 } from "@/lib/api-scheduling";
-import { youtubeApi, type YoutubeStatus } from "@/lib/api-social";
+import { instagramApi, youtubeApi, type InstagramStatus, type YoutubeStatus } from "@/lib/api-social";
 
-// Facebook, YouTube and TikTok can actually publish (see publisher.ts).
-// Instagram publishing is coming soon; Messenger/WhatsApp are message
-// channels, never post platforms, so they are not offered at all.
-// YouTube + TikTok take video posts only (the API rejects text/image).
-const PLATFORM_OPTIONS = ["facebook", "youtube", "tiktok"];
-const PLATFORM_COMING_SOON = ["instagram"];
+// Facebook, Instagram, YouTube and TikTok can actually publish (see
+// publisher.ts). Instagram takes image or video posts; YouTube +
+// TikTok take video posts only (the API rejects text/image).
+// Messenger/WhatsApp are message channels, never post platforms, so
+// they are not offered at all.
+const PLATFORM_OPTIONS = ["facebook", "instagram", "youtube", "tiktok"];
 const STATUS_OPTIONS = ["scheduled", "draft", "published", "cancelled"];
 
 function dhakaDateStr(d: Date): string {
@@ -139,6 +139,10 @@ export default function SchedulePage() {
   // YouTube quota / reconnect hint (shown when YouTube is selected).
   const [ytStatus, setYtStatus] = useState<YoutubeStatus | null>(null);
 
+  // Instagram reconnect hint (shown when Instagram is selected and the
+  // connected account was linked without the publish permission).
+  const [igStatus, setIgStatus] = useState<InstagramStatus | null>(null);
+
   // Edit form
   const [editing, setEditing] = useState<ScheduledPost | null>(null);
   const [editCaption, setEditCaption] = useState("");
@@ -181,6 +185,7 @@ export default function SchedulePage() {
     load();
     productsApi.list().then((d) => setProducts(asArray(d))).catch(() => undefined);
     youtubeApi.status().then(setYtStatus).catch(() => undefined);
+    instagramApi.status().then(setIgStatus).catch(() => undefined);
   }, [load, router]);
 
   const selectedCount = counts[selectedDay] ?? 0;
@@ -553,13 +558,17 @@ export default function SchedulePage() {
               <input type="checkbox" checked={platforms.includes(p)} onChange={() => togglePlatform(p)} /> {p}
             </label>
           ))}
-          {PLATFORM_COMING_SOON.map((p) => (
-            <label key={p} className="text-sm flex items-center gap-1 text-slate-400">
-              <input type="checkbox" checked={false} disabled /> {p} ({t("schedule.comingSoon", "Coming soon", "শীঘ্রই আসছে")})
-            </label>
-          ))}
         </div>
-        <p className="text-xs text-slate-500">{t("schedule.onlyFacebook", "Facebook, YouTube and TikTok posts can be published — YouTube and TikTok take video posts only. Instagram is coming soon.", "ফেসবুক, YouTube আর TikTok পোস্ট প্রকাশ করা যায় — YouTube আর TikTok-এ শুধু ভিডিও পোস্ট হয়। Instagram শীঘ্রই আসছে।")}</p>
+        <p className="text-xs text-slate-500">{t("schedule.onlyFacebook", "Facebook, Instagram, YouTube and TikTok posts can be published — Instagram takes image or video posts; YouTube and TikTok take video posts only.", "ফেসবুক, Instagram, YouTube আর TikTok পোস্ট প্রকাশ করা যায় — Instagram-এ ছবি বা ভিডিও পোস্ট হয়; YouTube আর TikTok-এ শুধু ভিডিও পোস্ট হয়।")}</p>
+        {platforms.includes("instagram") && igStatus && (
+          <p className="text-xs text-slate-500">
+            {!igStatus.connected
+              ? t("schedule.igNotConnected", "Instagram is not connected yet — connect it on the Channels page first.", "Instagram এখনো যুক্ত হয়নি — প্রথমে Channels পেজ থেকে Instagram যুক্ত করুন।")
+              : igStatus.needsReconnectForPublish
+                ? t("schedule.igReconnect", "Instagram is connected without the publish permission — reconnect Instagram on the Channels page to allow posting.", "Instagram প্রকাশের অনুমতি ছাড়া যুক্ত আছে — পোস্ট করতে Channels পেজ থেকে Instagram আবার যুক্ত করুন।")
+                : t("schedule.igReady", "Instagram is connected and ready to publish.", "Instagram যুক্ত আছে — পোস্ট প্রকাশ করা যাবে।")}
+          </p>
+        )}
         {platforms.includes("youtube") && ytStatus && (
           <p className="text-xs text-slate-500">
             {ytStatus.needsReconnectForUpload

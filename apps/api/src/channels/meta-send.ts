@@ -21,8 +21,14 @@
  *   message (Graph error 551). That surfaces as windowExpired — callers
  *   must tell the team the customer has to message again first. No message
  *   tags are used.
- * - WhatsApp is NOT sent here (different API); it fails with a clear
- *   error instead of silently "sending".
+ * - WhatsApp IS sent here (since 2026-11-08): the WhatsApp Cloud API
+ *   (POST /{phone-number-id}/messages with the channel's stored
+ *   permanent token) — text + image. A reply counts as sent ONLY when
+ *   WhatsApp returns a message id (wamid.…). Free-form replies only
+ *   work inside the 24-hour customer-service window (Graph error
+ *   131047) — outside it the send fails honestly with windowExpired,
+ *   never faked, never silently dropped. No template messages are
+ *   sent (the shop has no approved template yet).
  * - TikTok DMs ARE sent here: via the TikTok for Business "Business
  *   Messaging" API (see webhooks/tiktok-dm.ts sendTikTokDM) — reply-only,
  *   needs the customer's first message + TikTok's approval + the
@@ -470,6 +476,93 @@ export async function sendMetaImageMessage(input: {
 
 export type DeliveryStatus = 'sent' | 'failed' | 'local' | 'pending';
 
+/**
+ * WhatsApp Cloud API (Graph v21.0): POST /{phone-number-id}/messages
+ * with the channel's permanent token as Bearer.
+ * - text: {messaging_product:'whatsapp', recipient_type:'individual',
+ *   to, type:'text', text:{body}}
+ * - image: {messaging_product:'whatsapp', to, type:'image',
+ *   image:{link}} (public URL; the API fetches it — local
+ *   /api/uploads URLs are NOT reachable by WhatsApp).
+ * Success is {messages:[{id:'wamid.…'}]} — only that counts as sent.
+ * Error 131047 = the 24-hour customer-service window has closed
+ * (free-form replies are not allowed outside it; a template message
+ * would be needed — the shop has none yet, so this fails honestly
+ * with windowExpired). Never throws.
+ */
+export const WHATSAPP_WINDOW_EXPIRED_CODE = 131047;
+
+function whatsappWindowExpired(error: string | undefined, code: number | undefined): boolean {
+  if (code === WHATSAPP_WINDOW_EXPIRED_CODE) return true;
+  const msg = (error ?? '').toLowerCase();
+  return msg.includes('24 hour') || msg.includes('24-hour') || msg.includes('outside the allowed window') || msg.includes('re-engagement');
+}
+
+async function sendWhatsAppMessage(input: {
+  phoneNumberId: string;
+  token: string;
+  to: string;
+  body: Record<string, unknown>;
+}): Promise<MetaSendResult> {
+  const url = `${sendGraphBase()}/${encodeURIComponent(input.phoneNumberId)}/messages`;
+  try {
+    const res = await fetchWithTimeout(
+      url,
+      {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${input.token}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messaging_product: 'whatsapp',
+          recipient_type: 'individual',
+          to: input.to,
+          ...input.body,
+        }),
+      },
+      15000,
+    );
+    const data = (await res.json().catch(() => null)) as {
+      messages?: { id?: string }[];
+      error?: { message?: string; code?: number };
+    } | null;
+    const id = data?.messages?.[0]?.id;
+    if (res.ok && typeof id === 'string') {
+      return { ok: true, messageId: id };
+    }
+    const code = data?.error?.code;
+    const message = data?.error?.message ?? `WhatsApp send failed (HTTP ${res.status})`;
+    return { ok: false, error: message, code, windowExpired: whatsappWindowExpired(message, code) };
+  } catch (err) {
+    return { ok: false, error: (err as Error).message };
+  }
+}
+
+export async function sendWhatsAppTextMessage(input: {
+  phoneNumberId: string;
+  token: string;
+  to: string;
+  text: string;
+}): Promise<MetaSendResult> {
+  return sendWhatsAppMessage({
+    ...input,
+    body: { type: 'text', text: { preview_url: false, body: input.text } },
+  });
+}
+
+export async function sendWhatsAppImageMessage(input: {
+  phoneNumberId: string;
+  token: string;
+  to: string;
+  imageUrl: string;
+}): Promise<MetaSendResult> {
+  return sendWhatsAppMessage({
+    ...input,
+    body: { type: 'image', image: { link: input.imageUrl } },
+  });
+}
+
 export interface DeliveryResult {
   /** True only when the message was actually delivered (or is webchat/demo-local). */
   sent: boolean;
@@ -514,13 +607,17 @@ function recipientForPlatform(identities: unknown, platform: string): string | n
  *   the DB), so it counts as sent with delivery_status='local'.
  * - messenger / instagram — real Graph send with the channel's stored
  *   (encrypted) Page token and the customer's PSID / IG SID.
+ * - whatsapp — real WhatsApp Cloud API send with the channel's stored
+ *   permanent token (external_id = phone number id) and the customer's
+ *   phone number. Only inside the 24h window (error 131047 →
+ *   windowExpired); outside it the message is honestly 'failed'.
  * - facebook_comment — real Graph comment reply (POST
  *   /{comment-id}/comments) with the channel's stored Page token. The
  *   comment replied to is the conversation's latest inbound message
  *   (its platform_message_id is the comment id the webhook saved).
  *   This is also how the AI auto-reply reaches a commenter — agent.ts
  *   already calls this helper, so no agent change was needed.
- * - anything else (whatsapp, no channel, no token, no
+ * - anything else (no channel, no token, no
  *   recipient) — saved as 'failed' with a clear reason. tiktok_dm is
  *   sent via the Business Messaging API (see above).
  *
@@ -646,6 +743,44 @@ export async function deliverOutgoingMessage(
       return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
     }
     if (channel.platform === 'tiktok_dm') return fail('no_recipient');
+  }
+  // WhatsApp — real Cloud API send with the channel's permanent token
+  // (external_id = phone number id). Only inside the 24h window;
+  // error 131047 surfaces as windowExpired so the owner knows the
+  // customer must message again first (no template exists yet).
+  if (channel.platform === 'whatsapp') {
+    if (!channel.token_encrypted) {
+      return fail('no_whatsapp_token');
+    }
+    const customer = conversation.customer_id
+      ? await queryOne<{ channel_identities: unknown }>(
+          workspaceId,
+          'SELECT channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+          [workspaceId, conversation.customer_id],
+        )
+      : null;
+    const recipientId = recipientForPlatform(customer?.channel_identities, 'whatsapp');
+    if (!recipientId) return fail('no_recipient');
+    let waToken: string;
+    try {
+      waToken = decryptToken(channel.token_encrypted);
+    } catch {
+      return fail('token_decrypt_failed');
+    }
+    const result = await sendWhatsAppTextMessage({
+      phoneNumberId: channel.external_id,
+      token: waToken,
+      to: recipientId,
+      text: trimmed,
+    });
+    if (!result.ok) {
+      return fail(result.error ?? 'whatsapp_send_failed', {
+        code: result.code,
+        windowExpired: result.windowExpired,
+      });
+    }
+    await mark('sent', result.messageId);
+    return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
   }
   if (channel.platform !== 'messenger' && channel.platform !== 'instagram') {
     return fail(`send_not_supported_for_${channel.platform}`);
@@ -776,6 +911,43 @@ export async function deliverOutgoingImageMessage(
       return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
     }
     if (channel.platform === 'tiktok_dm') return fail('no_recipient');
+  }
+  // WhatsApp image — real Cloud API send (image:{link}); the name +
+  // price travel as a separate text message right after, like Meta.
+  // Only inside the 24h window (error 131047 → windowExpired).
+  if (channel.platform === 'whatsapp') {
+    if (!channel.token_encrypted) {
+      return fail('no_whatsapp_token');
+    }
+    const customer = conversation.customer_id
+      ? await queryOne<{ channel_identities: unknown }>(
+          workspaceId,
+          'SELECT channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+          [workspaceId, conversation.customer_id],
+        )
+      : null;
+    const recipientId = recipientForPlatform(customer?.channel_identities, 'whatsapp');
+    if (!recipientId) return fail('no_recipient');
+    let waToken: string;
+    try {
+      waToken = decryptToken(channel.token_encrypted);
+    } catch {
+      return fail('token_decrypt_failed');
+    }
+    const result = await sendWhatsAppImageMessage({
+      phoneNumberId: channel.external_id,
+      token: waToken,
+      to: recipientId,
+      imageUrl: url,
+    });
+    if (!result.ok) {
+      return fail(result.error ?? 'whatsapp_image_send_failed', {
+        code: result.code,
+        windowExpired: result.windowExpired,
+      });
+    }
+    await mark('sent', result.messageId);
+    return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
   }
   if (channel.platform !== 'messenger' && channel.platform !== 'instagram') {
     return fail(`send_not_supported_for_${channel.platform}`);

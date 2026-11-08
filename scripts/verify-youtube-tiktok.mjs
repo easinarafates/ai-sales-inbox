@@ -388,13 +388,13 @@ async function main() {
   const mig34 = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/34-youtube-tiktok-scopes.sql'), 'utf8');
   check('migration 34 adds channels.scopes + scheduled_posts.publish_ref (idempotent)', mig34.includes('scopes') && mig34.includes('publish_ref') && mig34.includes('IF NOT EXISTS'));
   const schedSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/scheduling/routes.ts'), 'utf8');
-  check('scheduling routes: youtube + tiktok allowed, instagram still rejected', schedSrc.includes("p !== 'youtube'") && schedSrc.includes("p !== 'tiktok'") && schedSrc.includes('videoOnly'));
+  check('scheduling routes: youtube + tiktok + instagram allowed (videoOnly rule intact)', schedSrc.includes("p !== 'youtube'") && schedSrc.includes("p !== 'tiktok'") && schedSrc.includes("p !== 'instagram'") && schedSrc.includes('videoOnly'));
   const routesSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/social-routes.ts'), 'utf8');
   check('social routes: youtube/tiktok status + videos + comments + reply + dm sync', ['/youtube/status', '/youtube/videos', '/youtube/comments', '/tiktok/videos', '/tiktok/comments', '/tiktok/dm/sync'].every((p) => routesSrc.includes(`'${p}'`)));
   const docSrc = fs.readFileSync(path.join(ROOT, 'docs/youtube-tiktok-setup.md'), 'utf8');
   check('docs: setup doc covers Google OAuth, TikTok review, audit gate, Business Messaging', docSrc.includes('TIKTOK_SCHEDULING_AUDITED') && docSrc.includes('Business Messaging') && docSrc.includes('GOOGLE_CLIENT_ID'));
   const schedPage = fs.readFileSync(path.join(ROOT, 'apps/web/app/schedule/page.tsx'), 'utf8');
-  check('schedule page: youtube + tiktok are real platform options (instagram only coming soon)', schedPage.includes('"youtube", "tiktok"') && schedPage.includes('PLATFORM_COMING_SOON = ["instagram"]'));
+  check('schedule page: instagram + youtube + tiktok are real platform options (no coming soon)', schedPage.includes('"facebook", "instagram", "youtube", "tiktok"') && !schedPage.includes('PLATFORM_COMING_SOON'));
   const commentsPage = fs.readFileSync(path.join(ROOT, 'apps/web/app/comments/page.tsx'), 'utf8');
   check('comments page: youtube + tiktok tabs with live panel', commentsPage.includes('SocialCommentsPanel') && commentsPage.includes('"youtube"') && commentsPage.includes('"tiktok"'));
   const indexSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/index.ts'), 'utf8');
@@ -457,7 +457,7 @@ async function main() {
       method: 'POST',
       body: { caption: 'x', mediaUrls: [], mediaType: 'text', platforms: ['instagram'], scheduledAt: future },
     });
-    check('Phase A instagram post → 400 (not built yet)', badIg.status === 400, `status=${badIg.status}`);
+    check('Phase A instagram text-only post → 400 (Instagram needs media)', badIg.status === 400, `status=${badIg.status}`);
   } finally {
     runA.stop();
     await sleep(500);
