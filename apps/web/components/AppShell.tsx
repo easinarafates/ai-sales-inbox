@@ -118,7 +118,8 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     pathname === "/" ||
     pathname === "/privacy" ||
     pathname === "/forgot-password" ||
-    pathname === "/reset-password";
+    pathname === "/reset-password" ||
+    pathname.startsWith("/invoice");
   if (isAuthPage) {
     return <main className="min-h-screen">{children}</main>;
   }

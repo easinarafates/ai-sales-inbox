@@ -7,6 +7,8 @@
 import { buildBillText, buildConfirmationText } from '../orders/bill';
 import { resolveOrderContact } from '../orders/contact';
 import { findUnknownPlaceNames, unknownPlaceAskLine } from '../orders/bangladesh';
+import { newInvoiceToken, nextOrderNumber } from '../orders/order-helpers';
+import { config } from '../config';
 import { getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import { decrementStockForOrderItems } from '../products/stock';
 import { matchProductByImage } from './tools-image-match';
@@ -172,11 +174,19 @@ const createOrder: ToolFn = async (db, workspaceId, args) => {
     lines.push({ name: rows[0].name, quantity, pricePaisa: Number(rows[0].price_paisa) });
     priced.push({ productId: rows[0].id, quantity, pricePaisa: Number(rows[0].price_paisa) });
   }
+  // Order management: auto order number (ASI-0001, ...) + invoice token,
+  // and the delivery charge resolved from the owner's rules is snapshotted
+  // onto the order (so the bill/receipt never change when rules change).
+  const chargeRules = await getDeliveryChargeRules(db, workspaceId);
+  const { chargePaisa: deliveryChargePaisa } = resolveDeliveryCharge(chargeRules, contact.deliveryAddress);
+  const orderNumber = await nextOrderNumber(db, workspaceId);
+  const invoiceToken = newInvoiceToken();
   const { rows: orderRows } = await db.query<{ id: string }>(
-    `INSERT INTO orders (workspace_id, customer_id, conversation_id, source, status, payment_status, total_paisa,
+    `INSERT INTO orders (workspace_id, customer_id, conversation_id, source, status, payment_status, payment_method,
+                        total_paisa, delivery_charge_paisa, handled_by, order_number, invoice_token,
                         customer_name, customer_phone, delivery_address)
-     VALUES ($1, $2, $3, 'ai', 'pending', 'unpaid', $4, $5, $6, $7) RETURNING id`,
-    [workspaceId, customerId, conversationId, totalPaisa, contact.customerName, contact.customerPhone, contact.deliveryAddress],
+     VALUES ($1, $2, $3, 'ai', 'pending', 'unpaid', 'cod', $4, $5, 'ai', $6, $7, $8, $9, $10) RETURNING id`,
+    [workspaceId, customerId, conversationId, totalPaisa, deliveryChargePaisa, orderNumber, invoiceToken, contact.customerName, contact.customerPhone, contact.deliveryAddress],
   );
   const orderId = orderRows[0].id;
   // Post attribution (05-post-attribution.sql): if this conversation
@@ -211,21 +221,23 @@ const createOrder: ToolFn = async (db, workspaceId, args) => {
   // Requirement B + C: the order confirmation carries the delivery
   // charge from the owner's configured rules (never hardcoded) and the
   // grand total (products + delivery) — the amount the customer pays.
-  const chargeRules = await getDeliveryChargeRules(db, workspaceId);
-  const { chargePaisa: deliveryChargePaisa } = resolveDeliveryCharge(chargeRules, contact.deliveryAddress);
   const grandTotalPaisa = totalPaisa + deliveryChargePaisa;
   const confirmationContact = {
     name: contact.customerName,
     phone: contact.customerPhone,
     address: contact.deliveryAddress,
   };
+  const invoiceUrl = `${config.webAppUrl.replace(/\/$/, '')}/invoice/${invoiceToken}`;
   return {
     orderId,
+    orderNumber,
+    invoiceToken,
+    invoiceUrl,
     totalPaisa,
     deliveryChargePaisa,
     grandTotalPaisa,
     billText: buildBillText(orderId, lines, totalPaisa, confirmationContact),
-    confirmationText: buildConfirmationText(lines, totalPaisa, deliveryChargePaisa, confirmationContact),
+    confirmationText: buildConfirmationText(lines, totalPaisa, deliveryChargePaisa, confirmationContact, { orderNumber, invoiceUrl }),
     outOfStock,
     customerName: contact.customerName,
     customerPhone: contact.customerPhone,

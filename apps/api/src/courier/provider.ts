@@ -2,6 +2,7 @@
  * Courier providers — config-gated selection.
  *
  * COURIER_PROVIDER=stub (default) | pathao | steadfast | redx
+ * The order panel also offers 'sundarban' (Send to Courier picker).
  *
  * HARD RULE: never invent a tracking number or a booking confirmation.
  * - The stub provider creates only a local shipment row with status
@@ -11,14 +12,18 @@
  *   Pathao / RedX keep the same interface, but every method fails honestly
  *   with PROVIDER_NOT_CONFIGURED until real API credentials are set (see
  *   config.courier). They never return a fake booking id or tracking number.
+ * - Sundarban is NOT wired at all yet (no API integration, no credentials
+ *   in config): every call fails honestly with PROVIDER_NOT_CONFIGURED
+ *   until its API is implemented. It is listed so the owner sees it as
+ *   "not connected yet" instead of silently missing.
  */
 
 import { config } from '../config';
 import { fetchWithTimeout } from '../ai-agent/http';
 
-export type CourierProviderName = 'stub' | 'pathao' | 'steadfast' | 'redx';
+export type CourierProviderName = 'stub' | 'pathao' | 'steadfast' | 'redx' | 'sundarban';
 
-export const COURIER_PROVIDERS: CourierProviderName[] = ['stub', 'pathao', 'steadfast', 'redx'];
+export const COURIER_PROVIDERS: CourierProviderName[] = ['stub', 'pathao', 'steadfast', 'redx', 'sundarban'];
 
 /** Minimal order data a courier booking needs. */
 export interface OrderForBooking {
@@ -338,9 +343,38 @@ export function providerForName(name: string): CourierProvider {
       return new SteadfastCourierProvider();
     case 'redx':
       return new RedXCourierProvider();
+    case 'sundarban':
+      return new SundarbanCourierProvider();
     case 'stub':
     default:
       return new StubCourierProvider();
+  }
+}
+
+/**
+ * Sundarban Courier — NOT wired yet.
+ * There is no Sundarban API integration and no credential in config, so
+ * every call fails honestly with PROVIDER_NOT_CONFIGURED. It is listed
+ * (and shown in the order panel) so the owner sees it as "not connected
+ * yet" — never a fake booking. Wiring it needs the Sundarban merchant
+ * API + credentials, a follow-up, not this change.
+ */
+export class SundarbanCourierProvider implements CourierProvider {
+  readonly name: CourierProviderName = 'sundarban';
+
+  private assertConfigured(): never {
+    throw new ProviderNotConfiguredError(
+      'sundarban',
+      'সুন্দরবন কুরিয়ারের API এখনো যুক্ত হয়নি (মার্চেন্ট API + চাবি লাগবে)',
+    );
+  }
+
+  async createBooking(_order: OrderForBooking): Promise<BookingResult> {
+    this.assertConfigured();
+  }
+
+  async track(_trackingNumber: string): Promise<TrackResult> {
+    this.assertConfigured();
   }
 }
 

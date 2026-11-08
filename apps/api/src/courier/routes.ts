@@ -25,6 +25,7 @@ import {
   SteadfastCourierProvider,
   type OrderForBooking,
 } from './provider';
+import { bookCourierForOrder } from './book';
 import { getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import { processDueShipmentChecks } from './tracking-check';
 
@@ -60,7 +61,10 @@ function publicShipment(row: ShipmentRow) {
   };
 }
 
-/** POST /api/courier/bookings {orderId} → {shipment, providerConfigured, message} (201). */
+/** POST /api/courier/bookings {orderId} → {shipment, providerConfigured, message} (201).
+ * The booking itself lives in ./book (shared with the order panel's
+ * "Send to Courier", which picks a courier by name); this route keeps the
+ * env-selected provider and the same response shape. */
 courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
   const { orderId } = (req.body ?? {}) as { orderId?: string };
@@ -68,76 +72,23 @@ courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) 
     res.status(400).json({ error: 'orderId is required' });
     return;
   }
-  const order = await queryOne<{
-    id: string;
-    customer_id: string | null;
-    total_paisa: number;
-    status: string;
-    customer_name: string | null;
-    customer_phone: string | null;
-    delivery_address: string | null;
-  }>(
-    workspaceId,
-    'SELECT id, customer_id, total_paisa, status, customer_name, customer_phone, delivery_address FROM orders WHERE workspace_id = $1 AND id = $2',
-    [workspaceId, orderId],
-  );
-  if (!order) {
-    res.status(404).json({ error: 'Order not found' });
-    return;
-  }
-
-  // One shipment per order: return the existing one instead of double-booking.
-  const existing = await queryOne<ShipmentRow>(
-    workspaceId,
-    'SELECT id, order_id, courier, tracking_code, tracking_number, provider_booking_id, status, created_at FROM shipments WHERE workspace_id = $1 AND order_id = $2 ORDER BY created_at DESC LIMIT 1',
-    [workspaceId, orderId],
-  );
-  if (existing) {
-    res.status(200).json({
-      shipment: publicShipment(existing),
-      alreadyBooked: true,
-      providerConfigured: existing.provider_booking_id !== null,
-      message: 'এই অর্ডারের কুরিয়ার বুকিং আগেই করা হয়েছে।',
-    });
-    return;
-  }
-
-  const customer = order.customer_id
-    ? await queryOne<{ name: string | null; phone: string | null; address: string | null }>(
-        workspaceId,
-        'SELECT name, phone, address FROM customers WHERE workspace_id = $1 AND id = $2',
-        [workspaceId, order.customer_id],
-      )
-    : null;
-  // The order snapshot (taken when the order was placed) is the delivery
-  // contact the courier must use; the customer row is only a fallback.
-  const deliveryAddress = order.delivery_address ?? customer?.address ?? null;
-  // Requirement C: the COD includes the delivery charge from the owner's
-  // configured rules (not the hardcoded ৳100/৳130).
-  const chargeRules = await getDeliveryChargeRules(
-    { query: (text: string, params?: unknown[]) => query(workspaceId, text, params ?? []) },
-    workspaceId,
-  );
-  const { chargePaisa: deliveryChargePaisa } = resolveDeliveryCharge(chargeRules, deliveryAddress);
-  const orderForBooking: OrderForBooking = {
-    id: order.id,
-    customerId: order.customer_id,
-    totalPaisa: Number(order.total_paisa),
-    status: order.status,
-    customerName: order.customer_name ?? customer?.name ?? null,
-    customerPhone: order.customer_phone ?? customer?.phone ?? null,
-    customerAddress: deliveryAddress,
-    deliveryChargePaisa,
-  };
-
-  const provider = getCourierProvider();
-  let booking;
   try {
-    booking = await provider.createBooking(orderForBooking);
+    const result = await bookCourierForOrder(workspaceId, orderId);
+    res.status(result.alreadyBooked ? 200 : 201).json({
+      shipment: publicShipment(result.shipment),
+      provider: result.provider,
+      providerConfigured: result.providerConfigured,
+      alreadyBooked: result.alreadyBooked,
+      message: result.message,
+    });
   } catch (err) {
+    if ((err as Error & { status?: number }).status === 404) {
+      res.status(404).json({ error: 'Order not found' });
+      return;
+    }
     if (err instanceof CourierValidationError) {
       // Refused before anything was sent to the courier (bad/missing contact).
-      res.status(400).json({ error: err.message, code: err.code, provider: provider.name });
+      res.status(400).json({ error: err.message, code: err.code, provider: getCourierProvider().name });
       return;
     }
     if (err instanceof ProviderNotConfiguredError) {
@@ -145,7 +96,7 @@ courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) 
       res.status(502).json({
         error: err.message,
         code: err.code,
-        provider: provider.name,
+        provider: getCourierProvider().name,
         providerConfigured: false,
       });
       return;
@@ -153,36 +104,10 @@ courierRouter.post('/courier/bookings', async (req: AuthRequest, res: Response) 
     console.error('[courier/bookings]', err);
     res.status(502).json({
       error: 'কুরিয়ার বুকিং করা যায়নি — প্রোভাইডারের সাথে সংযোগ ব্যর্থ হয়েছে। কোনো ভুয়া বুকিং নম্বর দেওয়া হয়নি।',
-      provider: provider.name,
+      provider: getCourierProvider().name,
       providerConfigured: false,
     });
-    return;
   }
-
-  const { rows } = await query<ShipmentRow>(
-    workspaceId,
-    `INSERT INTO shipments (workspace_id, order_id, courier, tracking_code, tracking_number, provider_booking_id, status)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
-     RETURNING id, order_id, courier, tracking_code, tracking_number, provider_booking_id, status, created_at`,
-    [
-      workspaceId,
-      order.id,
-      provider.name,
-      booking.trackingNumber,
-      booking.trackingNumber,
-      booking.providerBookingId,
-      booking.status,
-    ],
-  );
-  const isStub = booking.providerBookingId === null && booking.trackingNumber === null;
-  res.status(201).json({
-    shipment: publicShipment(rows[0]),
-    provider: provider.name,
-    providerConfigured: !isStub,
-    message: isStub
-      ? 'কুরিয়ার বুকিং সংরক্ষণ করা হয়েছে, কিন্তু আসল কুরিয়ার এখনো যুক্ত হয়নি — তাই ট্র্যাকিং নম্বর এখনো পাওয়া যায়নি। কুরিয়ার যুক্ত হলে এখানেই ট্র্যাকিং নম্বর দেখা যাবে।'
-      : 'কুরিয়ার বুকিং সম্পন্ন হয়েছে।',
-  });
 });
 
 /** GET /api/courier/track/:trackingNumber → {available, status?, reason?}. */
@@ -251,17 +176,19 @@ courierRouter.get('/courier/provider', async (req: AuthRequest, res: Response) =
     steadfast: Boolean(config.courier.steadfast.apiKey && config.courier.steadfast.secretKey),
     pathao: Boolean(config.courier.pathao.clientId && config.courier.pathao.clientSecret),
     redx: Boolean(config.courier.redx.apiKey),
+    sundarban: false,
   };
   const needs: Record<string, string> = {
     stub: '',
     steadfast: 'STEADFAST_API_KEY / STEADFAST_SECRET_KEY',
     pathao: 'PATHAO_CLIENT_ID / PATHAO_CLIENT_SECRET',
     redx: 'REDX_API_KEY',
+    sundarban: 'সুন্দরবন মার্চেন্ট API (এখনো যুক্ত হয়নি)',
   };
   res.json({
     provider: current,
     configured: configured[current] ?? false,
-    providers: (['stub', 'steadfast', 'pathao', 'redx'] as const).map((name) => ({
+    providers: (['stub', 'steadfast', 'pathao', 'redx', 'sundarban'] as const).map((name) => ({
       name,
       configured: configured[name] ?? false,
       needs: needs[name] ?? '',

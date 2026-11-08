@@ -55,16 +55,25 @@ export function buildConfirmationText(
   totalPaisa: number,
   deliveryChargePaisa: number,
   contact: BillContact,
+  meta?: { orderNumber?: string | null; invoiceUrl?: string | null },
 ): string {
   const items = lines.map((l) => `• ${l.name} × ${l.quantity} — ${formatTaka(l.pricePaisa * l.quantity)}`).join('\n');
   const grandTotal = totalPaisa + deliveryChargePaisa;
-  return [
+  const head = [
     'অর্ডার কনফার্ম করা হলো ✅',
+    ...(meta?.orderNumber ? [`অর্ডার নম্বর: ${meta.orderNumber}`] : []),
+  ];
+  const tail = [
+    `ডেলিভারি চার্জ: ${formatTaka(deliveryChargePaisa)}`,
+    `মোট: ${formatTaka(grandTotal)}`,
+    ...(meta?.invoiceUrl ? [`ইনভয়েস দেখুন: ${meta.invoiceUrl}`] : []),
+  ];
+  return [
+    ...head,
     `নাম: ${contact.name ?? '—'}`,
     `ফোন: ${contact.phone ?? '—'}`,
     `ঠিকানা: ${contact.address ?? '—'}`,
     items,
-    `ডেলিভারি চার্জ: ${formatTaka(deliveryChargePaisa)}`,
-    `মোট: ${formatTaka(grandTotal)}`,
+    ...tail,
   ].join('\n');
 }

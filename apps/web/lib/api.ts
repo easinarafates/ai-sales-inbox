@@ -255,9 +255,14 @@ export type OrderStatus =
   | "on_hold"
   | "approved"
   | "processing"
+  | "ready"
   | "ready_to_ship"
   | "in_transit"
-  | "delivered";
+  | "delivered"
+  | "cancelled"
+  | "returned"
+  | "damaged"
+  | "in_store";
 
 export interface Order {
   id: string;
@@ -280,9 +285,30 @@ export interface Order {
   status?: string;
   paymentStatus?: string;
   payment_status?: string;
+  /** cod | advance | fifty_fifty (default cod). */
+  paymentMethod?: string;
+  payment_method?: string;
   totalPaisa?: number;
   total_paisa?: number;
   total?: number;
+  /** Delivery charge resolved from the owner's rules, snapshotted at order time. */
+  deliveryChargePaisa?: number;
+  delivery_charge_paisa?: number;
+  /** Grand total the customer pays (products + delivery charge). */
+  grandTotalPaisa?: number;
+  grandTotal?: number;
+  /** 'ai' (AI agent talked to the customer) or 'agent' (a human did). */
+  handledBy?: string;
+  handled_by?: string;
+  invoiceToken?: string;
+  invoice_token?: string;
+  invoiceUrl?: string;
+  receiptImageUrl?: string;
+  receipt_image_url?: string;
+  /** Delivery zone derived from the address: district + inside/outside Dhaka. */
+  zone?: { district: string | null; insideDhaka: boolean; label: string };
+  /** Estimated delivery window (Bengali date range — an estimate, no courier ETA). */
+  deliveryEstimate?: string;
   items?: OrderItem[];
   orderItems?: OrderItem[];
   order_items?: OrderItem[];
@@ -525,16 +551,17 @@ export const productsApi = {
 };
 
 export const ordersApi = {
-  list: () => api.get<Order[] | { orders: Order[] }>("/api/orders"),
+  list: (status?: string) =>
+    api.get<Order[] | { orders: Order[] }>(`/api/orders${status ? `?status=${encodeURIComponent(status)}` : ""}`),
   create: (body: Record<string, unknown>) => api.post<Order>("/api/orders", body),
   // Backend returns { order, items, events } — merge into one Order object.
   get: async (id: string) => {
-    const data = await api.get<Order | { order: Order; items?: OrderItem[]; events?: unknown[] }>(
+    const data = await api.get<Order | { order: Order; items?: OrderItem[]; events?: unknown[]; shipment?: unknown }>(
       `/api/orders/${id}`
     );
     if ((data as { order?: Order }).order) {
-      const d = data as { order: Order; items?: OrderItem[]; events?: unknown[] };
-      return { ...d.order, items: d.items ?? d.order.items ?? [], events: d.events ?? [] };
+      const d = data as { order: Order; items?: OrderItem[]; events?: unknown[]; shipment?: unknown };
+      return { ...d.order, items: d.items ?? d.order.items ?? [], events: d.events ?? [], shipment: d.shipment ?? null };
     }
     return data as Order;
   },
@@ -548,7 +575,107 @@ export const ordersApi = {
     await api.patch(`/api/orders/${id}/payment`, { paymentStatus });
     return ordersApi.get(id);
   },
+  updatePaymentMethod: async (id: string, paymentMethod: string) => {
+    await api.patch(`/api/orders/${id}/payment-method`, { paymentMethod });
+    return ordersApi.get(id);
+  },
+  /** Status counts for the tabs on top of the Orders page. */
+  counts: () => api.get<{ counts: Record<string, number>; total: number }>("/api/orders/counts"),
+  /** Today's report (Asia/Dhaka day) + courier view. */
+  report: () => api.get<{
+    date: string;
+    today: { orders: number; delivered: number; cancelled: number; returned: number; damaged: number; valuePaisa: number };
+    courier: { inTransitOrders: number; shipmentsByStatus: Record<string, number> };
+  }>("/api/orders/report"),
+  /** Customer list inside Orders — amounts are NOT in this response. */
+  customers: () => api.get<{ customers: OrderCustomer[] }>("/api/orders/customers"),
+  /** Click-to-reveal: the customer's stats + total amount + their orders. */
+  customerDetail: (customerId: string) =>
+    api.get<{
+      customer: { id: string; name: string | null; phone: string | null; picture_url: string | null };
+      stats: { orders: number; cancelled: number; returned: number; delivered: number; totalPaisa: number; lastOrderAt: string | null };
+      orders: Order[];
+    }>(`/api/orders/customers/${customerId}`),
+  /** Scan box: order number (ASI-0001), tracking number or invoice token. */
+  lookup: (q: string) => api.get<{ order: Order; items?: OrderItem[]; events?: unknown[]; shipment?: unknown }>(`/api/orders/lookup?q=${encodeURIComponent(q)}`),
+  /** "Send to Courier": book the order with a chosen courier. */
+  sendToCourier: (id: string, courier: string) =>
+    api.post<{ shipment: Shipment; provider: string; providerConfigured: boolean; alreadyBooked: boolean; message: string; order: Order }>(
+      `/api/orders/${id}/send-to-courier`, { courier }
+    ),
+  /** (Re)send the receipt (confirmation + invoice link) to the customer. */
+  sendReceipt: (id: string) =>
+    api.post<{ sent: boolean; delivery?: string; error?: string | null; invoiceUrl: string | null; orderNumber: string | null }>(
+      `/api/orders/${id}/receipt`, {}
+    ),
 };
+
+export interface OrderCustomer {
+  id: string;
+  name: string | null;
+  phone: string | null;
+  picture_url: string | null;
+  orders: number;
+  cancelled: number;
+  returned: number;
+  delivered: number;
+  last_order_at: string | null;
+}
+
+export interface Shipment {
+  id: string;
+  orderId?: string;
+  order_id?: string;
+  courier: string | null;
+  trackingCode?: string | null;
+  tracking_code?: string | null;
+  trackingNumber?: string | null;
+  tracking_number?: string | null;
+  providerBookingId?: string | null;
+  provider_booking_id?: string | null;
+  status: string | null;
+  createdAt?: string;
+  created_at?: string;
+}
+
+export interface CourierProviderOption {
+  name: string;
+  configured: boolean;
+  needs: string;
+  selected: boolean;
+}
+
+export const courierApi = {
+  provider: () => api.get<{ provider: string; configured: boolean; providers: CourierProviderOption[] }>("/api/courier/provider"),
+  shipments: () => api.get<{ shipments: Shipment[] }>("/api/courier/shipments"),
+};
+
+/** Public invoice — no login; the token is the auth. (No token is stored
+ * on this page, so the request goes out without an Authorization header.) */
+export const publicInvoiceApi = {
+  get: (token: string) => api.get<PublicInvoice>(`/api/public/invoice/${encodeURIComponent(token)}`),
+};
+
+export interface PublicInvoice {
+  orderNumber: string | null;
+  shopName: string;
+  status: string;
+  paymentStatus: string;
+  paymentMethod: string;
+  paymentMethodLabel: string;
+  customerName: string | null;
+  customerPhone: string | null;
+  deliveryAddress: string | null;
+  zone: string;
+  insideDhaka: boolean;
+  items: { name: string; quantity: number; pricePaisa: number; lineTotalPaisa: number }[];
+  totalPaisa: number;
+  deliveryChargePaisa: number;
+  grandTotalPaisa: number;
+  grandTotalText: string;
+  deliveryEstimate: string;
+  createdAt: string;
+}
 
 export const billingApi = {
   get: () => api.get<Billing>("/api/billing"),

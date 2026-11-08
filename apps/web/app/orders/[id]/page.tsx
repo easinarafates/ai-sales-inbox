@@ -2,28 +2,23 @@
 import { useCallback, useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import Link from "next/link";
-import { getToken, ordersApi, orderItemsOf, orderTotalPaisa, reviewsApi, type Order } from "@/lib/api";
-import { ORDER_STATUSES, orderSourceLabel, orderStatusLabel, statusBadge } from "@/lib/orderStatus";
+import { getToken, ordersApi, type Order } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
-import CustomerAvatar from "@/components/CustomerAvatar";
+import OrderDetailPanel from "@/components/OrderDetailPanel";
 
-// Allowed forward flow (Phase 1): pending -> approved -> processing -> ready_to_ship -> in_transit -> delivered
-// on_hold can be set from pending/approved/processing and released back.
-const NEXT_STEP: Record<string, string> = {
-  pending: "approved", approved: "processing", processing: "ready_to_ship",
-  ready_to_ship: "in_transit", in_transit: "delivered",
-};
-
+/**
+ * Order detail page — the same panel as the slide-over on the Orders
+ * list, rendered as a full page for deep links. All actions (status,
+ * payment, courier, receipt, contacts) live in OrderDetailPanel.
+ */
 export default function OrderDetailPage() {
   const params = useParams();
   const router = useRouter();
-  const { t, lang, fmtDate, fmtTaka, fmtNum } = useI18n();
+  const { t } = useI18n();
   const id = params.id as string;
   const [order, setOrder] = useState<Order | null>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   const [loading, setLoading] = useState(true);
-  const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
@@ -40,141 +35,19 @@ export default function OrderDetailPage() {
     load();
   }, [load, router]);
 
-  const changeStatus = async (status: string) => {
-    setBusy(true); setError("");
-    try {
-      setOrder(await ordersApi.updateStatus(id, status));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("orders.statusFailed", "Could not change the status.", "স্ট্যাটাস বদলানো যায়নি।"));
-    } finally { setBusy(false); }
-  };
-
-  const togglePayment = async () => {
-    if (!order) return;
-    const current = order.paymentStatus || order.payment_status;
-    const next = current === "paid" ? "unpaid" : "paid";
-    setBusy(true); setError("");
-    try {
-      setOrder(await ordersApi.updatePayment(id, next));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("orders.paymentFailed", "Could not change the payment status.", "পেমেন্ট স্ট্যাটাস বদলানো যায়নি।"));
-    } finally { setBusy(false); }
-  };
-
-  const askReview = async () => {
-    setBusy(true); setError(""); setNotice("");
-    try {
-      await reviewsApi.requestReview(id);
-      setNotice(t("orders.reviewRequested", "Review request saved — the message to the customer is not sent yet. Real sending needs Meta approval.", "রিভিউয়ের অনুরোধ সেভ হয়েছে — কাস্টমারকে মেসেজ এখনো পাঠানো হয়নি। আসল পাঠাতে Meta-র অনুমোদন লাগবে।"));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("orders.reviewRequestFailed", "Could not send the review request.", "রিভিউয়ের অনুরোধ পাঠানো যায়নি।"));
-    } finally { setBusy(false); }
-  };
-
   if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
   if (error && !order) return <div><p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg">{error}</p><Link href="/orders" className="text-brand-dark underline text-sm">{t("orders.backToList", "← Back to order list", "← অর্ডার তালিকায় ফিরুন")}</Link></div>;
   if (!order) return <p className="text-slate-500">{t("orders.detailNotFound", "Order not found.", "অর্ডার পাওয়া যায়নি।")}</p>;
 
-  const items = orderItemsOf(order);
-  const next = order.status ? NEXT_STEP[order.status] : undefined;
-  const pay = order.paymentStatus || order.payment_status;
-  // A-to-Z delivery details: the snapshot taken when the order was created
-  // first (what the customer gave at order time), then the live customer
-  // row. Older orders have neither — show an honest "not provided".
-  const notProvided = t("orders.notProvided", "Not provided", "দেওয়া হয়নি");
-  const custName = order.customer?.name || order.customerName || order.customer_name || "—";
-  const custPhone = order.customer?.phone || order.customerPhone || order.customer_phone || "";
-  const deliveryAddress = order.deliveryAddress || order.delivery_address || order.customer?.address || "";
-  const convId = order.conversationId || order.conversation_id || "";
-  const lineTotal = (it: { quantity?: number; qty?: number; pricePaisa?: number; price_paisa?: number; price?: number }) =>
-    (it.quantity ?? it.qty ?? 1) * (it.pricePaisa ?? it.price_paisa ?? it.price ?? 0);
-  const linesSum = items.reduce((s, it) => s + lineTotal(it), 0);
-
   return (
     <div>
       <Link href="/orders" className="text-brand-dark underline text-sm">{t("orders.listLink", "← Order list", "← অর্ডার তালিকা")}</Link>
-      {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mt-3">{error}</p>}
-      {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mt-3">{notice}</p>}
-
-      {/* Customer & delivery — who ordered, when, how to reach them, where to deliver. */}
-      <div className="card p-6 mt-3">
-        <div className="flex flex-wrap items-start gap-4">
-          <CustomerAvatar name={custName === "—" ? "?" : custName} pictureUrl={order.customer?.picture_url || order.customer?.pictureUrl} sizeClass="h-14 w-14" />
-          <div className="flex-1 min-w-[220px]">
-            <h1 className="text-xl font-bold">{custName}</h1>
-            <p className="text-sm mt-1"><span className="text-slate-500">{t("orders.phoneLabel", "Phone:", "ফোন:")}</span> {custPhone || <span className="text-slate-400">{notProvided}</span>}</p>
-            <p className="text-sm mt-1"><span className="text-slate-500">{t("orders.addressLabel", "Delivery address:", "ডেলিভারি ঠিকানা:")}</span> {deliveryAddress || <span className="text-slate-400">{notProvided}</span>}</p>
-          </div>
-          <div className="text-sm text-slate-600 space-y-1">
-            <p><span className="text-slate-500">{t("orders.orderIdLabel", "Order ID:", "অর্ডার আইডি:")}</span> <span className="font-mono text-xs">{order.id}</span></p>
-            <p><span className="text-slate-500">{t("orders.dateLabel", "Ordered:", "অর্ডারের সময়:")}</span> {fmtDate(order.createdAt || order.created_at)}</p>
-            <p><span className="text-slate-500">{t("orders.sourceLabel", "Channel:", "মাধ্যম:")}</span> {orderSourceLabel(order.source, lang)}</p>
-            {convId && <p><Link href={`/inbox?conversation=${convId}`} className="text-brand-dark underline">{t("orders.viewChat", "View chat in Inbox →", "ইনবক্সে চ্যাট দেখুন →")}</Link></p>}
-          </div>
-        </div>
-      </div>
-
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mt-3">
-        {/* Bill view */}
-        <div className="card p-6">
-          <h1 className="text-xl font-bold">{t("orders.bill", "Bill", "বিল")} — {order.orderNumber || order.order_number || order.id.slice(0, 8)}</h1>
-          <p className="text-sm text-slate-500 mt-1">{t("orders.billDate", "Date:", "তারিখ:")} {fmtDate(order.createdAt || order.created_at)}</p>
-          <p className="text-sm mt-1">{t("orders.customerLabel", "Customer:", "কাস্টমার:")} {custName}{custPhone ? ` • ${custPhone}` : ` • ${notProvided}`}</p>
-          <div className="flex gap-2 mt-3">{statusBadge(order.status, lang)}
-            <span className={`text-xs px-2 py-0.5 rounded ${pay === "paid" ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}`}>{pay === "paid" ? t("orders.paymentPaid", "Paid", "পরিশোধিত") : t("orders.paymentUnpaid", "Unpaid", "অপরিশোধিত")}</span>
-          </div>
-          <table className="w-full text-sm mt-4">
-            <thead><tr className="table-head border-b text-left text-slate-500"><th className="py-2">{t("orders.thItem", "Item", "আইটেম")}</th><th className="py-2 text-right">{t("orders.thQty", "Quantity", "পরিমাণ")}</th><th className="py-2 text-right">{t("orders.thPrice", "Price", "দাম")}</th><th className="py-2 text-right">{t("orders.thLineTotal", "Line total", "লাইন মোট")}</th></tr></thead>
-            <tbody>
-              {items.length === 0 && <tr><td colSpan={4} className="py-3 text-slate-500">{t("orders.noItems", "No item details found.", "কোনো আইটেমের বিবরণ পাওয়া যায়নি।")}</td></tr>}
-              {items.map((it, i) => (
-                <tr key={it.id || i} className="border-b">
-                  <td className="py-2">{it.productName || it.product_name || it.name || it.productId || it.product_id || t("orders.itemFallback", "Item", "আইটেম")}</td>
-                  <td className="py-2 text-right">{fmtNum(it.quantity ?? it.qty ?? 1)}</td>
-                  <td className="py-2 text-right">{fmtTaka(it.pricePaisa ?? it.price_paisa ?? it.price ?? 0)}</td>
-                  <td className="py-2 text-right">{fmtTaka(lineTotal(it))}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          <p className="text-right font-bold text-lg mt-3">{t("common.total", "Total", "মোট")}: {fmtTaka(orderTotalPaisa(order))}</p>
-          {items.length > 0 && linesSum !== orderTotalPaisa(order) && (
-            <p className="text-right text-xs text-red-600 mt-1">{t("orders.totalMismatch", "Line items add up to a different total — please check.", "আইটেমগুলোর যোগফল মোটের সাথে মিলছে না — দেখে নিন।")}</p>
-          )}
-        </div>
-
-        {/* Actions */}
-        <div className="card p-6 h-fit">
-          <h2 className="font-bold mb-3">{t("orders.manage", "Manage order", "অর্ডার পরিচালনা")}</h2>
-          <p className="text-sm text-slate-500 mb-3">{t("orders.currentStep", "Current step:", "বর্তমান ধাপ:")} <b>{orderStatusLabel(order.status, lang)}</b></p>
-          <div className="flex flex-wrap gap-2">
-            {next && (
-              <button disabled={busy} onClick={() => changeStatus(next)} className="bg-brand text-white px-4 py-2 rounded-lg text-sm hover:bg-brand-dark disabled:opacity-50">
-                {t("orders.nextStep", "Next step:", "পরের ধাপ:")} {orderStatusLabel(next, lang)}
-              </button>
-            )}
-            {order.status !== "on_hold" && order.status !== "delivered" && (
-              <button disabled={busy} onClick={() => changeStatus("on_hold")} className="bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-50">{t("orders.hold", "Put on hold", "হোল্ডে রাখুন")}</button>
-            )}
-            {order.status === "on_hold" && (
-              <button disabled={busy} onClick={() => changeStatus("pending")} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">{t("orders.releaseHold", "Release hold (pending)", "হোল্ড ছাড়ুন (অপেক্ষমাণ)")}</button>
-            )}
-            <button disabled={busy} onClick={togglePayment} className="bg-amber-500 text-white px-4 py-2 rounded-lg text-sm disabled:opacity-50">
-              {pay === "paid" ? t("orders.markUnpaid", "Mark as unpaid", "অপরিশোধিত করুন") : t("orders.markPaid", "Mark as paid", "পরিশোধিত করুন")}
-            </button>
-            <button disabled={busy} onClick={askReview} className="bg-white border border-green-600 text-green-700 px-4 py-2 rounded-lg text-sm hover:bg-green-50 disabled:opacity-50">
-              {t("orders.askReview", "Ask for review", "রিভিউ চান")}
-            </button>
-          </div>
-          <h3 className="font-bold mt-5 mb-2 text-sm">{t("orders.allSteps", "All steps", "সব ধাপ")}</h3>
-          <ol className="space-y-1 text-sm">
-            {ORDER_STATUSES.map((s) => (
-              <li key={s} className={s === order.status ? "font-bold text-brand-dark" : "text-slate-500"}>
-                {s === order.status ? "● " : "○ "}{orderStatusLabel(s, lang)}
-              </li>
-            ))}
-          </ol>
-        </div>
+      <div className="mt-3">
+        <OrderDetailPanel
+          order={order}
+          shipment={(order as Order & { shipment?: unknown }).shipment as never}
+          onOrderChange={setOrder}
+        />
       </div>
     </div>
   );

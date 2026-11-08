@@ -13,6 +13,7 @@ import { whatsappOAuthRouter } from './channels/whatsapp-oauth';
 import { inboxRouter } from './inbox/routes';
 import { knowledgeRouter } from './knowledge/routes';
 import { ordersRouter } from './orders/routes';
+import { publicInvoiceRouter } from './orders/public-invoice';
 import { productsRouter } from './products/routes';
 import { webhooksRouter } from './webhooks/routes';
 import { tiktokDmRouter } from './webhooks/tiktok-dm';
@@ -119,6 +120,10 @@ app.use('/api/channels', channelsRouter);
 app.use('/api/inbox', inboxRouter);
 app.use('/api/products', productsRouter);
 app.use('/api/orders', ordersRouter);
+// Public invoice: GET /api/public/invoice/:token — no login, the token is
+// the auth (same public-mount rule as website-chat above: it must not sit
+// behind any requireAuth).
+app.use('/api/public', publicInvoiceRouter);
 app.use('/api/billing', billingRouter);
 app.use('/api', knowledgeRouter); // /api/knowledge + /api/unanswered
 // Phase 2/3 (routers carry full /api/... paths).
