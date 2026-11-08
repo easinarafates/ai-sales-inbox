@@ -6,6 +6,7 @@ import { Router, type Response } from 'express';
 import { del, put } from '@vercel/blob';
 import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { config } from '../config';
+import { isMailerConfigured, sendMail } from '../mailer';
 import { pool, query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth, signToken } from './auth';
@@ -152,14 +153,15 @@ authRouter.post('/login', async (req: AuthRequest, res: Response) => {
  * 1 hour) is stored as a SHA-256 hash and any older unused tokens for
  * that user are invalidated, so only the latest link works.
  *
- * DELIVERY GAP (honest): there is NO email sender in this codebase
- * (no SMTP / Resend / SendGrid), so the reset link cannot be emailed
- * yet. The token is stored and the reset endpoint below is complete
- * and tested — but until a mailer is wired, the link has nowhere to
- * go. The token is deliberately NEVER returned in the response:
- * returning it would let anyone reset anyone's password. Wire a
- * mailer, then send `${WEB_APP_URL}/reset-password?token=<token>` here.
- * Do NOT "fix" this by returning the token.
+ * DELIVERY: the reset link is emailed when a Resend mailer is configured
+ * (src/mailer.ts — env RESEND_API_KEY, optional RESEND_FROM). When no
+ * mailer is configured the link is stored but NOT sent: the route logs
+ * "no mailer configured" and the reply carries mailerConfigured=false
+ * so the UI can say so honestly instead of claiming an email went out.
+ * The token is stored only as a SHA-256 hash and is deliberately NEVER
+ * returned in the response: returning it would let anyone reset
+ * anyone's password. Send failures are logged and never fail the
+ * request — the reply stays the same generic message either way.
  */
 authRouter.post('/forgot-password', async (req: AuthRequest, res: Response) => {
   const { email } = (req.body ?? {}) as { email?: string };
@@ -186,16 +188,56 @@ authRouter.post('/forgot-password', async (req: AuthRequest, res: Response) => {
         'INSERT INTO password_resets (user_id, token_hash, expires_at) VALUES ($1, $2, $3)',
         [user.id, tokenHash, expiresAt],
       );
-      // TODO (needs a mailer — none configured): email the reset link
-      // `${WEB_APP_URL}/reset-password?token=${token}` to normalisedEmail.
-      console.log(
-        `[auth/forgot-password] reset requested for user ${user.id as string} — no mailer configured, link NOT sent`,
-      );
+      // The reset link goes out by email when a Resend mailer is
+      // configured (see src/mailer.ts — env RESEND_API_KEY, optional
+      // RESEND_FROM). When no mailer is configured the link is stored but
+      // NOT sent — the honest fallback: log it and send nothing, never
+      // claim an email went out. A send failure is logged the same way
+      // and never fails the request (the reply stays generic either way).
+      // The token is deliberately NEVER returned in the response:
+      // returning it would let anyone reset anyone's password.
+      const resetLink = `${config.webAppUrl}/reset-password?token=${token}`;
+      if (isMailerConfigured()) {
+        try {
+          await sendMail({
+            to: normalisedEmail,
+            subject: 'AI Sales Inbox — পাসওয়ার্ড রিসেট লিংক / Password reset link',
+            text: [
+              'আসসালামু আলাইকুম,',
+              '',
+              'আপনার AI Sales Inbox অ্যাকাউন্টের পাসওয়ার্ড বদলাতে নিচের লিংকে ক্লিক করুন। লিংকটি ১ ঘণ্টা পর্যন্ত কাজ করবে।',
+              resetLink,
+              '',
+              'আপনি এই অনুরোধ না করে থাকলে এই ইমেইলটি উপেক্ষা করুন — আপনার পাসওয়ার্ড বদলাবে না।',
+              '',
+              '---',
+              'Hello,',
+              '',
+              'To reset your AI Sales Inbox password, click the link below. The link works for 1 hour.',
+              resetLink,
+              '',
+              'If you did not request this, please ignore this email — your password will not change.',
+            ].join('\n'),
+          });
+          console.log(`[auth/forgot-password] reset link emailed to ${normalisedEmail}`);
+        } catch (err) {
+          console.error('[auth/forgot-password] failed to send reset email:', (err as Error).message);
+        }
+      } else {
+        console.log(
+          `[auth/forgot-password] reset requested for user ${user.id as string} — no mailer configured, link NOT sent`,
+        );
+      }
     }
   } catch (err) {
     console.error('[auth/forgot-password]', err);
   }
-  res.json({ message: RESET_GENERIC_MESSAGE });
+  // mailerConfigured says only whether this platform has an SMTP mailer
+  // set up — it never depends on whether the email has an account, so
+  // the reply still reveals nothing about who is registered. The UI
+  // uses it to show the honest message ("check your inbox" vs "no
+  // email was sent — email delivery isn't set up yet").
+  res.json({ message: RESET_GENERIC_MESSAGE, mailerConfigured: isMailerConfigured() });
 });
 
 /**

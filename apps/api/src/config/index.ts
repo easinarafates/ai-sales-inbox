@@ -134,6 +134,20 @@ export const config = {
    * WEB_APP_URL to https://ai-sales-inbox-web.vercel.app.
    */
   webAppUrl: optional('WEB_APP_URL', 'http://localhost:3000'),
+  /**
+   * Password-reset email (Resend HTTP API) — env only. RESEND_API_KEY
+   * is the only required setting; when it is missing the mailer is OFF
+   * and forgot-password keeps its honest no-mail behaviour (it logs
+   * that no mailer is configured and sends nothing — it never claims
+   * an email was sent). RESEND_FROM defaults to Resend's onboarding
+   * sender (delivers only to the Resend account's own email until a
+   * domain is verified — set a verified-domain sender to reach anyone).
+   * The key lives only in env / Vercel env — never in code, never logged.
+   */
+  resend: {
+    apiKey: process.env.RESEND_API_KEY ?? '',
+    from: process.env.RESEND_FROM ?? 'onboarding@resend.dev',
+  },
   webchatSecret: process.env.WEBCHAT_SECRET ?? '',
   seedDemo: process.env.SEED_DEMO === 'true',
   /**

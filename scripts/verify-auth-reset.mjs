@@ -12,10 +12,13 @@
  *    enumeration); POST /api/auth/reset-password accepts a valid token
  *    once (new password logs in, old one stops working, reuse fails),
  *    rejects garbage / expired tokens with 400. Tokens are stored only
- *    as SHA-256 hashes. (The emailed LINK is not testable here: there is
- *    no mailer in the codebase yet — see the DELIVERY GAP note in
- *    routes.ts. The verifier inserts a reset row directly into the
- *    local PGlite DB to test the consume path honestly.)
+ *    as SHA-256 hashes. The emailed LINK is not testable here by a real
+ *    send (no Resend key in this repo): the verifier inserts a
+ *    reset row directly into the local PGlite DB to test the consume
+ *    path honestly, and tests the mailer by behaviour — no Resend key →
+ *    mailerConfigured=false + "no mailer configured" in the log; an
+ *    invalid Resend key → still 200 generic with mailerConfigured=true
+ *    and the failure logged, never a hang or 500.
  * (b) Facebook account switching:
  *  - GET /api/channels/{facebook,instagram,whatsapp}/login without
  *    META_APP_ID → 503 (unchanged); with a dummy app id → 200 with a
@@ -170,9 +173,23 @@ async function main() {
   check('forgot-password endpoint exists', routesSrc.includes("'/forgot-password'"));
   check('reset-password endpoint exists', routesSrc.includes("'/reset-password'"));
   check('reset tokens are stored as SHA-256 hashes, never plain', routesSrc.includes("createHash('sha256')") && !routesSrc.includes('token, expires_at'));
-  check('forgot-password answers with the generic message only', routesSrc.includes('RESET_GENERIC_MESSAGE') && routesSrc.includes('res.json({ message: RESET_GENERIC_MESSAGE })'));
+  check('forgot-password answers generic + mailerConfigured flag (never the token)', routesSrc.includes('RESET_GENERIC_MESSAGE') && routesSrc.includes('res.json({ message: RESET_GENERIC_MESSAGE, mailerConfigured: isMailerConfigured() })'));
   check('reset marks the token used (single-use) + 1h expiry', routesSrc.includes('used_at = now()') && routesSrc.includes('RESET_TOKEN_TTL_MS'));
-  check('routes document the missing-mailer delivery gap honestly', routesSrc.includes('DELIVERY GAP') && routesSrc.includes('no mailer'));
+  check('routes document the mailer + honest no-mailer fallback', routesSrc.includes('DELIVERY:') && routesSrc.includes('sendMail') && routesSrc.includes('mailerConfigured'));
+
+  // --- Forgot-password fixes (2026-11-08): AppShell + mailer ---
+  const shellSrc = fs.readFileSync(path.join(ROOT, 'apps/web/components/AppShell.tsx'), 'utf8');
+  check('AppShell treats /forgot-password + /reset-password as public auth pages', shellSrc.includes('"/forgot-password"') && shellSrc.includes('"/reset-password"'));
+  const mailerSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/mailer.ts'), 'utf8');
+  check('mailer reads Resend only from env (RESEND_API_KEY/RESEND_FROM) + posts to api.resend.com', mailerSrc.includes('RESEND_API_KEY') && mailerSrc.includes('RESEND_FROM') && mailerSrc.includes('https://api.resend.com/emails') && !mailerSrc.includes('nodemailer') && !mailerSrc.includes('SMTP'));
+  check('mailer exposes isMailerConfigured + sendMail, never logs anything (key never printed)', mailerSrc.includes('isMailerConfigured') && mailerSrc.includes('sendMail') && !mailerSrc.includes('console.log'));
+  const cfgSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/config/index.ts'), 'utf8');
+  check('config has resend block (apiKey/from, onboarding default)', cfgSrc.includes('resend:') && cfgSrc.includes('RESEND_API_KEY') && cfgSrc.includes('onboarding@resend.dev') && !cfgSrc.includes('SMTP_HOST'));
+  check('routes call sendMail with the reset link', routesSrc.includes('sendMail({') && routesSrc.includes('reset-password?token=${token}'));
+  const fpPage = fs.readFileSync(path.join(ROOT, 'apps/web/app/forgot-password/page.tsx'), 'utf8');
+  check('forgot-password page honours mailerConfigured (emailed vs not-sent copy)', fpPage.includes('mailerConfigured') && fpPage.includes('auth.resetLinkEmailed'));
+  const dictSrc = fs.readFileSync(path.join(ROOT, 'apps/web/lib/i18n-dict.ts'), 'utf8');
+  check('i18n has resetLinkEmailed (EN + BN)', dictSrc.includes('auth.resetLinkEmailed') && dictSrc.includes('Check your inbox (and spam folder)') && dictSrc.includes('ইনবক্স (আর স্প্যাম ফোল্ডার) দেখো'));
 
   const metaSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/meta-oauth.ts'), 'utf8');
   check('loginUrl supports reauthenticate (auth_type)', metaSrc.includes('reauthenticate') && metaSrc.includes("auth_type', 'reauthenticate"));
@@ -244,6 +261,9 @@ async function main() {
     });
     check('forgot-password (known email) → 200 generic', forgotKnown.status === 200 && typeof forgotKnown.data?.message === 'string', `status=${forgotKnown.status}`);
     check('forgot-password (unknown email) → same 200 generic (no enumeration)', forgotUnknown.status === 200 && forgotUnknown.data?.message === forgotKnown.data?.message, `status=${forgotUnknown.status}`);
+    check('forgot-password (known) → mailerConfigured false (no Resend key in test env)', forgotKnown.data?.mailerConfigured === false, `mailerConfigured=${forgotKnown.data?.mailerConfigured}`);
+    check('forgot-password (unknown) → mailerConfigured false too (no enumeration)', forgotUnknown.data?.mailerConfigured === false, `mailerConfigured=${forgotUnknown.data?.mailerConfigured}`);
+    check('forgot-password reply has no token field', forgotKnown.data?.token === undefined && forgotUnknown.data?.token === undefined);
     const forgotNoEmail = await api('/api/auth/forgot-password', { method: 'POST', auth: false, body: {} });
     check('forgot-password without email → 400', forgotNoEmail.status === 400, `status=${forgotNoEmail.status}`);
 
@@ -264,6 +284,41 @@ async function main() {
     runA.stop();
     await sleep(2000);
   }
+  check('API A log says no mailer configured (honest fallback, nothing sent)', runA.log().includes('no mailer configured'));
+
+  // ---------- Live API: run C (Resend key present but invalid) ----------
+  // A mailer whose key Resend rejects must fail gracefully: the request
+  // still answers 200 generic with mailerConfigured=true, and the
+  // failure is logged — never a hang, never a 500, never the token in
+  // the reply. (The key is fake, so Resend answers 401.)
+  const portC = 4413;
+  const dirC = '.pglite-data-auth-c';
+  const baseC = `http://localhost:${portC}`;
+  rmDir(dirC);
+  const runC = startApi(portC, dirC, {
+    META_APP_ID: '', META_APP_SECRET: '',
+    RESEND_API_KEY: 're_testkey_invalid_123',
+  });
+  try {
+    check('API C starts (health)', await waitForHealth(baseC));
+    const api = makeApi(baseC);
+    const signupC = await api('/api/auth/signup', {
+      method: 'POST', auth: false,
+      body: { name: 'Mail Test', email: `mail-test+${stamp}@example.com`, password: 'verify1234', workspaceName: 'Mail Shop' },
+    });
+    check('API C signup → 201', signupC.status === 201, `status=${signupC.status}`);
+    const forgotC = await api('/api/auth/forgot-password', {
+      method: 'POST', auth: false, body: { email: `mail-test+${stamp}@example.com` },
+    });
+    check('forgot-password with invalid Resend key → still 200 generic', forgotC.status === 200 && typeof forgotC.data?.message === 'string', `status=${forgotC.status}`);
+    check('forgot-password with invalid Resend key → mailerConfigured true', forgotC.data?.mailerConfigured === true, `mailerConfigured=${forgotC.data?.mailerConfigured}`);
+    check('forgot-password reply has no token field (run C)', forgotC.data?.token === undefined);
+  } finally {
+    runC.stop();
+    await sleep(2000);
+    rmDir(dirC);
+  }
+  check('API C log records the send failure (graceful, not a crash)', runC.log().includes('failed to send reset email'));
 
   // Insert reset rows directly into the PGlite dir (API stopped), then
   // restart the same API and exercise the real reset endpoint.

@@ -59,7 +59,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return () => document.removeEventListener("mousedown", onDocClick);
   }, [bellOpen]);
 
-  const isAuthPage = pathname === "/login" || pathname === "/signup" || pathname === "/" || pathname === "/privacy";
+  const isAuthPage =
+    pathname === "/login" ||
+    pathname === "/signup" ||
+    pathname === "/" ||
+    pathname === "/privacy" ||
+    pathname === "/forgot-password" ||
+    pathname === "/reset-password";
   if (isAuthPage) {
     return <main className="min-h-screen">{children}</main>;
   }

@@ -8,6 +8,10 @@ export default function ForgotPasswordPage() {
   const { t } = useI18n();
   const [email, setEmail] = useState("");
   const [sent, setSent] = useState(false);
+  // Whether the platform has an email sender configured (from the API
+  // reply — it never says whether THIS email has an account). The page
+  // must not claim an email was sent when it was not.
+  const [mailerConfigured, setMailerConfigured] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -16,7 +20,8 @@ export default function ForgotPasswordPage() {
     setError("");
     setLoading(true);
     try {
-      await authApi.forgotPassword({ email });
+      const res = await authApi.forgotPassword({ email });
+      setMailerConfigured(res.mailerConfigured === true);
       // The API always answers the same way (even for unknown emails),
       // so this screen never reveals whether the email has an account.
       setSent(true);
@@ -35,14 +40,16 @@ export default function ForgotPasswordPage() {
             <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-base font-bold text-white shadow-sm">AI</span>
             <div className="min-w-0">
               <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("auth.forgotPassword", "Forgot password?", "পাসওয়ার্ড ভুলে গেছো?")}</h1>
-              <p className="text-sm text-slate-500">{t("auth.forgotSubtitle", "Enter the email you signed up with. Email delivery isn't set up yet, so a reset link can't be emailed right now.", "যে ইমেইল দিয়ে সাইন আপ করেছিলে সেটা লেখো। ইমেইল পাঠানো এখনো চালু হয়নি, তাই এখন রিসেট লিংক ইমেইলে যাবে না।")}</p>
+              <p className="text-sm text-slate-500">{t("auth.forgotSubtitle", "Enter the email you signed up with. We'll send a password reset link to that email.", "যে ইমেইল দিয়ে সাইন আপ করেছিলে সেটা লেখো। ওই ইমেইলে পাসওয়ার্ড বদলানোর লিংক পাঠানো হবে।")}</p>
             </div>
           </div>
           <LanguageToggle />
         </div>
         {sent ? (
           <p className="rounded-lg bg-green-50 p-3 text-sm text-green-700">
-            {t("auth.resetLinkSent", "Request saved. No email was sent — email delivery isn't set up yet. To reset your password, please contact the site owner.", "অনুরোধ জমা হয়েছে। কোনো ইমেইল পাঠানো হয়নি — ইমেইল পাঠানো এখনো চালু হয়নি। পাসওয়ার্ড বদলাতে সাইটের মালিকের সাথে যোগাযোগ করো।")}
+            {mailerConfigured
+              ? t("auth.resetLinkEmailed", "If this email has an account, a reset link has been sent. Check your inbox (and spam folder).", "এই ইমেইলে অ্যাকাউন্ট থাকলে রিসেট লিংক পাঠানো হয়েছে। ইনবক্স (আর স্প্যাম ফোল্ডার) দেখো।")
+              : t("auth.resetLinkSent", "Request saved. No email was sent — email delivery isn't set up yet. To reset your password, please contact the site owner.", "অনুরোধ জমা হয়েছে। কোনো ইমেইল পাঠানো হয়নি — ইমেইল পাঠানো এখনো চালু হয়নি। পাসওয়ার্ড বদলাতে সাইটের মালিকের সাথে যোগাযোগ করো।")}
           </p>
         ) : (
           <>

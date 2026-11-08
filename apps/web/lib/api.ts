@@ -378,9 +378,9 @@ export const authApi = {
       workspace: res.workspace ?? (res.workspaceId ? { id: res.workspaceId } : undefined),
     } as AuthResponse;
   },
-  /** Ask for a password-reset link (always the same generic reply). */
+  /** Ask for a password-reset link (always the same generic reply). mailerConfigured says only whether this platform has an SMTP mailer set up — never whether the email has an account. */
   forgotPassword: (body: { email: string }) =>
-    api.post<{ message: string }>("/api/auth/forgot-password", body),
+    api.post<{ message: string; mailerConfigured?: boolean }>("/api/auth/forgot-password", body),
   /** Finish a reset with the token from the emailed link. */
   resetPassword: (body: { token: string; password: string }) =>
     api.post<{ message: string }>("/api/auth/reset-password", body),
