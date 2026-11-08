@@ -27,6 +27,9 @@ interface BellNotification {
   body: string;
   conversation_id: string | null;
   customer_name: string | null;
+  order_id: string | null;
+  /** The PENDING cancel request for this order (cancel_request type only). NULL when there is no pending request, so the bell shows no Cancel button. */
+  cancel_request_id: string | null;
   is_read: boolean;
   created_at: string;
 }
@@ -65,6 +68,12 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const [bellOpen, setBellOpen] = useState(false);
   const [notifications, setNotifications] = useState<BellNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
+  // Cancel-request actions in the bell: ids currently being approved
+  // (button disabled while the request is in flight) and ids whose order
+  // was just cancelled from the bell (show a "Cancelled" line instead of
+  // the Cancel button — never leave a clickable Cancel for a handled order).
+  const [cancellingIds, setCancellingIds] = useState<Set<string>>(new Set());
+  const [cancelDoneIds, setCancelDoneIds] = useState<Set<string>>(new Set());
   const bellRef = useRef<HTMLDivElement>(null);
 
   // Bell feed: real notifications from the API (escalation alerts).
@@ -90,16 +99,55 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const openNotification = async (n: BellNotification) => {
-    setBellOpen(false);
+  const markRead = async (n: BellNotification) => {
     try {
       await api.post(`/api/notifications/${n.id}/read`);
       setNotifications((prev) => prev.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)));
       setUnreadCount((c) => Math.max(0, c - (n.is_read ? 0 : 1)));
     } catch {
-      // Mark-read failed — still open the conversation.
+      // Mark-read failed — the notification stays unread.
     }
+  };
+
+  const openNotification = async (n: BellNotification) => {
+    setBellOpen(false);
+    await markRead(n);
     if (n.conversation_id) router.push(`/inbox?conversation=${n.conversation_id}`);
+  };
+
+  // "Cancel Order" on a cancel-request notification: this IS the owner's
+  // approval — POST /api/orders/cancel-requests/:id/approve cancels the
+  // order and tells the customer. On success the notification is marked
+  // read and the Cancel button goes away (a "Cancelled" line shows
+  // instead). On 409 the request was already decided / the order already
+  // cancelled, so the button also goes away (nothing left to approve).
+  // Any other failure leaves the button so the owner can retry.
+  const approveCancel = async (n: BellNotification) => {
+    if (!n.cancel_request_id || cancellingIds.has(n.id)) return;
+    setCancellingIds((prev) => new Set(prev).add(n.id));
+    try {
+      await api.post(`/api/orders/cancel-requests/${n.cancel_request_id}/approve`);
+      await markRead(n);
+      setNotifications((prev) =>
+        prev.map((x) => (x.id === n.id ? { ...x, cancel_request_id: null, is_read: true } : x)),
+      );
+      setCancelDoneIds((prev) => new Set(prev).add(n.id));
+    } catch (err) {
+      const status = (err as { status?: number })?.status;
+      if (status === 409) {
+        await markRead(n);
+        setNotifications((prev) =>
+          prev.map((x) => (x.id === n.id ? { ...x, cancel_request_id: null, is_read: true } : x)),
+        );
+      }
+      // Other failures: leave the button so the owner can retry.
+    } finally {
+      setCancellingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(n.id);
+        return next;
+      });
+    }
   };
 
   // Close the bell dropdown when the user taps anywhere else.
@@ -167,18 +215,49 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     </p>
                   ) : (
                     <ul className="max-h-96 overflow-y-auto">
-                      {notifications.map((n) => (
-                        <li key={n.id}>
-                          <button
-                            onClick={() => openNotification(n)}
-                            className={`block w-full px-4 py-3 text-left hover:bg-orange-50 ${n.is_read ? "" : "bg-[#fff1ea]"}`}
-                          >
-                            <p className="text-sm font-bold text-slate-900">{n.title}</p>
-                            <p className="mt-0.5 text-sm text-slate-600">{n.body}</p>
-                            <p className="mt-1 text-xs text-slate-400">{formatDate(n.created_at)}</p>
-                          </button>
-                        </li>
-                      ))}
+                      {notifications.map((n) => {
+                        // Only a cancel-request notification with a PENDING
+                        // request gets the two action buttons. Other types
+                        // keep the plain click-to-open behaviour.
+                        const showCancelActions = n.type === "cancel_request" && !!n.cancel_request_id;
+                        const cancelling = cancellingIds.has(n.id);
+                        const cancelled = cancelDoneIds.has(n.id);
+                        return (
+                          <li key={n.id} className={`hover:bg-orange-50 ${n.is_read ? "" : "bg-[#fff1ea]"}`}>
+                            <button
+                              onClick={() => openNotification(n)}
+                              className="block w-full px-4 pt-3 text-left"
+                            >
+                              <p className="text-sm font-bold text-slate-900">{n.title}</p>
+                              <p className="mt-0.5 text-sm text-slate-600">{n.body}</p>
+                              <p className="mt-1 text-xs text-slate-400">{formatDate(n.created_at)}</p>
+                            </button>
+                            {cancelled ? (
+                              <p className="px-4 pb-3 pt-1 text-xs font-bold text-green-700">
+                                ✓ {t("header.orderCancelled", "Order cancelled", "অর্ডার ক্যান্সেল করা হয়েছে")}
+                              </p>
+                            ) : showCancelActions ? (
+                              <div className="flex gap-2 px-4 pb-3 pt-2">
+                                <button
+                                  onClick={() => approveCancel(n)}
+                                  disabled={cancelling}
+                                  className="rounded-lg bg-[#ff5b2e] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#e04e26] disabled:opacity-50"
+                                >
+                                  {cancelling
+                                    ? t("header.cancelling", "Cancelling…", "ক্যান্সেল হচ্ছে…")
+                                    : t("header.cancelOrder", "Cancel Order", "ক্যান্সেল অর্ডার")}
+                                </button>
+                                <button
+                                  onClick={() => openNotification(n)}
+                                  className="rounded-lg border border-[#eeeeee] bg-white px-3 py-1.5 text-xs font-bold text-slate-700 hover:bg-orange-50"
+                                >
+                                  {t("header.openChat", "Open Chat", "ওপেন চ্যাট")}
+                                </button>
+                              </div>
+                            ) : null}
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>

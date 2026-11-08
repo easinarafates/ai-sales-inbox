@@ -654,9 +654,9 @@ ordersRouter.patch('/:id/status', async (req: AuthRequest, res: Response) => {
     res.status(400).json({ error: `status must be one of: ${ORDER_STATUSES.join(', ')}` });
     return;
   }
-  const order = await queryOne<{ id: string; status: string }>(
+  const order = await queryOne<{ id: string; status: string; conversation_id: string | null; order_number: string | null; customer_id: string | null }>(
     workspaceId,
-    'SELECT id, status FROM orders WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, status, conversation_id, order_number, customer_id FROM orders WHERE workspace_id = $1 AND id = $2',
     [workspaceId, req.params.id],
   );
   if (!order) {
@@ -680,15 +680,48 @@ ordersRouter.patch('/:id/status', async (req: AuthRequest, res: Response) => {
       [workspaceId, req.params.id, order.status, status],
     );
     await client.query('COMMIT');
-    const full = await loadFullOrder(workspaceId, req.params.id);
-    res.json(full ?? { order: { id: req.params.id, status } });
   } catch (err) {
     await client.query('ROLLBACK').catch(() => undefined);
     console.error('[orders/status]', err);
     res.status(500).json({ error: 'Status update failed' });
+    return;
   } finally {
     client.release();
   }
+  const full = await loadFullOrder(workspaceId, req.params.id);
+  const base = full ?? { order: { id: req.params.id, status } };
+  if (status !== 'cancelled') {
+    res.json(base);
+    return;
+  }
+  // Website-side cancellation: the customer MUST be told (same wording
+  // as the cancel-request approve path). Only when the status actually
+  // changed TO cancelled (the same-status early return above means this
+  // never fires for an already-cancelled order). Best-effort and reported
+  // honestly — a failed send (e.g. the 24h Messenger window expired)
+  // never rolls back the cancellation; the owner can message the
+  // customer by hand from the Inbox.
+  let cancelNotified = false;
+  let cancelNotifyError: string | null = null;
+  if (!order.conversation_id) {
+    cancelNotifyError = 'এই অর্ডারের কোনো মেসেঞ্জার চ্যাট নেই — কাস্টমারকে নিজে জানান।';
+  } else {
+    const customer = order.customer_id
+      ? await queryOne<{ gender: string | null }>(
+          workspaceId,
+          'SELECT gender FROM customers WHERE workspace_id = $1 AND id = $2',
+          [workspaceId, order.customer_id],
+        )
+      : null;
+    const sal = customer?.gender === 'male' ? 'স্যার' : customer?.gender === 'female' ? 'ম্যাডাম' : '';
+    const text = sal
+      ? `${sal}, আপনার অর্ডারটি (${order.order_number ?? ''}) ক্যান্সেল করা হয়েছে।`
+      : `আপনার অর্ডারটি (${order.order_number ?? ''}) ক্যান্সেল করা হয়েছে।`;
+    const result = await deliverOutgoingMessage(workspaceId, order.conversation_id, text);
+    cancelNotified = result.sent;
+    cancelNotifyError = result.error ?? null;
+  }
+  res.json({ ...base, cancelNotified, cancelNotifyError });
 });
 
 /** PATCH /api/orders/:id/payment {paymentStatus} — unpaid | paid. */

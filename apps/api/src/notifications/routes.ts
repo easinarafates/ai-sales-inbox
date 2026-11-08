@@ -24,6 +24,8 @@ interface NotificationRow {
   conversation_id: string | null;
   customer_id: string | null;
   order_id: string | null;
+  /** The PENDING cancel request for this order (cancel_request type only) — the bell's "Cancel Order" button approves it. NULL when there is no pending request (already decided / not a cancel request), so the bell shows no Cancel button. */
+  cancel_request_id: string | null;
   customer_name: string | null;
   is_read: boolean;
   created_at: string;
@@ -35,9 +37,13 @@ notificationsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const { rows } = await query<NotificationRow>(
     workspaceId,
     `SELECT n.id, n.type, n.title, n.body, n.conversation_id, n.customer_id, n.order_id,
+            cr.id AS cancel_request_id,
             cu.name AS customer_name, n.is_read, n.created_at
      FROM notifications n
      LEFT JOIN customers cu ON cu.id = n.customer_id AND cu.workspace_id = $1
+     LEFT JOIN order_cancel_requests cr
+       ON cr.order_id = n.order_id AND cr.workspace_id = $1
+       AND cr.status = 'pending' AND n.type = 'cancel_request'
      WHERE n.workspace_id = $1
      ORDER BY n.created_at DESC LIMIT $2`,
     [workspaceId, limit],
