@@ -3,6 +3,7 @@ import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { processDueFollowups, sendFollowup } from './engine';
+import { getAutoFollowupSettings, listAutoFollowups, runAutoFollowups, updateAutoFollowupSettings } from './auto';
 
 export const followupsRouter = Router();
 followupsRouter.use(requireAuth);
@@ -223,4 +224,42 @@ followupsRouter.post('/followups/run', async (req: AuthRequest, res: Response) =
   const workspaceId = getWorkspaceId(req);
   const result = await processDueFollowups(workspaceId);
   res.json(result);
+});
+
+// ---------------------------------------------------------------------------
+// Auto re-engagement follow-up (2026-11-08): one follow-up per interested
+// customer who did not order, after a configurable delay (default 2 days).
+// ---------------------------------------------------------------------------
+
+/** GET /api/followups/auto — the owner report: every auto follow-up with its honest status + reason. */
+followupsRouter.get('/followups/auto', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const limit = Number(req.query.limit ?? 50);
+  const [settings, followups] = await Promise.all([
+    getAutoFollowupSettings(workspaceId),
+    listAutoFollowups(workspaceId, Number.isFinite(limit) ? limit : 50),
+  ]);
+  res.json({ settings, followups });
+});
+
+/** GET /api/followups/auto/settings — the delay (1-3 days) + on/off. */
+followupsRouter.get('/followups/auto/settings', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  res.json(await getAutoFollowupSettings(workspaceId));
+});
+
+/** PUT /api/followups/auto/settings {enabled?, delayDays?} — delay is clamped to 1-3 days. */
+followupsRouter.put('/followups/auto/settings', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const body = (req.body ?? {}) as { enabled?: unknown; delayDays?: unknown };
+  const patch: { enabled?: boolean; delayDays?: number } = {};
+  if (typeof body.enabled === 'boolean') patch.enabled = body.enabled;
+  if (body.delayDays !== undefined) patch.delayDays = Number(body.delayDays);
+  res.json(await updateAutoFollowupSettings(workspaceId, patch));
+});
+
+/** POST /api/followups/auto/run — manual trigger: schedule + process due auto follow-ups now. */
+followupsRouter.post('/followups/auto/run', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  res.json(await runAutoFollowups(workspaceId));
 });

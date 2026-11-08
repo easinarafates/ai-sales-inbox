@@ -39,6 +39,7 @@
 import { pool, query, queryOne } from '../db/pool';
 import { checkAiReplyAllowance, UPGRADE_NOTICE, type AiReplyAllowance } from '../subscriptions/service';
 import { buildUserPrompt, SYSTEM_PROMPT, type AgentContext } from './prompts';
+import { getCustomerOrderSummary, isOrderStatusQuestion, type CustomerOrderSummary } from '../orders/customer-memory';
 import { deliveryChargeSummaryText, getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import { addressingLine, genderSalutation, normalizeCustomerGender, type CustomerGender } from '../customers/gender';
 import { runTool, type ToolDb } from './tools';
@@ -482,9 +483,44 @@ async function runDemoReply(
   gender: CustomerGender = 'unknown',
   /** Requirement C: the owner's configured delivery charges (one Bengali line). */
   deliveryChargeSummary = '',
+  /** Customer memory: the customer's REAL order history (for "আমার অর্ডারটা কোথায়"). */
+  orderSummary: CustomerOrderSummary = { totalOrders: 0, pendingCount: 0, recent: [] },
 ): Promise<ProcessBatchResult> {
   const text = batchedMessages.map((m) => m.body).join(' ');
   const keywords = demoKeywords(text);
+
+  // CUSTOMER MEMORY (2026-11-08): "আমার অর্ডারটা কোথায়" is a STATUS
+  // question, not an order placement — it must be answered FIRST, before
+  // the ORDER_INTENT branches below (which would otherwise try to create
+  // a new order). The reply comes ONLY from the real order summary: the
+  // ASI number + Bengali status, or an honest "no order yet".
+  if (isOrderStatusQuestion(text)) {
+    const sal = genderSalutation(gender);
+    const open = sal ? `${sal}, ` : '';
+    let orderReply: string;
+    if (orderSummary.totalOrders === 0) {
+      orderReply = `${DEMO_LABEL}${open}আপনার এখনো কোনো অর্ডার নেই। অর্ডার করতে চাইলে প্রোডাক্টের নাম লিখুন।`;
+    } else if (orderSummary.recent.length === 1) {
+      const o = orderSummary.recent[0];
+      orderReply = `${DEMO_LABEL}${open}আপনার অর্ডার ${o.orderNumber} এখন ${o.statusBn} অবস্থায় আছে। মোট ৳${(o.totalPaisa / 100).toLocaleString('en-IN')}।`;
+    } else {
+      const lines = orderSummary.recent.map((o) => `• ${o.orderNumber} — ${o.statusBn}, মোট ৳${(o.totalPaisa / 100).toLocaleString('en-IN')}`).join('\n');
+      orderReply = `${DEMO_LABEL}${open}আপনার অর্ডারগুলোর অবস্থা:\n${lines}`;
+    }
+    // The opening already carries the salutation (via `open`) — just add
+    // the closing line, same as the other demo replies.
+    const salutation = genderSalutation(gender);
+    if (salutation) {
+      orderReply = `${orderReply}\nধন্যবাদ, ${salutation}।`;
+    } else if (!orderReply.includes('আপন')) {
+      orderReply = `${orderReply}\nধন্যবাদ।`;
+    }
+    await sendChannelMessage(workspaceId, conversationId, channelPlatform, orderReply, { liveSend: false });
+    const charged = await chargeForReply(
+      workspaceId, conversationId, 0, 0, allowance.costPaisa, 'demo', allowance.mode === 'included',
+    );
+    return { replied: true, reason: 'demo_mode', confidence: 0.9, costPaisa: charged ? allowance.costPaisa : 0 };
+  }
 
   // Match products by keyword (Bengali inflections included: "শাড়ির"
   // contains "শাড়ি"). Data comes from the DB rows, never invented.
@@ -1057,7 +1093,7 @@ export async function processBatch(
     }
   }
 
-  const [{ rows: historyRows }, { rows: openOrders }, { rows: knowledge }, { rows: products }, deliveryRules] = await Promise.all([
+  const [{ rows: historyRows }, { rows: openOrders }, { rows: knowledge }, { rows: products }, deliveryRules, orderSummary] = await Promise.all([
     query<{ direction: string; body: string | null }>(
       workspaceId,
       `SELECT direction, body FROM messages WHERE workspace_id = $1 AND conversation_id = $2
@@ -1087,6 +1123,16 @@ export async function processBatch(
       { query: (text: string, params?: unknown[]) => query(workspaceId, text, params ?? []) },
       workspaceId,
     ),
+    // Customer memory: the customer's REAL order history (total, pending,
+    // recent with ASI number + Bengali status) — the AI answers
+    // "আমার অর্ডারটা কোথায়" from this, never invents one.
+    (customer?.id
+      ? getCustomerOrderSummary(
+          { query: (text: string, params?: unknown[]) => query(workspaceId, text, params ?? []) },
+          workspaceId,
+          customer.id,
+        )
+      : Promise.resolve({ totalOrders: 0, pendingCount: 0, recent: [] } satisfies CustomerOrderSummary)),
   ]);
 
   // Gender-aware addressing: the stored gender (inferred from the name,
@@ -1100,6 +1146,7 @@ export async function processBatch(
     customerGender,
     history: [...historyRows].reverse(),
     openOrders: openOrders.map((o) => ({ id: o.id, status: o.status, totalPaisa: Number(o.total_paisa) })),
+    orderSummary,
     knowledge,
     products: products.map((p) => ({ id: p.id, name: p.name, pricePaisa: Number(p.price_paisa), stock: Number(p.stock) })),
     messages: batchedMessages.map((m) => m.body),
@@ -1156,6 +1203,7 @@ export async function processBatch(
       allowance,
       customerGender,
       ctx.deliveryCharges ?? '',
+      ctx.orderSummary,
     );
     // Alert a human that the real AI provider is down / not configured.
     await runTool(toolDb, workspaceId, 'create_ticket', {

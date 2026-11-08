@@ -5,6 +5,7 @@
  * a human (low confidence), never a guessed answer.
  */
 import { addressingLine } from '../customers/gender';
+import { formatOrderSummaryBn, type CustomerOrderSummary } from '../orders/customer-memory';
 export const SYSTEM_PROMPT = `তুমি একজন বাংলাদেশি অনলাইন দোকানের বন্ধুত্বপূর্ণ সেলস সহকারী। বাংলায় উত্তর দাও, ভদ্র ও সংক্ষিপ্তভাবে।
 
 কঠোর নিয়ম:
@@ -45,6 +46,7 @@ export const SYSTEM_PROMPT = `তুমি একজন বাংলাদেশ
 12. কাস্টমার চ্যাটের মাঝখানে আবার "Hi" / "হ্যালো" বললে নতুন করে স্বাগত জানিও না — জিজ্ঞেস করো তিনি কি প্রোডাক্টটা নেবেন, নাকি নতুন করে কিছু বলতে চাচ্ছেন।
 13. প্রোডাক্টের কথা শুধু প্রাসঙ্গিক হলেই বলো — একবারে সব প্রোডাক্টের তালিকা বারবার দিও না। কাস্টমার আগ্রহ না দেখালে ১–২ বারের বেশি প্রোডাক্টের কথা তুলো না; তার প্রশ্নের উত্তর দাও, প্রোডাক্ট ঠেলে দিও না।
 14. কাস্টমার ছবি পাঠালে (ইতিহাসে "[ছবি]" লেখা থাকলে) ছবিটি নিয়ে বানিয়ে কিছু বলো না — ছবির প্রোডাক্ট সম্পর্কে নিশ্চিত তথ্য না থাকলে প্রোডাক্টের নাম জিজ্ঞেস করো। কাস্টমার ভিডিও পাঠালে ([ভিডিও]) ভিডিও দেখতে পারো না বলে জানাও — ছবি পাঠাতে বা নাম লিখতে বলো। ভয়েস মেসেজের ক্ষেত্রে লেখায় রূপান্তর করা বার্তাটিই তার কথা — উত্তর টেক্সটে (বাংলায়) দাও।
+15. কাস্টমারের অর্ডারের ইতিহাস (নিচে "কাস্টমারের অর্ডার" লাইনে): কাস্টমার অর্ডারের খবর জানতে চাইলে ("আমার অর্ডারটা কোথায়", "অর্ডার স্ট্যাটাস", "my order") শুধু এই তালিকা থেকেই উত্তর দাও — অর্ডার নম্বর (ASI-0001…) আর বাংলা স্ট্যাটাস (যেমন "কুরিয়ারে", "ডেলিভারি হয়েছে", "অপেক্ষমাণ") দিয়ে। তালিকায় কোনো অর্ডার না থাকলে সত্যি করে বলো তার এখনো কোনো অর্ডার নেই — কখনো অর্ডার বা স্ট্যাটাস বানিয়ে বলো না। কাস্টমার না জিজ্ঞেস করলে নিজে থেকে অর্ডারের কথা তুলো না।
 
 উত্তর শুধু JSON-এ দাও, এই আকারে:
 {"reply": "কাস্টমারকে পাঠানোর বাংলা উত্তর", "confidence": 0.0 থেকে 1.0, "toolCalls": [{"tool": "টুলের নাম", "args": {...}}]}
@@ -59,6 +61,12 @@ export interface AgentContext {
   customerGender: 'male' | 'female' | 'unknown';
   history: { direction: string; body: string | null }[];
   openOrders: { id: string; status: string; totalPaisa: number }[];
+  /**
+   * Customer memory — the customer's REAL order history (total orders,
+   * pending count, recent orders with ASI number + Bengali status).
+   * The AI answers "আমার অর্ডারটা কোথায়" from this, never invents one.
+   */
+  orderSummary: CustomerOrderSummary;
   knowledge: { title: string | null; body: string }[];
   products: { id: string; name: string; pricePaisa: number; stock: number }[];
   messages: string[];
@@ -70,9 +78,7 @@ export function buildUserPrompt(ctx: AgentContext): string {
   const history = ctx.history
     .map((m) => `${m.direction === 'in' ? 'কাস্টমার' : 'দোকান'}: ${m.body ?? ''}`)
     .join('\n');
-  const orders = ctx.openOrders.length
-    ? ctx.openOrders.map((o) => `- অর্ডার ${o.id.slice(0, 8)}: ${o.status}, মোট ৳${(o.totalPaisa / 100).toFixed(2)}`).join('\n')
-    : 'কোনো খোলা অর্ডার নেই।';
+  const orders = formatOrderSummaryBn(ctx.orderSummary);
   const knowledge = ctx.knowledge.length
     ? ctx.knowledge.map((k) => `- ${k.title ?? ''}: ${k.body}`).join('\n')
     : 'নলেজ বুকে কিছু নেই।';
@@ -84,7 +90,7 @@ export function buildUserPrompt(ctx: AgentContext): string {
     // forbids the AI from claiming it already has them in that case.
     `কাস্টমার: ${ctx.customerName ?? 'নাম নেই'}, ফোন: ${ctx.customerPhone ?? 'দেওয়া হয়নি'}, ঠিকানা: ${ctx.customerAddress ?? 'দেওয়া হয়নি'}`,
     addressingLine(ctx.customerGender),
-    `খোলা অর্ডার:\n${orders}`,
+    `কাস্টমারের অর্ডার (আসল তথ্য — এখানে না থাকলে অর্ডার নেই, বানিয়ে বলো না):\n${orders}`,
     `নলেজ বুক:\n${knowledge}`,
     // Delivery charges: the OWNER's configured rules (requirement C).
     // When this line is present it OVERRIDES any delivery-charge number

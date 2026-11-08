@@ -34,6 +34,7 @@ import { courierRouter } from './courier/routes';
 import { topupRouter } from './billing/topup';
 import { processDueScheduledPosts } from './scheduling/publisher';
 import { processDueFollowups } from './followups/engine';
+import { runAutoFollowups } from './followups/auto';
 // Worker B — new AiPraktor-style features (API + DB + web pages).
 import { imageMatchRouter } from './image-match/routes';
 import { handoverRouter } from './handover/routes';
@@ -171,10 +172,11 @@ if (require.main === module) {
         try {
           const posts = await processDueScheduledPosts();
           const followups = await processDueFollowups();
+          const autoFollowups = await runAutoFollowups();
           const handovers = await processDueHandovers();
           const ownerCosts = await processOwnerWalletDeductions();
-          if (posts.processed > 0 || followups.processed > 0 || handovers.processed > 0 || ownerCosts.deductedRows > 0) {
-            console.log('[api:sweep] due scheduled posts / follow-ups / handovers / owner AI costs:', { posts, followups, handovers, ownerCosts });
+          if (posts.processed > 0 || followups.processed > 0 || autoFollowups.processed > 0 || autoFollowups.scheduled > 0 || handovers.processed > 0 || ownerCosts.deductedRows > 0) {
+            console.log('[api:sweep] due scheduled posts / follow-ups / auto follow-ups / handovers / owner AI costs:', { posts, followups, autoFollowups, handovers, ownerCosts });
           }
         } catch (err) {
           console.error('[api:sweep] failed:', (err as Error).message);

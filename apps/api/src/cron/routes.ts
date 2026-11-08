@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from 'express';
 import { processDueScheduledPosts } from '../scheduling/publisher';
 import { processDueFollowups } from '../followups/engine';
+import { runAutoFollowups } from '../followups/auto';
 import { processDueHandovers } from '../handover/engine';
 import { processOwnerWalletDeductions } from '../owner/sweep';
 import { processDueShipmentChecks } from '../courier/tracking-check';
@@ -42,17 +43,19 @@ cronRouter.all('/cron/sweep', async (req: Request, res: Response) => {
   try {
     const posts = await processDueScheduledPosts();
     const followups = await processDueFollowups();
+    const autoFollowups = await runAutoFollowups();
     const handovers = await processDueHandovers();
     const ownerCosts = await processOwnerWalletDeductions();
     const shipments = await processDueShipmentChecks();
-    console.log('[cron:sweep] due scheduled posts / follow-ups / handovers / owner AI costs / shipments:', {
+    console.log('[cron:sweep] due scheduled posts / follow-ups / auto follow-ups / handovers / owner AI costs / shipments:', {
       posts,
       followups,
+      autoFollowups,
       handovers,
       ownerCosts,
       shipments,
     });
-    res.json({ ok: true, posts, followups, handovers, ownerCosts, shipments });
+    res.json({ ok: true, posts, followups, autoFollowups, handovers, ownerCosts, shipments });
   } catch (err) {
     console.error('[cron:sweep] failed:', (err as Error).message);
     res.status(500).json({ error: (err as Error).message });

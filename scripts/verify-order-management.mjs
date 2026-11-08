@@ -55,6 +55,31 @@ function check(name, ok, detail = '') {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+async function pollFor(fn, timeoutMs = 30000, intervalMs = 1000) {
+  const start = Date.now();
+  let last = null;
+  while (Date.now() - start < timeoutMs) {
+    last = await fn();
+    if (last) return last;
+    await sleep(intervalMs);
+  }
+  return last;
+}
+
+async function sendWebchat(api, externalId, senderId, name, text) {
+  return api('/api/webhooks/webchat', {
+    method: 'POST', auth: false,
+    headers: { 'x-webchat-secret': WEBCHAT_SECRET },
+    body: { externalId, senderId, name, text },
+  });
+}
+
+async function threadOut(api, conversationId) {
+  const detail = await api(`/api/inbox/${conversationId}`);
+  const msgs = detail.data?.messages ?? [];
+  return { conv: detail.data?.conversation ?? {}, out: msgs.filter((m) => m.direction === 'out') };
+}
+
 function makeApi(base) {
   return async function api(path, { method = 'GET', body, auth = true, headers = {} } = {}) {
     const res = await fetch(`${base}${path}`, {
@@ -199,6 +224,25 @@ async function main() {
   check('web invoice page: public, Bengali receipt, print', invPage.includes('publicInvoiceApi') && invPage.includes('ইনভয়েস') && invPage.includes('window.print()'));
   const shellSrc = fs.readFileSync(path.join(ROOT, 'apps/web/components/AppShell.tsx'), 'utf8');
   check('AppShell: /invoice is a public page (no login redirect)', shellSrc.includes('pathname.startsWith("/invoice")'));
+
+  // ---- Customer Memory + Auto Follow-up (static) ----
+  const mig30 = fs.readFileSync(path.join(ROOT, 'apps/api/src/db/migrations/30-auto-followup.sql'), 'utf8');
+  check('migration 30: auto_followups table + unique episode index', mig30.includes('CREATE TABLE IF NOT EXISTS auto_followups') && mig30.includes('episode_key') && mig30.includes('UNIQUE'));
+  check('migration 30: workspaces auto_followup_enabled + delay_days (default 2)', mig30.includes('auto_followup_enabled') && mig30.includes('auto_followup_delay_days') && mig30.includes('DEFAULT 2'));
+  const memSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/orders/customer-memory.ts'), 'utf8');
+  check('customer-memory: getCustomerOrderSummary + isOrderStatusQuestion', memSrc.includes('export async function getCustomerOrderSummary') && memSrc.includes('export function isOrderStatusQuestion'));
+  const promptsSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/prompts.ts'), 'utf8');
+  check('prompts: order summary rendered in the AI prompt + rule 15 (never invent)', promptsSrc.includes('orderSummary') && promptsSrc.includes('15.'));
+  const agentSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/agent.ts'), 'utf8');
+  check('agent: order summary fetched into the AI context', agentSrc.includes('getCustomerOrderSummary'));
+  const autoSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/followups/auto.ts'), 'utf8');
+  check('auto follow-up: schedule + process + 24h window check (window_expired, no fake send)', autoSrc.includes('export async function scheduleAutoFollowups') && autoSrc.includes('export async function processDueAutoFollowups') && autoSrc.includes('window_expired') && autoSrc.includes('24h window expired'));
+  check('auto follow-up: at most once per episode (unique episode key, ON CONFLICT … DO NOTHING)', autoSrc.includes('ON CONFLICT (workspace_id, customer_id, episode_key) DO NOTHING'));
+  const followupsRoutes = fs.readFileSync(path.join(ROOT, 'apps/api/src/followups/routes.ts'), 'utf8');
+  check('auto follow-up routes: report + settings + manual run', followupsRoutes.includes("'/followups/auto'") && followupsRoutes.includes("'/followups/auto/settings'") && followupsRoutes.includes("'/followups/auto/run'"));
+  const cronSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/cron/routes.ts'), 'utf8');
+  check('cron sweep runs the auto follow-up', cronSrc.includes('runAutoFollowups'));
+  check('in-process sweep runs the auto follow-up', indexSrc.includes('runAutoFollowups'));
 
   // ---------- Boot 1: full order flow (PGlite, demo mode) ----------
   const stamp = Date.now();
@@ -365,6 +409,26 @@ token = signup.data?.token ?? '';
       ? await api(`/api/orders/${full2.data.order.id}`)
       : { status: 0, data: {} };
     check('boot 1: second order zone is Magura (outside Dhaka)', detail2.data?.order?.zone?.insideDhaka === false && detail2.data?.order?.zone?.label === 'মাগুরা', JSON.stringify(detail2.data?.order?.zone ?? {}));
+
+    // 12) CUSTOMER MEMORY: the AI knows this customer's order history.
+    // The Order Test Customer now has 2 pending orders (ASI-0001, ASI-0002).
+    const memQ = await sendWebchat(api, 'site-ordmgmt', 'wc-ordmgmt-1', 'Order Test Customer', 'আমার অর্ডারটা কোথায়');
+    check('boot 1: memory — order-status question accepted', memQ.status === 200, `status=${memQ.status}`);
+    const memFound = await pollFor(async () => {
+      const { out } = await threadOut(api, convId);
+      const hit = out.find((m) => (m.body ?? '').includes('ASI-0001') && (m.body ?? '').includes('অপেক্ষমাণ'));
+      return hit ? hit.body : null;
+    });
+    check('boot 1: memory — AI replies with the correct order number + status (ASI-0001, অপেক্ষমাণ)', !!memFound, (memFound ?? '').slice(0, 200));
+    // A customer with NO orders asks the same → honest "no order yet".
+    const noQ = await sendWebchat(api, 'site-ordmgmt', 'wc-noorder-1', 'No Order Customer', 'আমার অর্ডারটা কোথায়');
+    const noConv = noQ.data?.conversationId ?? '';
+    const noFound = await pollFor(async () => {
+      const { out } = await threadOut(api, noConv);
+      const hit = out.find((m) => (m.body ?? '').includes('কোনো অর্ডার নেই'));
+      return hit ? hit.body : null;
+    });
+    check('boot 1: memory — no orders → AI says honestly there is no order yet', !!noFound, (noFound ?? '').slice(0, 200));
   } finally {
     run1.stop();
     await sleep(2000);
@@ -382,6 +446,26 @@ token = signup.data?.token ?? '';
   check('driver 1: AI order delivery charge is Dhaka ৳100', Number(drvJson?.deliveryChargePaisa) === 10000, `charge=${drvJson?.deliveryChargePaisa ?? ''}`);
   check('driver 1: REGRESSION AI order recipient is Rina (orders.customer_name)', drvJson?.orderCustomerName === 'Rina', `customer_name=${drvJson?.orderCustomerName ?? ''}`);
   check('driver 1: REGRESSION AI order does NOT rename the customer', drvJson?.customerNameAfter === 'Order Test Customer', `name=${drvJson?.customerNameAfter ?? ''}`);
+
+  // ---------- Driver 2: auto re-engagement follow-up (same PGlite data dir) ----------
+  // Six backdated scenarios; the driver schedules twice (no duplicates)
+  // and processes twice (no double send), then reports the outcome.
+  const af = await runDriver('auto-followup-driver.ts', dataDir, [workspaceId]);
+  let afJson = null;
+  try { afJson = JSON.parse((af.out.match(/\{[\s\S]*\}/) ?? [''])[0] || 'null'); } catch { /* not JSON */ }
+  check('driver 2: auto follow-up runs', af.code === 0 && !!afJson && !afJson.error, `code=${af.code} ${af.err.slice(-300)}`);
+  check('driver 2: follow-up scheduled once (webchat + messenger = 2, second run schedules 0)', afJson?.sched1?.scheduled === 2 && afJson?.sched2?.scheduled === 0, JSON.stringify({ s1: afJson?.sched1, s2: afJson?.sched2 }));
+  check('driver 2: follow-up sent once (webchat, no 24h window) + window-expired once (messenger)', afJson?.proc1?.sent === 1 && afJson?.proc1?.windowExpired === 1, JSON.stringify(afJson?.proc1));
+  check('driver 2: second process run sends nothing (no double send)', afJson?.proc2?.processed === 0 && afJson?.proc2?.sent === 0, JSON.stringify(afJson?.proc2));
+  const byId = afJson?.ids ?? {};
+  const byCust = afJson?.byCustomer ?? {};
+  check('driver 2: webchat follow-up SENT with the right message (product name + "নিতে যাচ্ছেন?")', byCust[byId.s1]?.status === 'sent' && (byCust[byId.s1]?.message ?? '').includes('Jeans') && (byCust[byId.s1]?.message ?? '').includes('নিতে যাচ্ছেন'), JSON.stringify(byCust[byId.s1] ?? {}));
+  check('driver 2: messenger follow-up WINDOW_EXPIRED honestly (no send, reason recorded)', byCust[byId.s2]?.status === 'window_expired' && (byCust[byId.s2]?.reason ?? '').includes('24h window expired'), JSON.stringify(byCust[byId.s2] ?? {}));
+  check('driver 2: messenger customer got NO outgoing message (window expired = no fake send)', (afJson?.outByCustomer ?? {})[byId.s2] === undefined, JSON.stringify(afJson?.outByCustomer ?? {}));
+  check('driver 2: waiting/angry customer NEVER gets a follow-up', !byCust[byId.s3], JSON.stringify(byCust[byId.s3] ?? 'absent'));
+  check('driver 2: customer who already ordered NEVER gets a follow-up', !byCust[byId.s4], JSON.stringify(byCust[byId.s4] ?? 'absent'));
+  check('driver 2: "Hi" only (no product interest) NEVER gets a follow-up', !byCust[byId.s5], JSON.stringify(byCust[byId.s5] ?? 'absent'));
+  check('driver 2: the OWNER never gets a follow-up', !byCust[byId.s6], JSON.stringify(byCust[byId.s6] ?? 'absent'));
 
   // ---------- Summary ----------
   const failed = results.filter((r) => !r.ok);
