@@ -151,6 +151,32 @@ export function detectProductListRequest(text: string | null | undefined): boole
 }
 
 // ---------------------------------------------------------------------------
+// "Where is your shop?" — answered with ONE line from the knowledge book
+// ("আমাদের দোকান মাগুরায়।"), never a paragraph. "সব" is the customer's
+// word for "shop" ("তোমাদের সব কোথায়" → "আমাদের সব মাগুরাত").
+// ---------------------------------------------------------------------------
+
+const SHOP_LOCATION_PATTERNS = [
+  /দোকান (কোথায়|কোথাই|কই|কোথায় আছে|কোথায় অবস্থিত)/,
+  /সব (কোথায়|কই|কোথায় আছে)/,
+  /তোমাদের (দোকান|সব) (কোথায়|কই)/,
+  /দোকানটি (কোথায়|কই)/,
+  /দোকানের (ঠিকানা|অবস্থান|লোকেশন)/,
+  /শপ (কোথায়|কই)/,
+  /shop (kothay|kothai|koi|location|address|where)/i,
+  /where is (your |the )?(shop|store)/i,
+  /tomader (dokan|shop|sob) (kothay|koi)/i,
+  /dokan (kothay|koi)/i,
+  /sob (kothay|koi)/i,
+];
+
+/** Is this message asking where the shop is? */
+export function detectShopLocation(text: string | null | undefined): boolean {
+  if (!text) return false;
+  return SHOP_LOCATION_PATTERNS.some((re) => re.test(text));
+}
+
+// ---------------------------------------------------------------------------
 // "Show me the jeans" — single-product photo request.
 // A show word (দেখাও / ছবি / photo / show …) AND exactly one catalog
 // product named (Bengali alias or English name). Two products matching

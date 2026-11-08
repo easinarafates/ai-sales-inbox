@@ -210,9 +210,24 @@ async function saveIncomingMessage(
  * text-only with a placeholder body so the AI can reply honestly.
  */
 async function processMessageAttachment(
-  attachment: { type?: string; payload?: { url?: string } },
+  attachment: { type?: string; payload?: { url?: string; sticker_id?: number } },
   pageToken: string | null,
 ): Promise<{ url: string | null; type: string | null; msgType: string; body: string } | null> {
+  // A STICKER is not a product photo. A thumbs-up "like" arrives as an
+  // image attachment with payload.sticker_id (the like sticker is
+  // 369239263222822) — it must NEVER be downloaded as a photo or
+  // vision-matched against the catalog (that bug replied "আমাদের কাছে
+  // এই প্রোডাক্ট নেই..." to a like). A sticker is saved as its own
+  // type so the AI answers it contextually and briefly instead.
+  const stickerId = attachment.payload?.sticker_id;
+  if (stickerId) {
+    return {
+      url: null,
+      type: 'sticker',
+      msgType: 'sticker',
+      body: stickerId === 369239263222822 ? '[লাইক]' : '[স্টিকার]',
+    };
+  }
   const kind = attachment.type ?? '';
   const url = attachment.payload?.url ?? '';
   if (kind === 'image') {
@@ -304,7 +319,7 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
         text?: string;
         is_echo?: boolean;
         app_id?: string;
-        attachments?: { type?: string; payload?: { url?: string } }[];
+        attachments?: { type?: string; payload?: { url?: string; sticker_id?: number } }[];
       } | undefined;
       const platform = (body.object as string) === 'instagram' ? 'instagram' : 'messenger';
 

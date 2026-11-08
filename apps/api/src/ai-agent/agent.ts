@@ -61,12 +61,14 @@ import {
   detectFastReplyQuestion,
   detectGreeting,
   detectProductListRequest,
+  detectShopLocation,
   looksLikeShowRequest,
   matchShowProduct,
   ROMANIZED_PRODUCT_ALIASES,
 } from './detect-intent';
 import { extractOrderNumber, requestOrderCancellation } from '../orders/cancel';
-import { analyseCustomerImage, transcribeCustomerAudio } from './media';
+import { analyseCustomerImage, transcribeCustomerAudio, uploadMediaToBlob } from './media';
+import { renderInvoiceImageForOrder } from '../orders/invoice-image';
 
 /** Flat MVP estimate per AI reply (paisa). Real per-token pricing plugs in here later. Must stay under the 20-paisa gate. */
 const AI_REPLY_COST_PAISA = 10;
@@ -295,8 +297,7 @@ export function guardReplyAgainstHallucination(
   reply: string,
   ctx: AgentContext,
   toolResultAmounts: number[] = [],
-): { reply: string; replaced: boolean; invented: number[] } {
-  const amounts = extractPriceAmounts(reply);
+): { reply: string; replaced: boolean; invented: number[] } {  const amounts = extractPriceAmounts(reply);
   if (amounts.length === 0) return { reply, replaced: false, invented: [] };
   const allowed = new Set<number>();
   for (const p of ctx.products) allowed.add(p.pricePaisa / 100);
@@ -316,14 +317,78 @@ export function guardReplyAgainstHallucination(
     .join('\n');
   return {
     reply:
-      `দামের ব্যাপারে নিশ্চিত তথ্য দিচ্ছি — আমাদের প্রোডাক্টগুলো:\n${list}\nকোনটি সম্পর্কে জানতে চান? নামটি লিখে জানান।`,
+      // Just the list — nothing more (prompt rule 0/10). The model
+      // invented a price, so the safe reply is the real catalog list;
+      // no trailing question, no extra line.
+      `দামের ব্যাপারে নিশ্চিত তথ্য দিচ্ছি — আমাদের প্রোডাক্টগুলো:\n${list}`,
     replaced: true,
     invented,
   };
 }
 
-async function recordUnanswered(workspaceId: string, question: string): Promise<void> {  const q = question.trim().slice(0, 500);
-  if (!q) return;
+// ---------------------------------------------------------------------------
+// Brevity guard (2026-11-08, user report: the AI gives VERY LONG answers).
+//
+// The system prompt tells the model to be short (prompt rule 0), but a
+// model can still ramble — so before ANY live (LLM) reply is sent, its
+// length is enforced deterministically: keep the first complete
+// sentences up to ~450 chars, always keeping sentences that carry a
+// price (৳/টাকা) or the invoice/confirmation lines (essential info),
+// hard-capped at ~700 chars. Short replies pass through untouched.
+// Applied ONLY to LLM replies — never to the deterministic order
+// confirmation (sent earlier, returns before this point) and never to
+// the deterministic handlers (already short by construction).
+// ---------------------------------------------------------------------------
+
+/** Shorten an LLM reply to the fewest complete sentences that answer the question. */
+export function shortenReply(reply: string, maxChars = 450): { reply: string; shortened: boolean } {
+  const text = reply.trim();
+  if (text.length <= 350) return { reply: text, shortened: false };
+  const HARD_CAP = 700;
+  // Essential lines are never dropped: prices, the invoice link, and the
+  // order-confirmation header/number (a confirmation must stay complete).
+  const isEssential = (seg: string): boolean =>
+    /৳|টাকা|ইনভয়েস|অর্ডার কনফার্ম|অর্ডার নম্বর/.test(seg);
+  const segments: string[] = [];
+  for (const line of text.split(/\n+/)) {
+    const l = line.trim();
+    if (!l) continue;
+    // Split a long line into sentences (Bengali danda / ? / !).
+    const parts = l.split(/(?<=[।?!])\s+/u).map((s) => s.trim()).filter(Boolean);
+    segments.push(...parts);
+  }
+  if (segments.length === 0) return { reply: text, shortened: false };
+  let out = '';
+  let shortened = false;
+  // The first price/confirmation line is always kept (a reply must never
+  // lose the price that answers the question), even if it pushes the
+  // total slightly past the budget — but only the FIRST one, or a
+  // rambling reply would keep every price line and stay long.
+  let keptEssential = false;
+  for (const seg of segments) {
+    const sep = out ? '\n' : '';
+    if (out.length + sep.length + seg.length <= maxChars) {
+      out += sep + seg;
+      if (isEssential(seg)) keptEssential = true;
+    } else if (isEssential(seg) && !keptEssential && out.length + sep.length + seg.length <= HARD_CAP) {
+      out += sep + seg;
+      keptEssential = true;
+    } else {
+      shortened = true;
+    }
+  }
+  if (!out) {
+    // The first segment alone is too long — keep it, cut at a word boundary.
+    const first = segments[0];
+    const cut = first.slice(0, maxChars);
+    const lastSpace = cut.lastIndexOf(' ');
+    out = (lastSpace > 100 ? cut.slice(0, lastSpace) : cut).trim() + '…';
+    shortened = true;
+  }
+  return { reply: out.trim(), shortened };
+}
+
+async function recordUnanswered(workspaceId: string, question: string): Promise<void> {  const q = question.trim().slice(0, 500);  if (!q) return;
   // No unique constraint on (workspace_id, question) in schema.sql, so
   // upsert manually instead of ON CONFLICT.
   const existing = await queryOne<{ id: string }>(
@@ -368,6 +433,60 @@ async function sendChannelMessage(
     console.error(`[agent:send] delivery failed for conv ${conversationId}: ${result.error ?? 'unknown'}`);
   }
   return result;
+}
+
+/**
+ * After an order is confirmed, send the extras — best-effort, never
+ * blocking the confirmation (which already went out):
+ *
+ * 1. INVOICE IMAGE (2026-11-08, user demand): render the invoice as a
+ *    PNG (headless Chromium, correct Bengali) and send it as a Messenger
+ *    image attachment, right after the confirmation text. A render or
+ *    upload failure is logged honestly — the confirmation + invoice LINK
+ *    already reached the customer, and a broken image is never sent.
+ * 2. ONE short suggestion: if the shop has another product besides the
+ *    one just ordered, one line — "স্যার, আপনি কি আর কোনো প্রোডাক্ট
+ *    নিতে চাচ্ছেন? আমাদের কাছে X ও আছে।" — and nothing more. No
+ *    suggestion when there is no other product.
+ */
+async function sendOrderConfirmationExtras(
+  workspaceId: string,
+  conversationId: string,
+  channelPlatform: string | null,
+  orderId: string,
+  orderedProductIds: string[],
+  products: { id: string; name: string }[],
+  gender: CustomerGender,
+  opts: { liveSend?: boolean } = {},
+): Promise<void> {
+  // 1) Invoice image.
+  try {
+    const rendered = await renderInvoiceImageForOrder(toolDb, workspaceId, orderId);
+    if (rendered) {
+      const blobUrl = await uploadMediaToBlob(rendered.png, 'image/png', `invoice-${rendered.orderNumber}.png`);
+      if (blobUrl) {
+        const img = await deliverOutgoingImageMessage(workspaceId, conversationId, blobUrl, { liveSend: opts.liveSend });
+        if (!img.sent) console.error('[agent] invoice image delivery failed:', img.error ?? 'unknown');
+      } else {
+        console.error('[agent] invoice image upload failed (no Blob URL) for order', orderId);
+      }
+    } else {
+      console.error('[agent] invoice image render failed for order', orderId);
+    }
+  } catch (err) {
+    console.error('[agent] invoice image send failed:', (err as Error).message);
+  }
+  // 2) One short suggestion (only when another product exists).
+  const other = products.find((p) => !orderedProductIds.includes(p.id));
+  if (other) {
+    const sal = genderSalutation(gender);
+    const suggestion = sal
+      ? `${sal}, আপনি কি আর কোনো প্রোডাক্ট নিতে চাচ্ছেন? আমাদের কাছে ${other.name} ও আছে।`
+      : `আপনি কি আর কোনো প্রোডাক্ট নিতে চাচ্ছেন? আমাদের কাছে ${other.name} ও আছে।`;
+    await sendChannelMessage(workspaceId, conversationId, channelPlatform, suggestion, { liveSend: opts.liveSend }).catch(
+      (err) => console.error('[agent] suggestion send failed:', (err as Error).message),
+    );
+  }
 }
 
 /** Deduct the reply cost; returns false if the balance ran out mid-flight.
@@ -543,6 +662,10 @@ async function runDemoReply(
 
   let reply: string;
   let confidence = 0.9;
+  // An order created in this demo reply gets the same extras as the live
+  // path (invoice image + one short suggestion), sent after the
+  // confirmation below (liveSend: false — saved, not sent to a customer).
+  let demoCreatedOrder: { orderId: string; productId: string } | null = null;
 
   if (products.length === 0 && /দাম|price|কত|টাকা/i.test(text)) {
     // Empty catalog + price question: never invent a price, even in demo
@@ -562,6 +685,7 @@ async function runDemoReply(
       // exact text the tool built, not a reworded reply.
       reply =
         `${DEMO_LABEL}${String(created.confirmationText ?? created.billText ?? '')}`;
+      demoCreatedOrder = { orderId: created.orderId, productId: product.id };
     } else {
       reply = `${DEMO_LABEL}দুঃখিত, অর্ডারটি তৈরি করা যায়নি। একজন মানুষ শীঘ্রই আপনাকে সাহায্য করবে।`;
       confidence = 0.5;
@@ -658,6 +782,14 @@ async function runDemoReply(
   // pre-existing demo-mode behaviour (the reply is saved in the inbox and
   // the owner is billed for the AI work as before).
   await sendChannelMessage(workspaceId, conversationId, channelPlatform, reply, { liveSend: false });
+  // Extras after a demo order confirmation (same as the live path):
+  // the invoice IMAGE + one short suggestion (saved, not sent).
+  if (demoCreatedOrder) {
+    await sendOrderConfirmationExtras(
+      workspaceId, conversationId, channelPlatform, demoCreatedOrder.orderId,
+      [demoCreatedOrder.productId], products, gender, { liveSend: false },
+    );
+  }
   // Included in the plan → 0 paisa; over the limit → flat 10 paisa overage.
   const charged = await chargeForReply(
     workspaceId, conversationId, 0, 0, allowance.costPaisa, 'demo', allowance.mode === 'included',
@@ -846,6 +978,67 @@ export async function processBatch(
     if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.7 };
     const cost = await chargeDeterministic();
     return { replied: true, reason: 'voice_unheard', confidence: 0.9, costPaisa: cost };
+  }
+
+  // LIKE / STICKER (2026-11-08, user report): a thumbs-up "like" is NOT
+  // a product photo. It arrives as a sticker attachment (mediaType
+  // 'sticker', body '[লাইক]'/'[স্টিকার]') and must NEVER run the photo
+  // match / vision flow — that bug replied "আমাদের কাছে এই প্রোডাক্ট
+  // নেই, তবে এই সিমিলার প্রোডাক্ট দেখতে পারেন" to a like. Reply
+  // contextually and SHORTLY: if the previous chat was about a product,
+  // a brief acknowledgment tied to it; otherwise a short "how can I
+  // help you?". No product mention unless the chat was about one.
+  const likeMsg = [...batchedMessages].reverse().find(
+    (m) => m.mediaType === 'sticker' || m.body === '[লাইক]' || m.body === '[স্টিকার]',
+  );
+  if (likeMsg) {
+    const { rows: lastOutRows } = await query<{ body: string | null }>(
+      workspaceId,
+      `SELECT body FROM messages WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'out' ORDER BY created_at DESC LIMIT 1`,
+      [workspaceId, conversationId],
+    );
+    const { rows: likeProducts } = await query<{ name: string }>(
+      workspaceId,
+      'SELECT name FROM products WHERE workspace_id = $1',
+      [workspaceId],
+    );
+    const lastOutBody = lastOutRows[0]?.body ?? '';
+    const aboutProduct = likeProducts.some((p) => p.name && lastOutBody.includes(p.name));
+    const lsal = genderSalutation(replyGender);
+    const likeReply = aboutProduct
+      ? lsal
+        ? `${lsal}, ধন্যবাদ! কোন প্রোডাক্টটা নিতে চাচ্ছেন, নামটা লিখে জানান।`
+        : 'ধন্যবাদ! কোন প্রোডাক্টটা নিতে চাচ্ছেন, নামটা লিখে জানান।'
+      : lsal
+        ? `${lsal}, কিভাবে আপনাকে সাহায্য করতে পারি?`
+        : 'কিভাবে আপনাকে সাহায্য করতে পারি?';
+    const lsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, likeReply);
+    if (!lsent.sent) return { replied: false, reason: 'send_failed', confidence: 0.9 };
+    const lcost = await chargeDeterministic();
+    return { replied: true, reason: 'like_acknowledged', confidence: 0.95, costPaisa: lcost };
+  }
+
+  // SHOP LOCATION (2026-11-08): "দোকান কোথায়?" / "তোমাদের সব কোথায়?"
+  // gets ONE line from the knowledge book ("আমাদের দোকান মাগুরায়।"),
+  // never a paragraph. No AI call — the answer is a stored fact.
+  if (detectShopLocation(latestText)) {
+    const { rows: locRows } = await query<{ body: string }>(
+      workspaceId,
+      `SELECT body FROM knowledge_items WHERE workspace_id = $1
+         AND (title ILIKE '%ঠিকানা%' OR title ILIKE '%অবস্থান%')
+       ORDER BY created_at DESC LIMIT 1`,
+      [workspaceId],
+    );
+    const locBody = locRows[0]?.body?.trim();
+    if (locBody) {
+      const ssal = genderSalutation(replyGender);
+      const locReply = ssal ? `${ssal}, ${locBody}` : locBody;
+      const ssent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, locReply);
+      if (!ssent.sent) return { replied: false, reason: 'send_failed', confidence: 0.9 };
+      const scost = await chargeDeterministic();
+      return { replied: true, reason: 'shop_location', confidence: 0.95, costPaisa: scost };
+    }
+    // No stored location — fall through to the LLM (knowledge + brevity guard).
   }
 
   // Gibberish guard (deterministic, pre-AI, ZERO token): a meaningless
@@ -1105,10 +1298,12 @@ export async function processBatch(
         const list = photoProducts
           .map((p) => `• ${p.name} — ${taka(Number(p.price_paisa))}${Number(p.stock) > 0 ? '' : ' (স্টক শেষ)'}`)
           .join('\n');
+        // Just the list — nothing more (prompt rule 0/10). No trailing
+        // question, no extra line: the customer asked for the list.
         const sal = genderSalutation(replyGender);
         const reply = sal
-          ? `${sal}, আমাদের প্রোডাক্টগুলো:\n${list}\nকোনটি সম্পর্কে জানতে চান? নামটা লিখে জানান।`
-          : `আমাদের প্রোডাক্টগুলো:\n${list}\nকোনটি সম্পর্কে জানতে চান? নামটা লিখে জানান।`;
+          ? `${sal}, আমাদের প্রোডাক্টগুলো:\n${list}`
+          : `আমাদের প্রোডাক্টগুলো:\n${list}`;
         const lsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
         if (lsent.sent) {
           const cost = await chargeDeterministic();
@@ -1300,6 +1495,18 @@ export async function processBatch(
           workspaceId, conversationId, inputTokens, outputTokens, replyCost, provider, allowance.mode === 'included',
           { model: ai.model, providerCostPaisa: confirmProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null },
         );
+        // Extras AFTER the confirmation (best-effort, never blocks it):
+        // the invoice IMAGE, then ONE short product suggestion.
+        const orderId = String((createdOrder.result as Record<string, unknown>).orderId);
+        const createCall = parsed.toolCalls.find((c) => c.tool === 'create_order');
+        const orderedIds = Array.isArray((createCall?.args as Record<string, unknown> | undefined)?.items)
+          ? (((createCall?.args as Record<string, unknown>).items as Record<string, unknown>[]) ?? [])
+              .map((it) => String(it.productId ?? ''))
+              .filter(Boolean)
+          : [];
+        await sendOrderConfirmationExtras(
+          workspaceId, conversationId, channel?.platform ?? null, orderId, orderedIds, ctx.products, customerGender,
+        );
         return { replied: true, reason: 'order_confirmed', confidence: 0.95, costPaisa: charged ? replyCost : 0 };
       }
       // Confirmation send failed — fall through to the second LLM call.
@@ -1399,6 +1606,17 @@ export async function processBatch(
       `[agent] hallucination guard: invented amounts [${guarded.invented.join(', ')}] — reply replaced before send`,
     );
     parsed = { ...parsed, reply: guarded.reply };
+  }
+
+  // Brevity guard (2026-11-08): the model can ramble despite prompt
+  // rule 0 — cap its reply to the shortest complete sentences that
+  // answer the question, always keeping prices and the invoice /
+  // confirmation lines. The deterministic order confirmation never
+  // reaches this point (it returns earlier), so it is never trimmed.
+  const shortened = shortenReply(parsed.reply);
+  if (shortened.shortened) {
+    console.log(`[agent] brevity guard: trimmed reply ${parsed.reply.length} -> ${shortened.reply.length} chars`);
+    parsed = { ...parsed, reply: shortened.reply };
   }
 
   // Send the reply for real (Meta Graph API). Only a delivered reply is

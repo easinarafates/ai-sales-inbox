@@ -42,15 +42,37 @@ CREATE TABLE IF NOT EXISTS workspace_order_counters (
 
 -- Backfill: number the orders that exist already, oldest first per
 -- workspace, and seed each workspace's counter to its highest number.
-UPDATE orders o SET order_number = 'ASI-' || LPAD(s.seq::text, 4, '0')
-FROM (
-  SELECT id, ROW_NUMBER() OVER (PARTITION BY workspace_id ORDER BY created_at ASC) AS seq
+-- The numbering CONTINUES after the highest number already used in that
+-- workspace (never restarts at 1): the first version restarted at 1, so
+-- re-running the migration after a NULL-numbered order appeared assigned
+-- ASI-0001 a second time and violated the unique index — which hung the
+-- API's PGlite ensureSchema on the next boot (the throw became an
+-- unhandled rejection and the request never got a response).
+WITH numbered AS (
+  SELECT id, workspace_id,
+         ROW_NUMBER() OVER (PARTITION BY workspace_id ORDER BY created_at ASC) AS seq
   FROM orders WHERE order_number IS NULL
-) s
-WHERE o.id = s.id;
+),
+maxes AS (
+  SELECT workspace_id,
+         COALESCE(MAX(CAST(SUBSTRING(order_number FROM 5) AS INTEGER)), 0) AS max_n
+  FROM orders WHERE order_number ~ '^ASI-[0-9]+$'
+  GROUP BY workspace_id
+)
+UPDATE orders o
+SET order_number = 'ASI-' || LPAD((COALESCE(m.max_n, 0) + n.seq)::text, 4, '0')
+FROM numbered n
+LEFT JOIN maxes m ON m.workspace_id = n.workspace_id
+WHERE o.id = n.id;
 
+-- The counter is the workspace's HIGHEST used number (not the row count):
+-- a count would fall behind the max when numbers have gaps, and the next
+-- order would then re-use a number that already exists.
 INSERT INTO workspace_order_counters (workspace_id, last_number)
-SELECT workspace_id, COUNT(*) FROM orders GROUP BY workspace_id
+SELECT workspace_id,
+       COALESCE(MAX(CAST(SUBSTRING(order_number FROM 5) AS INTEGER)), 0)
+FROM orders WHERE order_number ~ '^ASI-[0-9]+$'
+GROUP BY workspace_id
 ON CONFLICT (workspace_id) DO UPDATE
   SET last_number = GREATEST(workspace_order_counters.last_number, EXCLUDED.last_number),
       updated_at = now();
