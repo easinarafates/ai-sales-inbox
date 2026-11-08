@@ -299,6 +299,10 @@ token = signup.data?.token ?? '';
     // 6) Report (today).
     const report = await api('/api/orders/report');
     check('boot 1: report — today orders=1, value=৳1000', report.data?.today?.orders === 1 && Number(report.data?.today?.valuePaisa) === 100000, JSON.stringify(report.data?.today ?? {}));
+    // The report date is the Dhaka calendar date (not the UTC date of the
+    // day start, which is the previous day — midnight Dhaka = 18:00 UTC).
+    const dhakaToday = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    check('boot 1: report date is the Dhaka calendar date', report.data?.date === dhakaToday, `date=${report.data?.date} expected=${dhakaToday}`);
     check('boot 1: report — courier inTransitOrders=0', report.data?.courier?.inTransitOrders === 0, JSON.stringify(report.data?.courier ?? {}));
 
     // 7) Customers — amount hidden in the list, revealed in the detail.

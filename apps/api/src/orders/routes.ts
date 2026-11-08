@@ -294,7 +294,10 @@ ordersRouter.get('/report', async (req: AuthRequest, res: Response) => {
     [workspaceId],
   );
   res.json({
-    date: dayStartUtc.toISOString().slice(0, 10),
+    // The Dhaka calendar date (dhakaNow is now shifted +6h, so its UTC
+    // date IS the Dhaka date) — NOT dayStartUtc's UTC date, which is the
+    // previous day (midnight Dhaka = 18:00 UTC the day before).
+    date: dhakaNow.toISOString().slice(0, 10),
     today,
     courier: {
       inTransitOrders: Number(inCourier?.n ?? 0),
