@@ -254,7 +254,7 @@ token = signup.data?.token ?? '';
       body: {
         customerId, conversationId: convId,
         items: [{ productId: jeansId, quantity: 2 }],
-        customerName: 'Order Test Customer', customerPhone: '01700000001', deliveryAddress: 'House 1, Road 2, Dhanmondi, Dhaka',
+        customerName: 'Monica', customerPhone: '01700000001', deliveryAddress: 'House 1, Road 2, Dhanmondi, Dhaka',
       },
     });
     check('boot 1: POST order → 201', full.status === 201, `status=${full.status}`);
@@ -273,6 +273,18 @@ token = signup.data?.token ?? '';
     check('boot 1: detail has zone (Dhaka) + handledBy ai/agent + estimate', dOrder.zone?.insideDhaka === true && dOrder.zone?.label === 'ঢাকা' && dOrder.handledBy === 'agent' && typeof dOrder.deliveryEstimate === 'string' && dOrder.deliveryEstimate.length > 0, JSON.stringify(dOrder.zone ?? {}));
     check('boot 1: detail grand total = 1000 + 100 = ৳1100', Number(dOrder.grandTotalPaisa) === 110000, `grand=${dOrder.grandTotalPaisa}`);
     check('boot 1: detail invoice URL', typeof dOrder.invoiceUrl === 'string' && dOrder.invoiceUrl.includes(`/invoice/${invoiceToken}`), `${dOrder.invoiceUrl ?? ''}`);
+
+    // REGRESSION (name-overwrite bug): the order is for a DIFFERENT
+    // recipient ("Monica") than the customer's Facebook name
+    // ("Order Test Customer"). The order snapshot must carry "Monica",
+    // but the customer row must keep its Facebook name — the order name
+    // must NEVER write back to the customer (Inbox / Customers list).
+    check('boot 1: REGRESSION order recipient is Monica (orders.customer_name)', dOrder.customer_name === 'Monica', `customer_name=${dOrder.customer_name ?? ''}`);
+    check('boot 1: REGRESSION order does NOT rename the customer (live name unchanged)', dOrder.customer?.name === 'Order Test Customer', `customer.name=${dOrder.customer?.name ?? ''}`);
+    const inboxAfter = await api('/api/inbox');
+    const convsAfter = Array.isArray(inboxAfter.data) ? inboxAfter.data : (inboxAfter.data?.conversations ?? inboxAfter.data?.items ?? []);
+    const convAfter = convsAfter.find((c) => c.id === convId);
+    check('boot 1: REGRESSION Inbox still shows the Facebook name', convAfter?.customer_name === 'Order Test Customer', `name=${convAfter?.customer_name ?? ''}`);
 
     // 3) Counts + tabs.
     const counts = await api('/api/orders/counts');
@@ -368,6 +380,8 @@ token = signup.data?.token ?? '';
   check('driver 1: AI order has an invoice URL', typeof drvJson?.invoiceUrl === 'string' && drvJson.invoiceUrl.includes('/invoice/'), `${drvJson?.invoiceUrl ?? ''}`);
   check('driver 1: confirmation text has the order number + invoice link', typeof drvJson?.confirmationText === 'string' && drvJson.confirmationText.includes('ASI-0003') && drvJson.confirmationText.includes('/invoice/'), (drvJson?.confirmationText ?? '').slice(0, 200));
   check('driver 1: AI order delivery charge is Dhaka ৳100', Number(drvJson?.deliveryChargePaisa) === 10000, `charge=${drvJson?.deliveryChargePaisa ?? ''}`);
+  check('driver 1: REGRESSION AI order recipient is Rina (orders.customer_name)', drvJson?.orderCustomerName === 'Rina', `customer_name=${drvJson?.orderCustomerName ?? ''}`);
+  check('driver 1: REGRESSION AI order does NOT rename the customer', drvJson?.customerNameAfter === 'Order Test Customer', `name=${drvJson?.customerNameAfter ?? ''}`);
 
   // ---------- Summary ----------
   const failed = results.filter((r) => !r.ok);

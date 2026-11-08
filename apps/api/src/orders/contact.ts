@@ -16,10 +16,16 @@
  *  - refuses (returns an error) when the phone or the delivery address is
  *    still missing — the caller must ask the customer for it first, never
  *    create the order and never claim the contact is already known;
- *  - otherwise stores the given contact on the customer row (name only when
- *    the owner has NOT corrected it by hand — name_manually_set — the
- *    owner's correction is final) and returns the snapshot the order row
- *    must carry (orders.customer_name / customer_phone / delivery_address).
+ *  - otherwise stores the given PHONE + ADDRESS on the customer row and
+ *    returns the snapshot the order row must carry
+ *    (orders.customer_name / customer_phone / delivery_address).
+ *  - the NAME is NEVER written to the customer row: the name on the
+ *    customer record comes only from Facebook (or the owner's manual
+ *    edit). The name a customer gives in an order is the ORDER
+ *    RECIPIENT's name — it can be someone else entirely (ordering for
+ *    "Monica" while the Facebook account is "Rahim") — and it lives
+ *    only on the order snapshot. Writing it back would rename the
+ *    customer everywhere (Inbox, Customers list).
  *
  * Nothing here invents data: a missing phone/address stays missing and is
  * reported as missing; the UI shows 'দেওয়া হয়নি' / 'Not provided' for it.
@@ -175,19 +181,23 @@ export async function resolveOrderContact(
   // Store what the customer just gave on their row, so the next order and
   // the Inbox already know it. The phone is stored NORMALIZED (11-digit
   // 01XXXXXXXXX) — a +880/880/spaced form is stored in its canonical
-  // form. Name: never overwrite the owner's hand correction
-  // (name_manually_set) — the owner's correction is final. The name is
-  // never a blocker: a given name is used as-is, and a missing name
+  // form. The NAME is deliberately NOT stored here: the name on the
+  // customer row comes only from Facebook (or the owner's manual edit).
+  // The name a customer gives in an order is the ORDER RECIPIENT's name
+  // — it can be someone else (ordering for "Monica" while the Facebook
+  // account is "Rahim") — and it lives only on the order snapshot
+  // (orders.customer_name). Writing it back would rename the customer
+  // everywhere (Inbox, Customers list). The name is never a blocker: a
+  // given name is used as-is for the order snapshot, and a missing name
   // never stops an order (the customer's Facebook name is used instead).
-  if (givenPhone || givenAddress || (givenName && !stored.name_manually_set)) {
+  if (givenPhone || givenAddress) {
     await db.query(
       `UPDATE customers SET
          phone = COALESCE($2, phone),
          address = COALESCE($3, address),
-         name = CASE WHEN $4::boolean THEN name ELSE COALESCE($5, name) END,
          updated_at = now()
-       WHERE workspace_id = $1 AND id = $6`,
-      [workspaceId, givenPhone ? normalizedPhone : null, givenAddress, stored.name_manually_set === true, givenName, customerId],
+       WHERE workspace_id = $1 AND id = $4`,
+      [workspaceId, givenPhone ? normalizedPhone : null, givenAddress, customerId],
     );
   }
 

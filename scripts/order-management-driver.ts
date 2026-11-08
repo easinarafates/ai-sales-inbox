@@ -21,11 +21,26 @@ async function main() {
     customerId,
     conversationId: conversationId || null,
     items: [{ productId, quantity: 1 }],
-    customerName: 'Order Test Customer',
+    // REGRESSION (name-overwrite bug): the order is for a DIFFERENT
+    // recipient ("Rina") than the customer's Facebook name
+    // ("Order Test Customer"). The order snapshot must carry "Rina",
+    // but the customer row must keep its Facebook name.
+    customerName: 'Rina',
     customerPhone: '01700000001',
     deliveryAddress: 'House 1, Road 2, Dhanmondi, Dhaka',
   });
-  console.log(JSON.stringify(result));
+  // Read back what the order flow left behind: the order's recipient
+  // name and the customer row's name (must be unchanged).
+  const cust = await pool.query<{ name: string | null }>('SELECT name FROM customers WHERE id = $1', [customerId]);
+  const ord = await pool.query<{ customer_name: string | null }>(
+    'SELECT customer_name FROM orders WHERE workspace_id = $1 AND order_number = $2',
+    [workspaceId, (result as { orderNumber?: string }).orderNumber ?? ''],
+  );
+  console.log(JSON.stringify({
+    ...result,
+    customerNameAfter: cust.rows[0]?.name ?? null,
+    orderCustomerName: ord.rows[0]?.customer_name ?? null,
+  }));
   await pool.end().catch(() => undefined);
   process.exit(0);
 }
