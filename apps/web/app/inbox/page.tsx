@@ -7,8 +7,10 @@ import {
   getToken,
   inboxApi,
   orderTotalPaisa,
+  usageApi,
   type Conversation,
   type ConversationDetail,
+  type ConversationUsage,
   type Message,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -161,7 +163,7 @@ function StatCard({
 function InboxPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const { t, fmtDate, fmtTaka } = useI18n();
+  const { t, fmtDate, fmtTaka, fmtNum } = useI18n();
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selected, setSelected] = useState<ConversationDetail | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -200,6 +202,21 @@ function InboxPage() {
     }
   }, []);
 
+  // Per-chat AI usage (real sums from ai_usage_ledger, provider cost
+  // only) — keyed by conversation id. A chat with no AI replies simply
+  // has no row here, and the UI shows 0 for it, never an invented number.
+  const [usageByConv, setUsageByConv] = useState<Record<string, ConversationUsage>>({});
+  const loadUsage = useCallback(async () => {
+    try {
+      const data = await usageApi.list();
+      const map: Record<string, ConversationUsage> = {};
+      for (const u of data.byConversation ?? []) map[u.conversationId] = u;
+      setUsageByConv(map);
+    } catch {
+      /* usage stays at its last good values; the list error surfaces */
+    }
+  }, []);
+
   useEffect(() => {
     if (!getToken()) {
       router.push("/login");
@@ -207,7 +224,8 @@ function InboxPage() {
     }
     loadList();
     loadStats();
-  }, [loadList, loadStats, router]);
+    loadUsage();
+  }, [loadList, loadStats, loadUsage, router]);
 
   const openThread = async (id: string) => {
     setSelectedId(id);
@@ -251,6 +269,7 @@ function InboxPage() {
       if (document.hidden) return;
       loadList();
       loadStats();
+      loadUsage();
       refreshThread();
     };
     const timer = setInterval(tick, 5000);
@@ -262,7 +281,7 @@ function InboxPage() {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [loadList, loadStats, refreshThread]);
+  }, [loadList, loadStats, loadUsage, refreshThread]);
 
   const sendReply = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -508,6 +527,15 @@ function InboxPage() {
                   </span>
                   <span className="block truncate text-sm text-slate-500">{c.lastMessage || c.last_message || ""}</span>
                   {(() => {
+                    const u = usageByConv[c.id];
+                    if (!u || u.replies === 0) return null;
+                    return (
+                      <span className="block text-xs text-slate-400">
+                        AI · {u.replies} {t("inbox.aiUsageReplies", "replies", "উত্তর")} · {fmtTaka(u.costPaisa)}
+                      </span>
+                    );
+                  })()}
+                  {(() => {
                     const reason = waitingReason(c);
                     if (!reason) return null;
                     return (
@@ -568,6 +596,31 @@ function InboxPage() {
                       {selected.customer?.phone && (
                         <p className="text-sm text-slate-500">{selected.customer.phone}</p>
                       )}
+                      {/* Per-chat AI usage — real sums from ai_usage_ledger
+                          (provider cost only). A chat with no AI replies
+                          shows 0 honestly, never a blank. */}
+                      {(() => {
+                        const u = selected ? usageByConv[selected.conversation.id] : undefined;
+                        const tokens = (u?.inputTokens ?? 0) + (u?.outputTokens ?? 0);
+                        return (
+                          <p className="mt-1 inline-flex flex-wrap items-center gap-1 rounded-lg bg-orange-50 px-2 py-1 text-xs font-medium text-slate-700">
+                            <span className="font-bold text-brand">
+                              {t("inbox.aiUsageTitle", "AI usage so far", "এখন পর্যন্ত AI ব্যবহার")}:
+                            </span>
+                            {u && u.replies > 0 ? (
+                              <span>
+                                {fmtNum(tokens)} {t("inbox.aiUsageTokens", "tokens", "টোকেন")} · {fmtTaka(u.costPaisa)} · {u.replies}{" "}
+                                {t("inbox.aiUsageReplies", "replies", "উত্তর")}
+                              </span>
+                            ) : (
+                              <span>
+                                {t("inbox.noAiReplies", "No AI replies yet", "AI এখনো উত্তর দেয়নি")} — 0{" "}
+                                {t("inbox.aiUsageTokens", "tokens", "টোকেন")} · {fmtTaka(0)}
+                              </span>
+                            )}
+                          </p>
+                        );
+                      })()}
                       <div className="mt-1 flex flex-wrap items-center gap-2 text-sm">
                         <span className="text-slate-500">{t("inbox.addressAs", "Address as", "সম্বোধন")}:</span>
                         <span className="font-medium">
@@ -805,7 +858,7 @@ function InboxPage() {
 /** useSearchParams needs a Suspense boundary (Next.js App Router rule). */
 export default function InboxPageWrapper() {
   return (
-    <Suspense fallback={<p className="text-slate-500">Loading…</p>}>
+    <Suspense fallback={<div className="space-y-3 p-4"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>}>
       <InboxPage />
     </Suspense>
   );

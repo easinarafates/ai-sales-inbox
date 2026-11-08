@@ -171,13 +171,13 @@ export default function TeachPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("teach.title", "Teach AI", "শেখানো")}</h1>
+      <h1 className="page-title">{t("teach.title", "Teach AI", "শেখানো")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
       {/* Unanswered questions */}
       <h2 className="text-xl font-bold mb-3">{t("teach.unansweredTitle", "Questions the AI could not answer", "AI যে প্রশ্নের উত্তর দিতে পারেনি")}</h2>
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : unanswered.length === 0 ? (
-        <p className="text-slate-500 card p-6 mb-6">{t("teach.noUnanswered", "No unanswered questions.", "কোনো উত্তর না দেওয়া প্রশ্ন নেই।")}</p>
+      {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : unanswered.length === 0 ? (
+        <div className="empty-state mb-6">{t("teach.noUnanswered", "No unanswered questions.", "কোনো উত্তর না দেওয়া প্রশ্ন নেই।")}</div>
       ) : (
         <div className="space-y-3 mb-6">
           {unanswered.map((q) => (
@@ -224,7 +224,7 @@ export default function TeachPage() {
       </form>
 
       {knowledge.length === 0 ? (
-        <p className="text-slate-500 card p-6 mb-6">{t("teach.bookEmpty", "Nothing in the Knowledge Book yet.", "জ্ঞানের বইয়ে এখনো কিছু নেই।")}</p>
+        <div className="empty-state mb-6">{t("teach.bookEmpty", "Nothing in the Knowledge Book yet.", "জ্ঞানের বইয়ে এখনো কিছু নেই।")}</div>
       ) : (
         <div className="space-y-3 mb-6">
           {knowledge.map((k) => (

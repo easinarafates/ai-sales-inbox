@@ -46,12 +46,12 @@ export default function WebsiteChatPage() {
   };
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("chatTitle", "Website chat", "ওয়েবসাইট চ্যাট")}</h1>
-      <p className="text-sm text-slate-500 mb-4">{t("chatSub", "Add a chat box to your own website. Visitor messages appear in your inbox.", "আপনার ওয়েবসাইটে একটি চ্যাট বাক্স যোগ করুন। ভিজিটরের মেসেজ আপনার ইনবক্সে আসবে।")}</p>
+    <div>
+      <h1 className="page-title">{t("chatTitle", "Website chat", "ওয়েবসাইট চ্যাট")}</h1>
+      <p className="page-subtitle">{t("chatSub", "Add a chat box to your own website. Visitor messages appear in your inbox.", "আপনার ওয়েবসাইটে একটি চ্যাট বাক্স যোগ করুন। ভিজিটরের মেসেজ আপনার ইনবক্সে আসবে।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : (
         <>
           <div className="card p-4 mb-6">

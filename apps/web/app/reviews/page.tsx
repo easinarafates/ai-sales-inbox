@@ -34,13 +34,13 @@ export default function ReviewsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("reviews.title", "Reviews", "রিভিউ")}</h1>
+      <h1 className="page-title">{t("reviews.title", "Reviews", "রিভিউ")}</h1>
       <p className="text-sm text-slate-500 card p-4 mb-4">
         {t("reviews.hint", "💡 To ask a customer for a review, go to the order page and use the “Ask for review” button. Here you only see review requests and received reviews.", "💡 কাস্টমারকে রিভিউ চাইতে হলে অর্ডারের পেজে গিয়ে “রিভিউ চান” বোতামটি ব্যবহার করুন। এখানে শুধু রিভিউর অনুরোধ ও পাওয়া রিভিউ দেখা যায়।")}
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : reviews.length === 0 ? (
+      {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : reviews.length === 0 ? (
         <div className="empty-state">{t("reviews.empty", "No review requests or reviews.", "কোনো রিভিউ অনুরোধ বা রিভিউ নেই।")}</div>
       ) : (
         <div className="card overflow-x-auto">

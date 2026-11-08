@@ -77,12 +77,12 @@ export default function SetupPage() {
   const done = (step: string) => progress?.steps.find((s) => s.step === step)?.completed ?? false;
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
+    <div>
       <h1 className="page-title">{t("setupTitle", "Setup wizard", "সেটআপ উইজার্ড")}</h1>
       <p className="page-subtitle">{t("setupSub", "Seven steps to get your shop live.", "দোকান লাইভ করতে সাতটি ধাপ।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : (
         <>
           <p className="mb-4 font-bold text-[#FF5B2E]">

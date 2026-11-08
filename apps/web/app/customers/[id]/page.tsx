@@ -7,7 +7,9 @@ import {
   getToken,
   orderItemsOf,
   orderTotalPaisa,
+  usageApi,
   type CustomerDetail,
+  type UsageSummary,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 
@@ -15,8 +17,12 @@ export default function CustomerDetailPage() {
   const params = useParams();
   const id = String(params.id || "");
   const router = useRouter();
-  const { t, fmtDate, fmtTaka } = useI18n();
+  const { t, fmtDate, fmtTaka, fmtNum } = useI18n();
   const [detail, setDetail] = useState<CustomerDetail | null>(null);
+  // Per-customer AI usage (real sums from ai_usage_ledger, provider cost
+  // only). Null until loaded; a customer with no AI replies gets an
+  // empty byCustomer list and the card shows 0 honestly.
+  const [usage, setUsage] = useState<UsageSummary | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
   const [mergeId, setMergeId] = useState("");
@@ -27,6 +33,11 @@ export default function CustomerDetailPage() {
     try {
       const data = await customersApi.get(id);
       setDetail(data);
+      try {
+        setUsage(await usageApi.list({ customerId: id }));
+      } catch {
+        /* usage stays null — the card shows 0, never a crash */
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t("customers.detailLoadFailed", "Could not load the customer profile.", "কাস্টমার প্রোফাইল লোড করা যায়নি।"));
     } finally {
@@ -60,14 +71,20 @@ export default function CustomerDetailPage() {
     }
   };
 
-  if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
+  if (loading) return (
+    <div className="space-y-3">
+      <div className="skeleton h-8 w-48" />
+      <div className="skeleton h-24" />
+      <div className="skeleton h-24" />
+    </div>
+  );
 
   const c = detail?.customer;
 
   return (
     <div>
       <Link href="/customers" className="text-brand-dark underline text-sm">{t("customers.allCustomersLink", "← All customers", "← সব কাস্টমার")}</Link>
-      <h1 className="text-2xl font-bold my-4">{t("customers.detailTitle", "Customer profile", "কাস্টমার প্রোফাইল")}</h1>
+      <h1 className="page-title">{t("customers.detailTitle", "Customer profile", "কাস্টমার প্রোফাইল")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {notice && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
       {!c && !loading && <div className="empty-state">{t("customers.notFound", "Customer not found.", "কাস্টমার পাওয়া যায়নি।")}</div>}
@@ -96,6 +113,47 @@ export default function CustomerDetailPage() {
               <p className="text-sm mt-3"><span className="text-slate-500">{t("customers.lastOrder", "Last order:", "শেষ অর্ডার:")}</span> {detail.summary.lastOrderAt ? fmtDate(detail.summary.lastOrderAt) : "—"}</p>
             </div>
           )}
+
+          {/* AI usage — real sums from ai_usage_ledger (provider cost
+              only), rolled up across this customer's chats. A customer
+              with no AI replies shows 0 honestly, never a blank. */}
+          <div className="card p-4">
+            <h3 className="font-bold mb-2">{t("customers.aiUsageTitle", "AI usage", "AI ব্যবহার")}</h3>
+            <p className="text-xs text-slate-500 mb-3">{t("customers.aiUsageNote", "Tokens used and the real cost of AI replies to this customer.", "এই কাস্টমারকে AI যত উত্তর দিয়েছে, তার টোকেন ও আসল খরচ।")}</p>
+            {(() => {
+              const total = usage?.byCustomer?.[0];
+              const tokens = (total?.inputTokens ?? 0) + (total?.outputTokens ?? 0);
+              return (
+                <>
+                  <p className="text-2xl font-bold text-brand-dark">{fmtTaka(total?.costPaisa ?? 0)}</p>
+                  <p className="text-sm text-slate-600 mb-3">
+                    {total && total.replies > 0
+                      ? `${fmtNum(tokens)} ${t("inbox.aiUsageTokens", "tokens", "টোকেন")} · ${total.replies} ${t("inbox.aiUsageReplies", "replies", "উত্তর")}`
+                      : `${t("inbox.noAiReplies", "No AI replies yet", "AI এখনো উত্তর দেয়নি")} — 0 ${t("inbox.aiUsageTokens", "tokens", "টোকেন")} · ${fmtTaka(0)}`}
+                  </p>
+                  {(usage?.byConversation ?? []).length > 0 && (
+                    <>
+                      <p className="text-sm font-bold text-slate-900 mb-1">{t("customers.aiUsagePerChat", "Per chat", "প্রতি চ্যাটে")}</p>
+                      <ul className="text-sm space-y-1">
+                        {(usage?.byConversation ?? []).map((u) => (
+                          <li key={u.conversationId} className="border rounded-lg p-2 flex justify-between gap-2">
+                            <span>
+                              {fmtNum(u.inputTokens + u.outputTokens)} {t("inbox.aiUsageTokens", "tokens", "টোকেন")} · {u.replies}{" "}
+                              {t("inbox.aiUsageReplies", "replies", "উত্তর")} •{" "}
+                              <Link href={`/inbox?conversation=${u.conversationId}`} className="text-brand-dark underline">
+                                {t("common.viewInInbox", "View in inbox", "ইনবক্সে দেখুন")}
+                              </Link>
+                            </span>
+                            <span className="font-medium shrink-0">{fmtTaka(u.costPaisa)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
+                </>
+              );
+            })()}
+          </div>
 
           {/* What the customer ordered — product names + quantities + amounts. */}
           <div className="card p-4">

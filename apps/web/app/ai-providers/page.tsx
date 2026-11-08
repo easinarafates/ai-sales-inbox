@@ -94,9 +94,9 @@ export default function AiProvidersPage() {
     : "";
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("aiProvTitle", "AI Providers", "AI প্রোভাইডার")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+    <div>
+      <h1 className="page-title">{t("aiProvTitle", "AI Providers", "AI প্রোভাইডার")}</h1>
+      <p className="page-subtitle">
         {t(
           "aiProvSub",
           "Choose which AI answers your customers: Groq (free), OpenAI, Gemini or Claude. If the chosen AI fails, Groq answers instead and the switch is recorded honestly.",
@@ -107,7 +107,7 @@ export default function AiProvidersPage() {
       {warning && <p className="bg-amber-50 text-amber-700 text-sm p-3 rounded-lg mb-4">{warning}</p>}
 
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : data ? (
         <>
           <div className="bg-green-600/10 border border-green-600/30 rounded-xl p-4 mb-6">
@@ -201,7 +201,7 @@ export default function AiProvidersPage() {
 
           <h2 className="font-bold mb-3">{t("aiProvUsageTitle", "Recent AI replies", "সাম্প্রতিক AI উত্তরগুলো")}</h2>
           {data.recentUsage.length === 0 ? (
-            <p className="text-slate-500">{t("aiProvUsageEmpty", "No AI replies yet.", "এখনো কোনো AI উত্তর দেওয়া হয়নি।")}</p>
+            <div className="empty-state">{t("aiProvUsageEmpty", "No AI replies yet.", "এখনো কোনো AI উত্তর দেওয়া হয়নি।")}</div>
           ) : (
             <div className="card overflow-x-auto">
               <table className="w-full text-sm">

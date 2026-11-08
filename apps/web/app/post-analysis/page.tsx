@@ -86,8 +86,8 @@ export default function PostAnalysisPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">{t("pa.title", "Post analysis", "পোস্ট বিশ্লেষণ")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+      <h1 className="page-title">{t("pa.title", "Post analysis", "পোস্ট বিশ্লেষণ")}</h1>
+      <p className="page-subtitle">
         {t("pa.sub", "Real posts from your connected Facebook Page — engagement, top comments and what to do next.", "আপনার যুক্ত Facebook পেজের আসল পোস্ট — এনগেজমেন্ট, সেরা কমেন্ট আর পরের করণীয়।")}
       </p>
 

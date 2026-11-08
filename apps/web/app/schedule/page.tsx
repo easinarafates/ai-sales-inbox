@@ -95,7 +95,7 @@ function MediaPreview({ url, alt }: { url: string; alt: string }) {
     };
   }, [url]);
   if (!src) {
-    return <p className="text-sm text-slate-500">{t("media_loading", "Loading media…", "মিডিয়া লোড হচ্ছে…")}</p>;
+    return <div className="skeleton h-32 w-full" />;
   }
   return isVideoUrl(url) ? (
     <video src={src} controls className="max-h-64 rounded-lg w-full" />
@@ -383,8 +383,8 @@ export default function SchedulePage() {
   };
 
   return (
-    <div className="bg-[#FFF1EA]">
-      <h1 className="text-2xl font-bold mb-4">
+    <div>
+      <h1 className="page-title">
         {t("page_title", "Post Schedule", "পোস্ট শিডিউল")}
       </h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}

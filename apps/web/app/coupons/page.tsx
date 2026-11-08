@@ -117,7 +117,7 @@ export default function CouponsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("coupons.title", "Coupons", "কুপন")}</h1>
+      <h1 className="page-title">{t("coupons.title", "Coupons", "কুপন")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
       <form onSubmit={create} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -154,7 +154,7 @@ export default function CouponsPage() {
         )}
       </form>
 
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : coupons.length === 0 ? (
+      {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : coupons.length === 0 ? (
         <div className="empty-state">{t("coupons.empty", "No coupons yet. Create one from the form above.", "কোনো কুপন নেই। উপরের ফর্ম থেকে তৈরি করুন।")}</div>
       ) : (
         <div className="card overflow-x-auto">

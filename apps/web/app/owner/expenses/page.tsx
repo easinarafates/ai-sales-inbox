@@ -83,9 +83,9 @@ export default function OwnerExpensesPage() {
     : t("ownerExpOther", "Other", "অন্যান্য");
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("ownerExpensesTitle", "Expenses", "খরচ")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+    <div>
+      <h1 className="page-title">{t("ownerExpensesTitle", "Expenses", "খরচ")}</h1>
+      <p className="page-subtitle">
         {t(
           "ownerExpensesSub",
           "Record business expenses. Expenses are your own bookkeeping — they are NOT deducted from the owner wallet automatically.",
@@ -94,7 +94,7 @@ export default function OwnerExpensesPage() {
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : isOwner === false ? (
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : (
@@ -135,7 +135,7 @@ export default function OwnerExpensesPage() {
           </div>
 
           {expenses.length === 0 ? (
-            <p className="text-slate-500">{t("ownerExpEmpty", "No expenses this month.", "এই মাসে কোনো খরচ নেই।")}</p>
+            <div className="empty-state">{t("ownerExpEmpty", "No expenses this month.", "এই মাসে কোনো খরচ নেই।")}</div>
           ) : (
             <div className="card overflow-x-auto">
               <table className="w-full text-sm">

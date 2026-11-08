@@ -41,9 +41,9 @@ export default function OwnerApiCostsPage() {
     : p;
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("ownerApiCostsTitle", "API costs", "API খরচ")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+    <div>
+      <h1 className="page-title">{t("ownerApiCostsTitle", "API costs", "API খরচ")}</h1>
+      <p className="page-subtitle">
         {t(
           "ownerApiCostsSub",
           "Which AI cost how much. These are the providers' real token costs from the usage ledger — nothing is estimated or invented. Groq is always ৳0.",
@@ -52,7 +52,7 @@ export default function OwnerApiCostsPage() {
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : isOwner === false ? (
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : data ? (
@@ -99,7 +99,7 @@ export default function OwnerApiCostsPage() {
 
           <h2 className="font-bold mb-3">{t("ownerApiByProvider", "By AI provider", "AI অনুযায়ী")}</h2>
           {data.byProvider.length === 0 ? (
-            <p className="text-slate-500 mb-6">{t("ownerApiEmpty", "No AI replies in this period.", "এই সময়ে কোনো AI উত্তর দেওয়া হয়নি।")}</p>
+            <div className="empty-state mb-6">{t("ownerApiEmpty", "No AI replies in this period.", "এই সময়ে কোনো AI উত্তর দেওয়া হয়নি।")}</div>
           ) : (
             <div className="grid gap-3 mb-6">
               {data.byProvider.map((p) => (
@@ -118,7 +118,7 @@ export default function OwnerApiCostsPage() {
 
           <h2 className="font-bold mb-3">{t("ownerApiByShop", "By shop", "দোকান অনুযায়ী")}</h2>
           {data.byShop.length === 0 ? (
-            <p className="text-slate-500">{t("ownerApiEmpty", "No AI replies in this period.", "এই সময়ে কোনো AI উত্তর দেওয়া হয়নি।")}</p>
+            <div className="empty-state">{t("ownerApiEmpty", "No AI replies in this period.", "এই সময়ে কোনো AI উত্তর দেওয়া হয়নি।")}</div>
           ) : (
             <div className="card overflow-x-auto mb-6">
               <table className="w-full text-sm">
@@ -148,7 +148,7 @@ export default function OwnerApiCostsPage() {
 
           <h2 className="font-bold mb-3">{t("ownerUsageRowsTitle", "Every AI reply", "প্রতিটি AI উত্তর")}</h2>
           {data.rows.length === 0 ? (
-            <p className="text-slate-500">{t("ownerApiEmpty", "No AI replies in this period.", "এই সময়ে কোনো AI উত্তর দেওয়া হয়নি।")}</p>
+            <div className="empty-state">{t("ownerApiEmpty", "No AI replies in this period.", "এই সময়ে কোনো AI উত্তর দেওয়া হয়নি।")}</div>
           ) : (
             <>
               <div className="card overflow-x-auto">

@@ -64,6 +64,119 @@ inboxRouter.get('/', async (req: AuthRequest, res: Response) => {
   res.json({ conversations: rows });
 });
 
+/**
+ * GET /api/inbox/usage?conversationId=&customerId= — per-conversation
+ * and per-customer AI token + cost totals for this workspace, summed
+ * from ai_usage_ledger. Costs come ONLY from provider_cost_paisa (the
+ * same basis as the Owner Panel /api/owner/api-costs) — never from
+ * cost_paisa (the wallet deduction) and never an estimate. One ledger
+ * row = one AI reply, so COUNT(*) is the reply count.
+ *
+ * A conversation with no ledger rows simply has no row here — the UI
+ * shows 0 tokens / ৳0.00 for it, never an invented number. A customer
+ * with more than one conversation is rolled up in byCustomer (with
+ * conversationCount), while byConversation keeps each chat separate.
+ * Registered BEFORE '/:id' so 'usage' is not mistaken for an id.
+ */
+inboxRouter.get('/usage', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const conversationId = typeof req.query.conversationId === 'string' && req.query.conversationId.trim()
+    ? req.query.conversationId.trim()
+    : null;
+  const customerId = typeof req.query.customerId === 'string' && req.query.customerId.trim()
+    ? req.query.customerId.trim()
+    : null;
+  const params: unknown[] = [workspaceId];
+  let convFilter = '';
+  if (conversationId) {
+    params.push(conversationId);
+    convFilter = ` AND l.conversation_id = $${params.length}`;
+  }
+  let custFilter = '';
+  if (customerId) {
+    params.push(customerId);
+    custFilter = ` AND c.customer_id = $${params.length}`;
+  }
+  const { rows: byConversation } = await query<{
+    conversation_id: string;
+    customer_id: string | null;
+    customer_name: string | null;
+    replies: string;
+    input_tokens: string;
+    output_tokens: string;
+    cost_paisa: string;
+  }>(
+    workspaceId,
+    `SELECT l.conversation_id, c.customer_id, cu.name AS customer_name,
+            COUNT(*) AS replies,
+            COALESCE(SUM(l.input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(l.output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(l.provider_cost_paisa), 0) AS cost_paisa
+     FROM ai_usage_ledger l
+     LEFT JOIN conversations c ON c.id = l.conversation_id AND c.workspace_id = l.workspace_id
+     LEFT JOIN customers cu ON cu.id = c.customer_id AND cu.workspace_id = l.workspace_id
+     WHERE l.workspace_id = $1 AND l.conversation_id IS NOT NULL${convFilter}${custFilter}
+     GROUP BY l.conversation_id, c.customer_id, cu.name
+     ORDER BY cost_paisa DESC`,
+    params,
+  );
+  const { rows: byCustomer } = await query<{
+    customer_id: string;
+    customer_name: string | null;
+    replies: string;
+    input_tokens: string;
+    output_tokens: string;
+    cost_paisa: string;
+    conversation_count: string;
+  }>(
+    workspaceId,
+    `SELECT c.customer_id, cu.name AS customer_name,
+            COUNT(*) AS replies,
+            COALESCE(SUM(l.input_tokens), 0) AS input_tokens,
+            COALESCE(SUM(l.output_tokens), 0) AS output_tokens,
+            COALESCE(SUM(l.provider_cost_paisa), 0) AS cost_paisa,
+            COUNT(DISTINCT l.conversation_id) AS conversation_count
+     FROM ai_usage_ledger l
+     JOIN conversations c ON c.id = l.conversation_id AND c.workspace_id = l.workspace_id
+     LEFT JOIN customers cu ON cu.id = c.customer_id AND cu.workspace_id = l.workspace_id
+     WHERE l.workspace_id = $1 AND c.customer_id IS NOT NULL${convFilter}${custFilter}
+     GROUP BY c.customer_id, cu.name
+     ORDER BY cost_paisa DESC`,
+    params,
+  );
+  const totals = byConversation.reduce(
+    (acc, r) => ({
+      replies: acc.replies + Number(r.replies),
+      inputTokens: acc.inputTokens + Number(r.input_tokens),
+      outputTokens: acc.outputTokens + Number(r.output_tokens),
+      costPaisa: acc.costPaisa + Number(r.cost_paisa),
+    }),
+    { replies: 0, inputTokens: 0, outputTokens: 0, costPaisa: 0 },
+  );
+  res.json({
+    byConversation: byConversation.map((r) => ({
+      conversationId: r.conversation_id,
+      customerId: r.customer_id,
+      customerName: r.customer_name,
+      replies: Number(r.replies),
+      inputTokens: Number(r.input_tokens),
+      outputTokens: Number(r.output_tokens),
+      costPaisa: Number(r.cost_paisa),
+    })),
+    byCustomer: byCustomer.map((r) => ({
+      customerId: r.customer_id,
+      customerName: r.customer_name,
+      replies: Number(r.replies),
+      inputTokens: Number(r.input_tokens),
+      outputTokens: Number(r.output_tokens),
+      costPaisa: Number(r.cost_paisa),
+      conversationCount: Number(r.conversation_count),
+    })),
+    totals,
+    note: 'Costs come only from ai_usage_ledger.provider_cost_paisa — what the AI providers really charged.',
+  });
+});
+
 /** GET /api/inbox/:id — conversation + messages + customer profile + open orders. */
 inboxRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);

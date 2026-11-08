@@ -556,7 +556,7 @@ export default function ChannelsPage() {
             </p>
           )}
           {pickItems === null ? (
-            <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>
+            <div className="skeleton h-12" />
           ) : picker.kind === "whatsapp" ? (
             waRows.length === 0 ? (
               <p className="text-slate-500">{oauthError("whatsapp", "no_waba", picker.account)}</p>
@@ -651,7 +651,7 @@ export default function ChannelsPage() {
         </button>
       </form>
 
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : channels.length === 0 ? (
+      {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : channels.length === 0 ? (
         <div className="empty-state">{t("channels.empty", "No channels added yet. Add one from the form above.", "কোনো চ্যানেল যুক্ত নেই। উপরের ফর্ম থেকে যুক্ত করুন।")}</div>
       ) : (
         <div className="card overflow-x-auto">

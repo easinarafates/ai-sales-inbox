@@ -173,9 +173,9 @@ export default function GuidePage() {
   };
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("guideTitle", "Guide", "গাইড")}</h1>
-      <p className="text-sm text-slate-500 mb-4">{t("guideSub", "Written step-by-step guides for every feature. These are written guides, not videos.", "প্রতিটি ফিচারের জন্য লেখা ধাপে ধাপে গাইড। এগুলো লেখা গাইড, ভিডিও নয়।")}</p>
+    <div>
+      <h1 className="page-title">{t("guideTitle", "Guide", "গাইড")}</h1>
+      <p className="page-subtitle">{t("guideSub", "Written step-by-step guides for every feature. These are written guides, not videos.", "প্রতিটি ফিচারের জন্য লেখা ধাপে ধাপে গাইড। এগুলো লেখা গাইড, ভিডিও নয়।")}</p>
 
       <div className="card p-4 mb-6">
         <h2 className="font-bold">{t("guidePhotoTitle", "Try photo search", "ছবি দিয়ে খুঁজে দেখুন")}</h2>

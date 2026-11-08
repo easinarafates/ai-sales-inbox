@@ -257,7 +257,7 @@ export default function OrdersPage() {
                           <p className="text-xs text-slate-500 mt-1">{t("orders.lastOrder", "Last order:", "শেষ অর্ডার:")} {detail.lastOrderAt ? fmtDate(detail.lastOrderAt) : "—"}</p>
                         </>
                       ) : (
-                        <p className="text-xs text-slate-400 mt-2">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>
+                        <div className="skeleton h-4 w-32 mt-2" />
                       )}
                     </div>
                   )}

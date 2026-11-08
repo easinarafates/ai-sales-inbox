@@ -135,7 +135,13 @@ export default function ProductDetailPage() {
     }
   };
 
-  if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
+  if (loading) return (
+    <div className="space-y-3">
+      <div className="skeleton h-8 w-48" />
+      <div className="skeleton h-24" />
+      <div className="skeleton h-24" />
+    </div>
+  );
   if (error) return <div><p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg">{error}</p><Link href="/products" className="text-brand-dark underline text-sm">{t("products.backToList", "← Back to product list", "← প্রোডাক্ট তালিকায় ফিরুন")}</Link></div>;
   if (!product) return <p className="text-slate-500">{t("products.detailNotFound", "Product not found.", "প্রোডাক্ট পাওয়া যায়নি।")}</p>;
 
@@ -145,7 +151,7 @@ export default function ProductDetailPage() {
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mt-3 max-w-2xl">{error}</p>}
       {notice && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mt-3 max-w-2xl">{notice}</p>}
       <div className="card p-6 mt-3 max-w-2xl">
-        <h1 className="text-2xl font-bold">{product.name}</h1>
+        <h1 className="page-title">{product.name}</h1>
         <p className="text-3xl font-bold text-brand-dark mt-2">{fmtTaka(productPricePaisa(product))}</p>
         <dl className="mt-4 space-y-2 text-sm">
           <div className="flex gap-2"><dt className="text-slate-500 w-24">{t("common.size", "Size", "সাইজ")}:</dt><dd>{product.size || "—"}</dd></div>

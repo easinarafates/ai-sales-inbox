@@ -40,8 +40,8 @@ export default function OwnerDashboardPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-1">{t("ownerTitle", "Owner Panel", "ওনার প্যানেল")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+      <h1 className="page-title">{t("ownerTitle", "Owner Panel", "ওনার প্যানেল")}</h1>
+      <p className="page-subtitle">
         {t(
           "ownerSub",
           "Your whole business in one place — shops, subscriptions, money in, AI costs, and your wallet.",

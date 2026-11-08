@@ -64,9 +64,9 @@ export default function SavedRepliesPage() {
   };
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("savedTitle", "Saved replies", "সেভ করা উত্তর")}</h1>
-      <p className="text-sm text-slate-500 mb-4">{t("savedSub", "Write answers once, then send them in the inbox with one tap.", "একবার উত্তর লিখুন, তারপর ইনবক্সে এক ক্লিকে পাঠান।")}</p>
+    <div>
+      <h1 className="page-title">{t("savedTitle", "Saved replies", "সেভ করা উত্তর")}</h1>
+      <p className="page-subtitle">{t("savedSub", "Write answers once, then send them in the inbox with one tap.", "একবার উত্তর লিখুন, তারপর ইনবক্সে এক ক্লিকে পাঠান।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
       <form onSubmit={save} className="card p-4 mb-6 grid gap-3">
@@ -93,9 +93,9 @@ export default function SavedRepliesPage() {
       </form>
 
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : replies.length === 0 ? (
-        <p className="text-slate-500">{t("savedEmpty", "No saved replies yet.", "এখনো কোনো সেভ করা উত্তর নেই।")}</p>
+        <div className="empty-state">{t("savedEmpty", "No saved replies yet.", "এখনো কোনো সেভ করা উত্তর নেই।")}</div>
       ) : (
         <div className="grid gap-3">
           {replies.map((r) => (

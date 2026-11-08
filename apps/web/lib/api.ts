@@ -485,6 +485,50 @@ export const inboxApi = {
   markOwner: (id: string) => api.post<{ ownerMarked: boolean }>(`/api/inbox/${id}/mark-owner`),
 };
 
+/**
+ * Per-chat / per-customer AI usage — real sums from ai_usage_ledger
+ * (GET /api/inbox/usage). Cost is provider_cost_paisa only, the same
+ * basis as the Owner Panel. A chat with no AI replies has no row —
+ * callers show 0 tokens / ৳0.00 for it, never an invented number.
+ */
+export interface ConversationUsage {
+  conversationId: string;
+  customerId: string | null;
+  customerName: string | null;
+  replies: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** SUM(provider_cost_paisa) — what the AI providers really charged. */
+  costPaisa: number;
+}
+
+export interface CustomerUsage {
+  customerId: string;
+  customerName: string | null;
+  replies: number;
+  inputTokens: number;
+  outputTokens: number;
+  /** SUM(provider_cost_paisa) — what the AI providers really charged. */
+  costPaisa: number;
+  conversationCount: number;
+}
+
+export interface UsageSummary {
+  byConversation: ConversationUsage[];
+  byCustomer: CustomerUsage[];
+  totals: { replies: number; inputTokens: number; outputTokens: number; costPaisa: number };
+}
+
+export const usageApi = {
+  list: (params?: { conversationId?: string; customerId?: string }) => {
+    const qs = new URLSearchParams();
+    if (params?.conversationId) qs.set("conversationId", params.conversationId);
+    if (params?.customerId) qs.set("customerId", params.customerId);
+    const s = qs.toString();
+    return api.get<UsageSummary>(`/api/inbox/usage${s ? `?${s}` : ""}`);
+  },
+};
+
 export const productsApi = {
   list: () => api.get<Product[] | { products: Product[] }>("/api/products"),
   create: (body: { name: string; pricePaisa: number; size?: string; stock?: number; description?: string }) =>

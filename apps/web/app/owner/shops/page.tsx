@@ -66,9 +66,9 @@ export default function OwnerShopsPage() {
   };
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("ownerShopsTitle", "Shop accounts", "দোকানের অ্যাকাউন্ট")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+    <div>
+      <h1 className="page-title">{t("ownerShopsTitle", "Shop accounts", "দোকানের অ্যাকাউন্ট")}</h1>
+      <p className="page-subtitle">
         {t(
           "ownerShopsSub",
           "Every shop on your platform. Suspending a shop blocks its users from logging in until you re-activate it.",
@@ -78,7 +78,7 @@ export default function OwnerShopsPage() {
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {message && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{message}</p>}
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : isOwner === false ? (
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : (

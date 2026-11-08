@@ -156,7 +156,7 @@ export default function LeadsPage() {
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">{t("leads.title", "Leads", "লিড")}</h1>
+      <h1 className="page-title">{t("leads.title", "Leads", "লিড")}</h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {runResult && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{runResult}</p>}
 
@@ -179,8 +179,8 @@ export default function LeadsPage() {
         </div>
       </form>
 
-      {loading ? <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p> : leads.length === 0 ? (
-        <p className="text-slate-500 card p-6 mb-6">{t("leads.empty", "No leads.", "কোনো লিড নেই।")}</p>
+      {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : leads.length === 0 ? (
+        <div className="empty-state mb-6">{t("leads.empty", "No leads.", "কোনো লিড নেই।")}</div>
       ) : (
         <div className="card overflow-x-auto mb-6">
           <table className="w-full text-sm">

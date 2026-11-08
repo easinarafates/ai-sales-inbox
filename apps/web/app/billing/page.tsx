@@ -28,7 +28,13 @@ export default function BillingPage() {
     load();
   }, [load, router]);
 
-  if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
+  if (loading) return (
+    <div className="space-y-3">
+      <div className="skeleton h-8 w-48" />
+      <div className="skeleton h-24" />
+      <div className="skeleton h-24" />
+    </div>
+  );
 
   const usage = billing ? billingUsage(billing) : [];
   const transactions = billing ? billingTransactions(billing) : [];
@@ -76,7 +82,7 @@ export default function BillingPage() {
 
       <h2 className="font-bold mb-2">{t("billing.ledgerTitle", "Cost of each AI reply", "প্রতি AI রিপ্লাইয়ের খরচ")}</h2>
       {usage.length === 0 ? (
-        <p className="text-slate-500 card p-6 mb-6">{t("billing.ledgerEmpty", "No AI usage records yet.", "এখনো কোনো AI ব্যবহারের রেকর্ড নেই।")}</p>
+        <div className="empty-state mb-6">{t("billing.ledgerEmpty", "No AI usage records yet.", "এখনো কোনো AI ব্যবহারের রেকর্ড নেই।")}</div>
       ) : (
         <div className="card overflow-x-auto mb-6">
           <table className="w-full text-sm">

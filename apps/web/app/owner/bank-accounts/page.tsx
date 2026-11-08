@@ -79,9 +79,9 @@ export default function OwnerBankAccountsPage() {
   };
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("ownerBankAccountsTitle", "Bank accounts", "ব্যাংক অ্যাকাউন্ট")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+    <div>
+      <h1 className="page-title">{t("ownerBankAccountsTitle", "Bank accounts", "ব্যাংক অ্যাকাউন্ট")}</h1>
+      <p className="page-subtitle">
         {t(
           "ownerBankAccountsSub",
           "Accounts where subscription money is received. Account numbers are encrypted and only the last 4 digits are shown — the full number is never displayed.",
@@ -90,7 +90,7 @@ export default function OwnerBankAccountsPage() {
       </p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : isOwner === false ? (
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : (
@@ -122,7 +122,7 @@ export default function OwnerBankAccountsPage() {
           </div>
 
           {accounts.length === 0 ? (
-            <p className="text-slate-500">{t("ownerBankEmpty", "No bank accounts yet.", "এখনো কোনো ব্যাংক অ্যাকাউন্ট নেই।")}</p>
+            <div className="empty-state">{t("ownerBankEmpty", "No bank accounts yet.", "এখনো কোনো ব্যাংক অ্যাকাউন্ট নেই।")}</div>
           ) : (
             <div className="grid gap-3">
               {accounts.map((a) => (

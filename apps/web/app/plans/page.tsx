@@ -85,7 +85,13 @@ export default function PlansPage() {
     }
   };
 
-  if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
+  if (loading) return (
+    <div className="space-y-3">
+      <div className="skeleton h-8 w-48" />
+      <div className="skeleton h-24" />
+      <div className="skeleton h-24" />
+    </div>
+  );
 
   const currentPlan = current?.plan;
   const currentSub = current?.subscription;

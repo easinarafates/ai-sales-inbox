@@ -94,11 +94,11 @@ function SocialCommentsPanel({ platform }: { platform: "youtube" | "tiktok" }) {
         </button>
       </div>
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : !videoId ? (
-        <p className="text-slate-500">{t("socialNoVideos", "No videos found — connect the channel on the Channels page first.", "কোনো ভিডিও পাওয়া যায়নি — প্রথমে Channels পেজ থেকে চ্যানেলটি যুক্ত করুন।")}</p>
+        <div className="empty-state">{t("socialNoVideos", "No videos found — connect the channel on the Channels page first.", "কোনো ভিডিও পাওয়া যায়নি — প্রথমে Channels পেজ থেকে চ্যানেলটি যুক্ত করুন।")}</div>
       ) : comments.length === 0 ? (
-        <p className="text-slate-500">{t("socialNoComments", "No comments on this video yet.", "এই ভিডিওতে এখনো কোনো কমেন্ট নেই।")}</p>
+        <div className="empty-state">{t("socialNoComments", "No comments on this video yet.", "এই ভিডিওতে এখনো কোনো কমেন্ট নেই।")}</div>
       ) : (
         <div className="grid gap-3">
           {comments.map((c) => (
@@ -120,7 +120,7 @@ function SocialCommentsPanel({ platform }: { platform: "youtube" | "tiktok" }) {
               {repliedIds[c.commentId] && (
                 <p className="text-sm text-green-700 mt-2">{t("socialReplied", "Reply sent ✓", "উত্তর পাঠানো হয়েছে ✓")}</p>
               )}
-              <div className="flex gap-2 mt-3">
+              <div className="flex flex-wrap gap-2 mt-3">
                 <input
                   value={replyText[c.commentId] ?? ""}
                   onChange={(e) => setReplyText((p) => ({ ...p, [c.commentId]: e.target.value }))}
@@ -190,9 +190,9 @@ export default function CommentsPage() {
     : s;
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("commentsTitle", "Comments", "কমেন্ট")}</h1>
-      <p className="text-sm text-slate-500 mb-4">{t("commentsSub", "Check, answer, hide or finish post comments here.", "পোস্টের কমেন্ট এখানে যাচাই করুন, উত্তর দিন, লুকান বা শেষ করুন।")}</p>
+    <div>
+      <h1 className="page-title">{t("commentsTitle", "Comments", "কমেন্ট")}</h1>
+      <p className="page-subtitle">{t("commentsSub", "Check, answer, hide or finish post comments here.", "পোস্টের কমেন্ট এখানে যাচাই করুন, উত্তর দিন, লুকান বা শেষ করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
       <div className="flex gap-2 mb-4">
@@ -234,9 +234,9 @@ export default function CommentsPage() {
       </form>
 
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : comments.length === 0 ? (
-        <p className="text-slate-500">{t("commentsEmpty", "No comments here yet.", "এখানে এখনো কোনো কমেন্ট নেই।")}</p>
+        <div className="empty-state">{t("commentsEmpty", "No comments here yet.", "এখানে এখনো কোনো কমেন্ট নেই।")}</div>
       ) : (
         <div className="grid gap-3">
           {comments.map((c) => (
@@ -252,7 +252,7 @@ export default function CommentsPage() {
                   {t("cYourReply", "Your reply:", "আপনার উত্তর:")} {c.reply_text}
                 </p>
               )}
-              <div className="flex gap-2 mt-3">
+              <div className="flex flex-wrap gap-2 mt-3">
                 <input
                   value={answerText[c.id] ?? ""}
                   onChange={(e) => setAnswerText((p) => ({ ...p, [c.id]: e.target.value }))}

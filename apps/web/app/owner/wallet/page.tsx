@@ -209,9 +209,9 @@ export default function OwnerWalletPage() {
   };
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("ownerWalletTitle", "Owner wallet", "ওনার ওয়ালেট")}</h1>
-      <p className="text-sm text-slate-500 mb-4">
+    <div>
+      <h1 className="page-title">{t("ownerWalletTitle", "Owner wallet", "ওনার ওয়ালেট")}</h1>
+      <p className="page-subtitle">
         {t(
           "ownerWalletSub",
           "Your own money for paying AI providers. AI reply costs are deducted from here automatically. Deposits are requests you approve by hand — no live payment gateway is connected yet, so no real card is charged automatically.",
@@ -221,7 +221,7 @@ export default function OwnerWalletPage() {
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {message && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{message}</p>}
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : isOwner === false ? (
         <p className="text-slate-500">{t("ownerOnly", "Owner only", "শুধু মালিকের জন্য")}</p>
       ) : wallet ? (

@@ -275,11 +275,17 @@ export default function CourierPage() {
   const shippedOrderIds = new Set(shipments.map((s) => shipmentOrderId(s)));
   const bookableOrders = orders.filter((o) => !shippedOrderIds.has(o.id));
 
-  if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
+  if (loading) return (
+    <div className="space-y-3">
+      <div className="skeleton h-8 w-48" />
+      <div className="skeleton h-24" />
+      <div className="skeleton h-24" />
+    </div>
+  );
 
   return (
     <div>
-      <h1 className="text-2xl font-bold mb-4">
+      <h1 className="page-title">
         {t("courier.title", "Courier", "কুরিয়ার")}
       </h1>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}

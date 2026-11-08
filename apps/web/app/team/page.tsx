@@ -60,9 +60,9 @@ export default function TeamPage() {
   };
 
   return (
-    <div className="bg-[#FFF1EA] min-h-screen -m-6 p-6">
-      <h1 className="text-2xl font-bold mb-1">{t("teamTitle", "Team", "টিম")}</h1>
-      <p className="text-sm text-slate-500 mb-4">{t("teamSub", "Invite people to help in your shop. No email is sent — share the invite link yourself.", "দোকানে সাহায্যের জন্য লোকদের আমন্ত্রণ জানান। কোনো ইমেইল পাঠানো হয় না — আমন্ত্রণের লিংকটি নিজে শেয়ার করুন।")}</p>
+    <div>
+      <h1 className="page-title">{t("teamTitle", "Team", "টিম")}</h1>
+      <p className="page-subtitle">{t("teamSub", "Invite people to help in your shop. No email is sent — share the invite link yourself.", "দোকানে সাহায্যের জন্য লোকদের আমন্ত্রণ জানান। কোনো ইমেইল পাঠানো হয় না — আমন্ত্রণের লিংকটি নিজে শেয়ার করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
       <form onSubmit={invite} className="card p-4 mb-6 grid gap-3">
@@ -80,9 +80,9 @@ export default function TeamPage() {
 
       <h2 className="font-bold mb-3">{t("teamInvites", "Invites", "আমন্ত্রণগুলো")}</h2>
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : invites.length === 0 ? (
-        <p className="text-slate-500 mb-6">{t("teamNoInvites", "No invites yet.", "এখনো কোনো আমন্ত্রণ নেই।")}</p>
+        <div className="empty-state mb-6">{t("teamNoInvites", "No invites yet.", "এখনো কোনো আমন্ত্রণ নেই।")}</div>
       ) : (
         <div className="grid gap-3 mb-6">
           {invites.map((inv) => (
@@ -117,9 +117,9 @@ export default function TeamPage() {
 
       <h2 className="font-bold mb-3">{t("teamMembers", "Members", "সদস্যরা")}</h2>
       {loading ? (
-        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+        <div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>
       ) : members.length === 0 ? (
-        <p className="text-slate-500">{t("teamNoMembers", "No members yet.", "এখনো কোনো সদস্য নেই।")}</p>
+        <div className="empty-state">{t("teamNoMembers", "No members yet.", "এখনো কোনো সদস্য নেই।")}</div>
       ) : (
         <div className="grid gap-3">
           {members.map((m) => (

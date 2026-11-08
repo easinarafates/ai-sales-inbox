@@ -35,7 +35,13 @@ export default function OrderDetailPage() {
     load();
   }, [load, router]);
 
-  if (loading) return <p className="text-slate-500">{t("common.loading", "Loading…", "লোড হচ্ছে…")}</p>;
+  if (loading) return (
+    <div className="space-y-3">
+      <div className="skeleton h-8 w-48" />
+      <div className="skeleton h-24" />
+      <div className="skeleton h-24" />
+    </div>
+  );
   if (error && !order) return <div><p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg">{error}</p><Link href="/orders" className="text-brand-dark underline text-sm">{t("orders.backToList", "← Back to order list", "← অর্ডার তালিকায় ফিরুন")}</Link></div>;
   if (!order) return <p className="text-slate-500">{t("orders.detailNotFound", "Order not found.", "অর্ডার পাওয়া যায়নি।")}</p>;
 
