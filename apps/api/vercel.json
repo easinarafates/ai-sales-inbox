@@ -1,1 +1,13 @@
-{"$schema":"https://openapi.vercel.sh/vercel.json","regions":["sin1"],"rewrites":[{"destination":"/api/index","source":"/(.*)"}]}
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["sin1"],
+  "rewrites": [{ "destination": "/api/index", "source": "/(.*)" }],
+  "functions": {
+    "api/index.ts": {
+      "includeFiles": [
+        "node_modules/@sparticuz/chromium/**",
+        "node_modules/puppeteer-core/**"
+      ]
+    }
+  }
+}
