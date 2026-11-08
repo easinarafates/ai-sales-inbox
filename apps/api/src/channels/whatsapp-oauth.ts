@@ -86,6 +86,24 @@ interface WaSession {
   userToken: string;
 }
 
+/**
+ * Thrown when the session token lacks whatsapp_business_management:
+ * Graph answers 400 (#100) "Tried accessing nonexisting field" on
+ * /me/whatsapp_business_accounts. A PLAIN Facebook Login NEVER grants
+ * this permission — Meta only grants it through Embedded Signup
+ * (Facebook Login for Business, which needs a config_id created in the
+ * Meta app dashboard and WHATSAPP_CONFIG_ID set). So this is a SETUP
+ * error, NOT "no WABA": with this token Meta will not even say whether
+ * a WABA exists. Callers must answer with reason 'wa_scope_missing'
+ * and the honest Embedded-Signup-or-manual-form message — never a
+ * generic "could not load" and never an empty list pretending
+ * "no account". Live-proven 2026-11-09: the fresh token from the plain
+ * login failed exactly this way 3 times in the live browser test.
+ */
+export class WaScopeMissingError extends Error {
+  readonly code = 'wa_scope_missing';
+}
+
 async function fetchWabas(longLivedToken: string): Promise<{ id: string; name: string }[]> {
   const url = new URL(`${graphBase()}/me/whatsapp_business_accounts`);
   url.searchParams.set('fields', 'id,name');
@@ -95,10 +113,16 @@ async function fetchWabas(longLivedToken: string): Promise<{ id: string; name: s
   }, OAUTH_GRAPH_TIMEOUT_MS);
   const data = (await res.json().catch(() => null)) as {
     data?: { id?: string; name?: string }[];
-    error?: { message?: string };
+    error?: { message?: string; code?: number };
   } | null;
   if (!res.ok) {
-    throw new Error(`Meta Graph /me/whatsapp_business_accounts failed (${res.status})${data?.error?.message ? `: ${data.error.message}` : ''}`);
+    const msg = data?.error?.message ?? '';
+    // 400 (#100) "nonexisting field" = the token was never granted
+    // whatsapp_business_management (plain login). See WaScopeMissingError.
+    if (res.status === 400 && /nonexisting field/i.test(msg)) {
+      throw new WaScopeMissingError(`Meta Graph /me/whatsapp_business_accounts failed (${res.status}): ${msg}`);
+    }
+    throw new Error(`Meta Graph /me/whatsapp_business_accounts failed (${res.status})${msg ? `: ${msg}` : ''}`);
   }
   return (data?.data ?? [])
     .filter((w) => typeof w?.id === 'string')
@@ -258,15 +282,32 @@ function verifyWaSession(token: string): WaSession | null {
  * callback) has no embedded list, so this is the only source. If the
  * live fetch fails, a session that still carries an embedded list falls
  * back to it; otherwise the error propagates and the caller answers
- * honestly (502) instead of inventing accounts.
+ * honestly (502) instead of inventing accounts. A scope error
+ * (WaScopeMissingError) is NEVER masked by the fallback: it means the
+ * current login cannot see WABAs at all, and the caller must say so.
  */
 async function resolveWabas(session: WaSession): Promise<WaAccount[]> {
   try {
     return await fetchWabasEnriched(session.userToken);
   } catch (err) {
+    if (err instanceof WaScopeMissingError) throw err;
     if (session.wabas) return session.wabas;
     throw err;
   }
+}
+
+/**
+ * Honest 502 body for a scope-missing lookup: the login did not grant
+ * whatsapp_business_management, so no account list can be produced.
+ * The message names the two real ways forward (Embedded Signup setup
+ * by the owner, or the manual form) instead of a generic "try again".
+ */
+function waScopeMissingBody(): { error: string; reason: string } {
+  return {
+    error:
+      'Facebook লগইনে WhatsApp Business-এর অনুমতি মেলেনি — Meta এই অনুমতি শুধু Embedded Signup দিয়ে দেয়। মালিককে Meta অ্যাপে WhatsApp → Embedded Signup থেকে Configuration ID বানিয়ে WHATSAPP_CONFIG_ID বসাতে হবে, অথবা নিচের ফর্মে Phone Number ID + স্থায়ী টোকেন বসিয়ে ম্যানুয়ালি যুক্ত করুন।',
+    reason: 'wa_scope_missing',
+  };
 }
 
 /**
@@ -280,6 +321,14 @@ async function resolveWabas(session: WaSession): Promise<WaAccount[]> {
  * Embedded Signup (create/use a WhatsApp Business account + pick a
  * number). Without it, Meta only logs the user in and the callback
  * finds no WABA (reason=no_waba) for anyone who has none yet.
+ *
+ * HARD LIMIT (live-proven 2026-11-09): a PLAIN Facebook Login — no
+ * config_id — NEVER grants whatsapp_business_management, so the token
+ * it returns cannot call /me/whatsapp_business_accounts at all (Graph
+ * 400 #100 "nonexisting field"). The picker then answers 502 with
+ * reason wa_scope_missing, naming Embedded Signup or the manual form
+ * as the way forward. Embedded Signup is the only one-click path; the
+ * manual form (Phone Number ID + permanent token) works without it.
  */
 whatsappOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response) => {
   if (!config.meta.appId) {
@@ -314,6 +363,11 @@ whatsappOAuthRouter.get('/accounts', requireAuth, async (req: AuthRequest, res: 
   try {
     wabas = await resolveWabas(session);
   } catch (err) {
+    if (err instanceof WaScopeMissingError) {
+      console.error('[whatsapp-oauth] accounts lookup failed (scope missing):', err.message);
+      res.status(502).json(waScopeMissingBody());
+      return;
+    }
     console.error('[whatsapp-oauth] accounts lookup failed:', (err as Error).message);
     res.status(502).json({ error: 'WhatsApp অ্যাকাউন্টগুলো লোড করা যায়নি — আবার চেষ্টা করুন।' });
     return;
@@ -346,6 +400,11 @@ whatsappOAuthRouter.post('/connect', requireAuth, async (req: AuthRequest, res: 
   try {
     wabas = await resolveWabas(verified);
   } catch (err) {
+    if (err instanceof WaScopeMissingError) {
+      console.error('[whatsapp-oauth] connect lookup failed (scope missing):', err.message);
+      res.status(502).json(waScopeMissingBody());
+      return;
+    }
     console.error('[whatsapp-oauth] connect lookup failed:', (err as Error).message);
     res.status(502).json({ error: 'WhatsApp অ্যাকাউন্টগুলো লোড করা যায়নি — আবার চেষ্টা করুন।' });
     return;

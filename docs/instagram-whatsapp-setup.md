@@ -49,9 +49,22 @@ number is confirmed.
    page (same pattern as the YouTube read-only reconnect).
 
 ### WhatsApp — get a Business number, then connect (either way)
-- **Option A (Embedded Signup):** in the Meta app dashboard create the
-  WhatsApp Embedded Signup config, then set `WHATSAPP_CONFIG_ID` in
-  the Vercel API env; Channels → Connect WhatsApp runs the signup flow.
+- **Option A (Embedded Signup — the ONLY one-click path):** in the
+  Meta app dashboard create the WhatsApp Embedded Signup config
+  (Facebook Login for Business → Configuration → login variation
+  "WhatsApp Embedded Signup"), then set `WHATSAPP_CONFIG_ID` in the
+  Vercel API env; Channels → Connect WhatsApp runs the signup flow.
+  **A plain Facebook Login can NEVER grant
+  `whatsapp_business_management`** — Meta only grants that permission
+  through Embedded Signup. Live-proven 2026-11-09: the plain login
+  returned a token, but `GET /me/whatsapp_business_accounts` failed
+  400 `(#100) Tried accessing nonexisting field` 3 times, so the
+  number picker could not list anything. The picker now answers 502
+  with `reason: 'wa_scope_missing'` and says so honestly (never a
+  generic "could not load", never an empty list pretending "no
+  account"). Until the permission is granted Meta will not even say
+  whether a WhatsApp Business Account exists — so WABA existence
+  cannot be checked from the app's tokens at all.
 - **Option B (manual, no config needed):** in Meta Business Suite →
   WhatsApp Manager (or System Users) copy the **Phone Number ID** and
   a **permanent access token**, then Channels → WhatsApp manual connect

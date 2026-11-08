@@ -18,6 +18,15 @@
  *     'whatsapp' channel row.
  *   - Empty WABA list → /accounts returns {wabas: [], reason: 'no_waba'}
  *     (the Channels page shows the no_waba message — no callback error).
+ *   - Scope missing (2026-11-09 live finding): a plain Facebook Login
+ *     never grants whatsapp_business_management, so the fresh token
+ *     fails /me/whatsapp_business_accounts with 400 (#100)
+ *     "nonexisting field". /accounts and /connect then answer 502 with
+ *     reason 'wa_scope_missing' naming Embedded Signup / the manual
+ *     form — never a generic "could not load" and never an empty list
+ *     pretending "no account". The Channels page surfaces the API's
+ *     own error message and warns on the WhatsApp card that Embedded
+ *     Signup is needed while WHATSAPP_CONFIG_ID is unset.
  *   - Regression: the Facebook and Instagram callbacks still work and
  *     answer fast.
  *   - Static: vercel.json maxDuration 60; the OAuth Graph timeout cap
@@ -159,9 +168,11 @@ function startStub() {
       req.on('data', (c) => { body += c.toString(); });
       req.on('end', () => {
         const params = new URLSearchParams(body);
-        // Test-only control: switch the WABA list between full/empty.
+        // Test-only control: switch the WABA list between full/empty/scope.
+        // 'scope' = the token was never granted whatsapp_business_management
+        // (plain Facebook Login) — Meta answers 400 (#100) immediately.
         if (req.method === 'POST' && url.pathname === '/__test/waba-mode') {
-          try { wabaMode = JSON.parse(body).mode === 'empty' ? 'empty' : 'full'; } catch { /* keep */ }
+          try { const m = JSON.parse(body).mode; wabaMode = m === 'empty' || m === 'scope' ? m : 'full'; } catch { /* keep */ }
           send(200, { mode: wabaMode });
           return;
         }
@@ -198,6 +209,13 @@ function startStub() {
         // ---- The slow endpoint: 12s delay, then the WABA list ----
         if (req.method === 'GET' && url.pathname === '/me/whatsapp_business_accounts') {
           wabaHits += 1;
+          // 'scope' mode: the token was never granted
+          // whatsapp_business_management (plain Facebook Login) — Meta
+          // answers 400 (#100) immediately, exactly like live 2026-11-09.
+          if (wabaMode === 'scope') {
+            send(400, { error: { message: '(#100) Tried accessing nonexisting field (whatsapp_business_accounts)', code: 100, type: 'OAuthException' } });
+            return;
+          }
           setTimeout(() => {
             if (wabaMode === 'empty') send(200, { data: [] });
             else send(200, { data: [{ id: 'waba-1', name: 'Halal Chic WA' }, { id: 'waba-2', name: 'Second WA' }] });
@@ -239,6 +257,19 @@ async function main() {
   check('whatsapp /connect: validates the pick against a live WABA list', waSrc.includes('resolveWabas(verified)'));
   check('whatsapp: empty list returns reason no_waba (page shows the message)', waSrc.includes("'no_waba'"));
   check('whatsapp: phone-number lookups run in parallel (Promise.all)', waSrc.includes('Promise.all'));
+  // --- Scope-missing (2026-11-09 live finding): a plain Facebook Login
+  // never grants whatsapp_business_management, so the fresh token fails
+  // /me/whatsapp_business_accounts with 400 (#100) "nonexisting field".
+  // That must surface as reason wa_scope_missing (Embedded Signup or the
+  // manual form) — never a generic "could not load" and never an empty
+  // list pretending "no account".
+  check('whatsapp: 400 #100 nonexisting-field is detected as a scope error (wa_scope_missing)', waSrc.includes('wa_scope_missing') && waSrc.includes('nonexisting field'));
+  check('whatsapp: scope error is never masked by the embedded-list fallback', /if \(err instanceof WaScopeMissingError\) throw err;/.test(waSrc));
+  check('whatsapp: /accounts answers the scope error with reason wa_scope_missing', waSrc.includes("reason: 'wa_scope_missing'"));
+  const channelsPageSrc = fs.readFileSync(path.join(ROOT, 'apps/web/app/channels/page.tsx'), 'utf8');
+  check('channels page: picker load failure surfaces the API error message (not only the generic line)', /err instanceof Error && err\.message \? err\.message : t\("channels\.oauthLoadFailed"/.test(channelsPageSrc));
+  check('channels page: stale picker error is cleared on load (no stale banner on a plain load)', /const load = useCallback\(async \(\) => \{[\s\S]{0,500}?setError\(""\)/.test(channelsPageSrc));
+  check('channels page: WhatsApp card warns Embedded Signup is needed when no config id', channelsPageSrc.includes('whatsappSetupNeeded') && channelsPageSrc.includes('WHATSAPP_CONFIG_ID'));
 
   const fbSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/facebook-oauth.ts'), 'utf8');
   check('shared callback AWAITS the completers (un-awaited return was the 504 root cause)', /await completeWhatsappOAuth\(/.test(fbSrc) && /await completeFacebookOAuth\(/.test(fbSrc) && /await completeInstagramOAuth\(/.test(fbSrc), 'facebook-oauth.ts callback awaits all three completers');
@@ -300,6 +331,20 @@ async function main() {
     const emptySession = signJwt(jwtSecret, { purpose: 'whatsapp_accounts', workspaceId: wsA.workspaceId, userToken: 'long-token-1' });
     const emptyAccounts = await api(`/api/channels/whatsapp/accounts?session=${encodeURIComponent(emptySession)}`);
     check('whatsapp /accounts with no WABA → 200, empty list, reason no_waba', emptyAccounts.status === 200 && (emptyAccounts.data?.wabas ?? []).length === 0 && emptyAccounts.data?.reason === 'no_waba', `status=${emptyAccounts.status} ${JSON.stringify(emptyAccounts.data ?? {}).slice(0, 120)}`);
+
+    // --- Scope missing: plain Facebook Login never grants
+    // whatsapp_business_management (live 2026-11-09: 400 #100 x3) ---
+    // The picker must NOT see a generic "could not load" and must NOT
+    // see an empty list pretending "no account": it gets a distinct
+    // wa_scope_missing reason naming Embedded Signup / the manual form.
+    await fetch(`${stubBase}/__test/waba-mode`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'scope' }) });
+    const scopeAccounts = await api(`/api/channels/whatsapp/accounts?session=${encodeURIComponent(emptySession)}`);
+    check('whatsapp /accounts with scope missing → 502, reason wa_scope_missing (not an empty list)', scopeAccounts.status === 502 && scopeAccounts.data?.reason === 'wa_scope_missing' && !Array.isArray(scopeAccounts.data?.wabas), `status=${scopeAccounts.status} ${JSON.stringify(scopeAccounts.data ?? {}).slice(0, 160)}`);
+    check('whatsapp /accounts scope error names Embedded Signup as the way forward', /Embedded Signup/.test(scopeAccounts.data?.error ?? ''), `error=${(scopeAccounts.data?.error ?? '').slice(0, 120)}`);
+    const scopeConnect = await api('/api/channels/whatsapp/connect', { method: 'POST', body: { session: emptySession, wabaId: 'waba-1', phoneNumberId: 'wa-phone-1' } });
+    check('whatsapp /connect with scope missing → 502, reason wa_scope_missing', scopeConnect.status === 502 && scopeConnect.data?.reason === 'wa_scope_missing', `status=${scopeConnect.status}`);
+    // Back to full mode so later checks (if any) see accounts again.
+    await fetch(`${stubBase}/__test/waba-mode`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ mode: 'full' }) });
 
     // --- Regression: Facebook + Instagram callbacks still fast ---
     // (each in its own fresh workspace — 1 channel slot each)

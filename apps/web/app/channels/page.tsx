@@ -197,6 +197,11 @@ export default function ChannelsPage() {
   const fbError = (reason: string, account = "") => oauthError("facebook", reason, account);
 
   const load = useCallback(async () => {
+    // A failed picker load leaves its error in state; clear it here so a
+    // plain page load never shows a stale "could not load the accounts"
+    // banner from an earlier attempt. (A redirect error set after this
+    // call in the same effect still wins — it runs after load().)
+    setError("");
     try {
       const data = await salesChannelsApi.list();
       setChannels(asArrayOf<SalesChannel>(data, ["channels"]));
@@ -225,8 +230,13 @@ export default function ChannelsPage() {
         const data = await salesChannelsApi.whatsappAccounts(session);
         setPickItems(data.wabas ?? []);
       }
-    } catch {
-      setError(t("channels.oauthLoadFailed", "Could not load the accounts — please try again.", "অ্যাকাউন্টগুলো লোড করা যায়নি — আবার চেষ্টা করুন।"));
+    } catch (err) {
+      // Surface the API's own message: it distinguishes "no WhatsApp
+      // Business account" (no_waba, shown in the picker), "the login did
+      // not grant the WhatsApp permission" (wa_scope_missing) and an
+      // expired session from a generic load failure. Swallowing it into
+      // one generic line hid the real cause live (2026-11-09).
+      setError(err instanceof Error && err.message ? err.message : t("channels.oauthLoadFailed", "Could not load the accounts — please try again.", "অ্যাকাউন্টগুলো লোড করা যায়নি — আবার চেষ্টা করুন।"));
       setPicker(null);
     }
   }, [t]);
@@ -489,6 +499,11 @@ export default function ChannelsPage() {
               </button>
               {/* TikTok / YouTube need the owner's app keys first — say so
                   on the card instead of letting the button fail silently. */}
+              {kind === "whatsapp" && setupStatus && !setupStatus.whatsappConfigIdConfigured && (
+                <p className="text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
+                  {t("channels.whatsappSetupNeeded", "One-click connect needs Embedded Signup — the owner must create the WhatsApp Embedded Signup config in the Meta app dashboard and set WHATSAPP_CONFIG_ID first. Until then, the manual form below (phone-number ID + permanent token) works without it.", "এক ক্লিকে যুক্ত করতে Embedded Signup লাগবে — মালিককে প্রথমে Meta অ্যাপে WhatsApp → Embedded Signup থেকে Configuration ID বানিয়ে WHATSAPP_CONFIG_ID বসাতে হবে। ততক্ষণ নিচের ম্যানুয়াল ফর্মটি (ফোন নম্বরের ID + স্থায়ী টোকেন) কাজ করবে।")}
+                </p>
+              )}
               {kind === "tiktok" && setupStatus && !setupStatus.tiktokConfigured && (
                 <p className="text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
                   {t("channels.tiktokSetupNeeded", "TikTok is not set up yet — the owner must add the TikTok app's Client Key and Client Secret first (developers.tiktok.com → create an app, turn on Login Kit).", "TikTok এখনো সেটআপ হয়নি — মালিককে প্রথমে TikTok অ্যাপের Client Key আর Client Secret দিতে হবে (developers.tiktok.com-এ গিয়ে অ্যাপ বানিয়ে Login Kit চালু করুন)।")}
