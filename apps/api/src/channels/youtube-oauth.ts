@@ -11,12 +11,23 @@ import {
 } from './meta-oauth';
 
 /**
- * "Connect YouTube" — Google OAuth (YouTube Data API v3, readonly).
+ * "Connect YouTube" — Google OAuth (YouTube Data API v3).
  *
- * Flow: Channels page → GET /login (Google authorize URL, scope
- * youtube.readonly — only what is needed to read the channel) → user
- * signs in with Google and approves → Google calls GET /callback?code
- * &state → code is exchanged for an access + refresh token
+ * Scopes (all requested at connect; Google re-consents on reconnect):
+ *  - youtube.readonly — read the channel + videos + comments.
+ *  - youtube.upload — upload videos (needed for scheduled YouTube posts).
+ *  - youtube.force-ssl — reply to comments.
+ * A channel connected BEFORE the upload scope was added carries only
+ * readonly: the stored scopes (migration 34) say so, the publisher
+ * refuses the upload honestly, and reconnecting (Channels → YouTube →
+ * connect again — prompt=consent is always set, so Google asks again)
+ * upgrades the stored token to the new scopes. Uploading from an
+ * unverified Google OAuth app is restricted by Google until the app is
+ * verified — see docs/youtube-tiktok-setup.md.
+ *
+ * Flow: Channels page → GET /login (Google authorize URL) → user signs
+ * in with Google and approves → Google calls GET /callback?code &state
+ * → code is exchanged for an access + refresh token
  * (oauth2.googleapis.com/token) → the channel is VERIFIED by reading
  * it (GET /youtube/v3/channels?part=snippet&mine=true) → the channel
  * is stored. A "connected" row only ever appears after that real
@@ -28,7 +39,8 @@ import {
  * token_encrypted = access token (lives ~1h),
  * refresh_token_encrypted = refresh token (migration 33 — needed so
  * the channel can be refreshed instead of silently dying after an
- * hour), picture_url = channel thumbnail.
+ * hour), picture_url = channel thumbnail, scopes = granted scopes
+ * (migration 34).
  *
  * Setup the owner must do first (no code can do this for him):
  *  - Google Cloud console → create an OAuth client (Web application),
@@ -39,13 +51,15 @@ import {
  *    saying exactly that — never a fake connect button.
  *
  * No test upload or message is ever sent. Tokens are never logged or
- * returned. Uploading videos to the channel is NOT part of this connect
- * (it needs the youtube.upload scope + a separate approval); this
- * connect only links + verifies the channel.
+ * returned.
  */
 export const youtubeOAuthRouter = Router();
 
-const SCOPES = ['https://www.googleapis.com/auth/youtube.readonly'];
+const SCOPES = [
+  'https://www.googleapis.com/auth/youtube.readonly',
+  'https://www.googleapis.com/auth/youtube.upload',
+  'https://www.googleapis.com/auth/youtube.force-ssl',
+];
 
 function authorizeUrl(state: string): string {
   const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
@@ -162,6 +176,7 @@ youtubeOAuthRouter.get('/callback', async (req: Request, res: Response) => {
       pictureUrl: channel.thumbnail || null,
       refreshToken: tokens.refresh_token ?? null,
       expiresAt,
+      scopes: SCOPES.join(' '),
       duplicateMessage: 'This YouTube channel is already connected to this workspace.',
     });
     if (!result.ok) {

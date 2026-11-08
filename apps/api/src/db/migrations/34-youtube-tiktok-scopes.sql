@@ -1,0 +1,25 @@
+-- 34-youtube-tiktok-scopes.sql — granted OAuth scopes + TikTok publish ref.
+--
+-- Why: the YouTube connect used to request youtube.readonly only. Uploads
+-- need youtube.upload (+ youtube.force-ssl for comment replies) and
+-- TikTok posting needs video.publish / video.upload / comment.list, so a
+-- channel connected with the old scopes cannot upload until the owner
+-- reconnects. The granted scopes are stored here (space/comma-joined, as
+-- granted at connect time) so the API and UI can tell honestly whether a
+-- reconnect is needed — instead of failing an upload with a cryptic
+-- 403. Filled in by the YouTube / TikTok OAuth callbacks
+-- (apps/api/src/channels/youtube-oauth.ts, tiktok-oauth.ts); older rows
+-- stay NULL (= scopes unknown, treated as read-only) until reconnect.
+--
+-- publish_ref: the platform's in-flight publish id for a scheduled post
+-- (TikTok Content Posting API publish_id). A TikTok publish is
+-- asynchronous — init returns a publish_id and the status endpoint is
+-- polled until PUBLISH_COMPLETE. Storing it here lets a later sweep
+-- resume polling the SAME publish instead of starting a second upload
+-- (which would post the video twice). YouTube uploads are synchronous
+-- (the video id comes back with the upload), so it stays NULL there.
+-- Idempotent: safe to re-run on every start (same pattern as the other
+-- migrations). Loads on local PGlite (auto-run on boot) and on Neon
+-- Postgres with psql — load it into Neon BEFORE the next API deploy.
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS scopes TEXT;
+ALTER TABLE scheduled_posts ADD COLUMN IF NOT EXISTS publish_ref TEXT;

@@ -21,8 +21,13 @@
  *   message (Graph error 551). That surfaces as windowExpired — callers
  *   must tell the team the customer has to message again first. No message
  *   tags are used.
- * - WhatsApp / TikTok are NOT sent here (different APIs); they fail
- *   with a clear error instead of silently "sending".
+ * - WhatsApp is NOT sent here (different API); it fails with a clear
+ *   error instead of silently "sending".
+ * - TikTok DMs ARE sent here: via the TikTok for Business "Business
+ *   Messaging" API (see webhooks/tiktok-dm.ts sendTikTokDM) — reply-only,
+ *   needs the customer's first message + TikTok's approval + the
+ *   Business Messaging credentials. Without them the reply fails
+ *   honestly, never pretends sent.
  * - facebook_comment channels ARE sent here: a reply to a Page-post
  *   comment is POST /{comment-id}/comments with the Page token (see
  *   sendFacebookCommentReply). It needs the pages_manage_engagement
@@ -30,10 +35,13 @@
  *   marked failed, never pretended sent.
  * - Tokens are never put in a URL or a log line (Bearer header only).
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { fetchWithTimeout } from '../ai-agent/http';
 import { GRAPH_BASE } from './meta-oauth';
 import { decryptToken } from '../db/crypto';
 import { query, queryOne } from '../db/pool';
+import { sendTikTokDM, sendTikTokDMImage } from '../webhooks/tiktok-dm';
 
 export interface MetaSendResult {
   ok: boolean;
@@ -48,6 +56,33 @@ export interface MetaSendResult {
 function sendGraphBase(): string {
   const override = (process.env.META_GRAPH_BASE_URL ?? '').replace(/\/$/, '');
   return override || GRAPH_BASE;
+}
+
+/**
+ * Download an image's bytes for a DM image send (TikTok Business
+ * Messaging uploads the file). Public http(s) URLs are fetched;
+ * /api/uploads/<file> is read from the local uploads dir (the same
+ * files the scheduling upload endpoint writes). Null on any failure —
+ * the caller fails honestly instead of sending a broken image.
+ */
+async function fetchImageBytes(imageUrl: string): Promise<Buffer | null> {
+  try {
+    if (imageUrl.startsWith('http://') || imageUrl.startsWith('https://')) {
+      const res = await fetchWithTimeout(imageUrl, { method: 'GET' });
+      if (!res.ok) return null;
+      return Buffer.from(await res.arrayBuffer());
+    }
+    if (imageUrl.startsWith('/api/uploads/')) {
+      const file = path.basename(imageUrl.split('?')[0]);
+      if (!file || file.includes('..')) return null;
+      const full = path.join(path.resolve(process.cwd(), 'uploads'), file);
+      if (!fs.existsSync(full)) return null;
+      return fs.readFileSync(full);
+    }
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 /** Graph base for other modules (post analysis). Same override rule. */
@@ -485,8 +520,9 @@ function recipientForPlatform(identities: unknown, platform: string): string | n
  *   (its platform_message_id is the comment id the webhook saved).
  *   This is also how the AI auto-reply reaches a commenter — agent.ts
  *   already calls this helper, so no agent change was needed.
- * - anything else (whatsapp, tiktok, no channel, no token, no
- *   recipient) — saved as 'failed' with a clear reason.
+ * - anything else (whatsapp, no channel, no token, no
+ *   recipient) — saved as 'failed' with a clear reason. tiktok_dm is
+ *   sent via the Business Messaging API (see above).
  *
  * Callers must verify the conversation exists first (the INSERT has a
  * foreign key to conversations). Never throws for a delivery failure.
@@ -579,6 +615,37 @@ export async function deliverOutgoingMessage(
     }
     await mark('sent', result.messageId);
     return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
+  }
+  // TikTok DM reply: real Business Messaging send (reply-only — the
+  // customer must have messaged first; needs TikTok's approval + the
+  // Business Messaging credentials). sendTikTokDM fails honestly when
+  // any of that is missing, and the message row is marked 'failed'
+  // with TikTok's own reason — never a fake 'sent'. No Login Kit token
+  // is involved (it cannot send DMs).
+  // A DM chat's channel row is 'tiktok_dm' when that row exists; the
+  // webhook otherwise attaches the DM to the workspace's 'tiktok'
+  // channel row — so a 'tiktok' channel with a 'tiktok_dm' customer
+  // identity is a DM chat too. A 'tiktok' COMMENT chat (identity
+  // platform 'tiktok') has no DM recipient and falls through to the
+  // honest send_not_supported failure below.
+  if (channel.platform === 'tiktok_dm' || channel.platform === 'tiktok') {
+    const customer = conversation.customer_id
+      ? await queryOne<{ channel_identities: unknown }>(
+          workspaceId,
+          'SELECT channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+          [workspaceId, conversation.customer_id],
+        )
+      : null;
+    const dmRecipient = recipientForPlatform(customer?.channel_identities, 'tiktok_dm');
+    if (dmRecipient) {
+      const result = await sendTikTokDM(workspaceId, dmRecipient, trimmed);
+      if (!result.sent) {
+        return fail(result.error ?? 'tiktok_dm_send_failed');
+      }
+      await mark('sent', result.messageId);
+      return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
+    }
+    if (channel.platform === 'tiktok_dm') return fail('no_recipient');
   }
   if (channel.platform !== 'messenger' && channel.platform !== 'instagram') {
     return fail(`send_not_supported_for_${channel.platform}`);
@@ -684,6 +751,31 @@ export async function deliverOutgoingImageMessage(
   }
   if (channel.platform === 'facebook_comment') {
     return fail('image_send_not_supported_for_facebook_comment');
+  }
+  // TikTok DM image: Business Messaging media/upload + send (IMAGE).
+  // Same gates as the text DM — fails honestly without approval /
+  // Business Messaging credentials. (A DM chat on the 'tiktok' channel
+  // row is detected by the customer's 'tiktok_dm' identity, as above.)
+  if (channel.platform === 'tiktok_dm' || channel.platform === 'tiktok') {
+    const customer = conversation.customer_id
+      ? await queryOne<{ channel_identities: unknown }>(
+          workspaceId,
+          'SELECT channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+          [workspaceId, conversation.customer_id],
+        )
+      : null;
+    const dmRecipient = recipientForPlatform(customer?.channel_identities, 'tiktok_dm');
+    if (dmRecipient) {
+      const imageBytes = await fetchImageBytes(url);
+      if (!imageBytes) return fail('tiktok_dm_image_fetch_failed');
+      const result = await sendTikTokDMImage(workspaceId, dmRecipient, imageBytes);
+      if (!result.sent) {
+        return fail(result.error ?? 'tiktok_dm_image_send_failed');
+      }
+      await mark('sent', result.messageId);
+      return { sent: true, delivery: 'sent', messageId, platformMessageId: result.messageId };
+    }
+    if (channel.platform === 'tiktok_dm') return fail('no_recipient');
   }
   if (channel.platform !== 'messenger' && channel.platform !== 'instagram') {
     return fail(`send_not_supported_for_${channel.platform}`);

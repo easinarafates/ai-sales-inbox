@@ -99,7 +99,7 @@ export const WINDOW_DAYS = 7;
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // 25 MB
 
 const POST_COLUMNS =
-  'id, caption, media_urls, media_type, platforms, scheduled_at, status, platform_post_id, created_at, updated_at';
+  'id, caption, media_urls, media_type, platforms, scheduled_at, status, platform_post_id, publish_ref, created_at, updated_at';
 
 type PostBody = {
   caption?: string;
@@ -721,14 +721,16 @@ schedulingRouter.post('/scheduled-posts', async (req: AuthRequest, res: Response
     res.status(400).json({ error: 'অন্তত একটি প্ল্যাটফর্ম বেছে নিন (facebook)' });
     return;
   }
-  // Only Facebook can actually publish (see publisher.ts) — Instagram /
-  // TikTok publishing is not built yet, and Messenger/WhatsApp are message
-  // channels, never post platforms. Reject them here instead of letting a
-  // post sit in 'failed' after its scheduled time.
-  const unsupported = plats.filter((p) => p !== 'facebook');
+  // Publishable platforms: Facebook (Graph), YouTube (Data API v3
+  // resumable upload) and TikTok (Content Posting API, audit-gated in
+  // the publisher). Instagram publishing is not built yet, and
+  // Messenger/WhatsApp are message channels, never post platforms.
+  // Reject them here instead of letting a post sit in 'failed' after
+  // its scheduled time.
+  const unsupported = plats.filter((p) => p !== 'facebook' && p !== 'youtube' && p !== 'tiktok');
   if (unsupported.length > 0) {
     res.status(400).json({
-      error: `Only Facebook posts can be published right now — ${unsupported.join(', ')} ${unsupported.length === 1 ? 'is' : 'are'} coming soon. (এখন শুধু ফেসবুক পোস্ট প্রকাশ করা যায় — ${unsupported.join(', ')} শীঘ্রই আসছে।)`,
+      error: `Only Facebook, YouTube and TikTok posts can be published right now — ${unsupported.join(', ')} ${unsupported.length === 1 ? 'is' : 'are'} coming soon. (এখন শুধু ফেসবুক, YouTube আর TikTok পোস্ট প্রকাশ করা যায় — ${unsupported.join(', ')} শীঘ্রই আসছে।)`,
     });
     return;
   }
@@ -750,6 +752,14 @@ schedulingRouter.post('/scheduled-posts', async (req: AuthRequest, res: Response
   }
   if (mt === 'image' && media.length === 0) {
     res.status(400).json({ error: 'ছবির পোস্টে ছবি লাগবে (image post needs an image)' });
+    return;
+  }
+  // YouTube + TikTok take video only (no text/image posts).
+  const videoOnly = plats.filter((p) => p === 'youtube' || p === 'tiktok');
+  if (videoOnly.length > 0 && mt !== 'video') {
+    res.status(400).json({
+      error: `${videoOnly.join(' + ')}-এ শুধু ভিডিও পোস্ট করা যায় — ভিডিও ছাড়া শিডিউল করা যাবে না (${videoOnly.join(' + ')} posts must be videos)`,
+    });
     return;
   }
   const status = scheduledAt ? 'scheduled' : 'draft';

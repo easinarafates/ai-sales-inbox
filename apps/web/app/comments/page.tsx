@@ -4,8 +4,144 @@ import { useRouter } from "next/navigation";
 import { useI18n } from "@/lib/i18n";
 import { getToken } from "@/lib/api";
 import { commentsApi, type ModeratedComment } from "@/lib/api-new-features";
+import { tiktokApi, youtubeApi, type SocialComment, type SocialVideo } from "@/lib/api-social";
 
 const STATUS_OPTIONS = ["", "to_check", "answered", "hidden", "done"];
+
+/** Live YouTube / TikTok comments (fetched from the platform, never faked). */
+function SocialCommentsPanel({ platform }: { platform: "youtube" | "tiktok" }) {
+  const { t, fmtDate } = useI18n();
+  const [videos, setVideos] = useState<SocialVideo[]>([]);
+  const [videoId, setVideoId] = useState("");
+  const [comments, setComments] = useState<SocialComment[]>([]);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [replyText, setReplyText] = useState<Record<string, string>>({});
+  const [repliedIds, setRepliedIds] = useState<Record<string, boolean>>({});
+
+  const loadComments = useCallback(async (vid: string) => {
+    if (!vid) return;
+    setLoading(true);
+    setError("");
+    try {
+      const data = platform === "youtube"
+        ? await youtubeApi.comments(vid)
+        : await tiktokApi.comments(vid);
+      setComments(data.comments ?? []);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("socialCommentsFail", "Could not load comments from the platform.", "প্ল্যাটফর্ম থেকে কমেন্ট আনা যায়নি।"));
+      setComments([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [platform, t]);
+
+  useEffect(() => {
+    let alive = true;
+    setLoading(true);
+    setError("");
+    (platform === "youtube" ? youtubeApi.videos() : tiktokApi.videos())
+      .then((d) => {
+        if (!alive) return;
+        const list = d.videos ?? [];
+        setVideos(list);
+        if (list[0]) {
+          setVideoId(list[0].id);
+          loadComments(list[0].id);
+        } else {
+          setLoading(false);
+        }
+      })
+      .catch((err) => {
+        if (!alive) return;
+        setError(err instanceof Error ? err.message : t("socialVideosFail", "Could not load videos — is the channel connected?", "ভিডিও আনা যায়নি — চ্যানেলটি কি যুক্ত আছে?"));
+        setLoading(false);
+      });
+    return () => { alive = false; };
+  }, [platform, loadComments, t]);
+
+  const reply = async (c: SocialComment) => {
+    const text = (replyText[c.commentId] ?? "").trim();
+    if (!text) return;
+    setError("");
+    try {
+      if (platform === "youtube") await youtubeApi.reply(c.commentId, text);
+      else await tiktokApi.reply(videoId, c.commentId, text);
+      setRepliedIds((p) => ({ ...p, [c.commentId]: true }));
+      setReplyText((p) => ({ ...p, [c.commentId]: "" }));
+      await loadComments(videoId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("socialReplyFail", "Could not send the reply.", "উত্তর পাঠানো যায়নি।"));
+    }
+  };
+
+  return (
+    <div>
+      {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
+      <div className="flex gap-2 mb-4 flex-wrap">
+        <select
+          value={videoId}
+          onChange={(e) => { setVideoId(e.target.value); loadComments(e.target.value); }}
+          className="border rounded-lg px-3 py-2 bg-white"
+        >
+          <option value="">{t("socialPickVideo", "Pick a video", "ভিডিও বেছে নিন")}</option>
+          {videos.map((v) => (
+            <option key={v.id} value={v.id}>{v.title || v.id}</option>
+          ))}
+        </select>
+        <button onClick={() => loadComments(videoId)} disabled={!videoId} className="text-sm border rounded-lg px-3 py-2 bg-white disabled:opacity-50">
+          {t("refresh", "Refresh", "আবার আনুন")}
+        </button>
+      </div>
+      {loading ? (
+        <p className="text-slate-500">{t("loading", "Loading…", "লোড হচ্ছে…")}</p>
+      ) : !videoId ? (
+        <p className="text-slate-500">{t("socialNoVideos", "No videos found — connect the channel on the Channels page first.", "কোনো ভিডিও পাওয়া যায়নি — প্রথমে Channels পেজ থেকে চ্যানেলটি যুক্ত করুন।")}</p>
+      ) : comments.length === 0 ? (
+        <p className="text-slate-500">{t("socialNoComments", "No comments on this video yet.", "এই ভিডিওতে এখনো কোনো কমেন্ট নেই।")}</p>
+      ) : (
+        <div className="grid gap-3">
+          {comments.map((c) => (
+            <div key={c.commentId} className="card p-4">
+              <div className="flex justify-between gap-2 flex-wrap">
+                <span className="text-sm font-bold">{c.author}</span>
+                <span className="text-xs text-slate-400">{c.publishedAt ? fmtDate(c.publishedAt) : ""}</span>
+              </div>
+              <p className="mt-2 text-sm">{c.text}</p>
+              <p className="text-xs text-slate-400 mt-1">
+                {t("socialLikes", "Likes:", "লাইক:")} {c.likeCount}
+                {c.replyCount > 0 ? ` • ${t("socialReplies", "Replies:", "উত্তর:")} ${c.replyCount}` : ""}
+              </p>
+              {(c.replies ?? []).map((r) => (
+                <p key={r.commentId} className="text-sm bg-slate-50 border rounded-lg p-2 mt-2 ml-4">
+                  <span className="font-bold">{r.author}:</span> {r.text}
+                </p>
+              ))}
+              {repliedIds[c.commentId] && (
+                <p className="text-sm text-green-700 mt-2">{t("socialReplied", "Reply sent ✓", "উত্তর পাঠানো হয়েছে ✓")}</p>
+              )}
+              <div className="flex gap-2 mt-3">
+                <input
+                  value={replyText[c.commentId] ?? ""}
+                  onChange={(e) => setReplyText((p) => ({ ...p, [c.commentId]: e.target.value }))}
+                  placeholder={t("cAnswerPh", "Write a reply…", "উত্তর লিখুন…")}
+                  className="border rounded-lg px-3 py-1 text-sm flex-1"
+                />
+                <button
+                  disabled={!(replyText[c.commentId] ?? "").trim()}
+                  onClick={() => reply(c)}
+                  className="bg-[#FF5B2E] hover:bg-[#E8491F] text-white text-sm rounded-lg px-3 py-1 disabled:opacity-50"
+                >
+                  {t("cAnswer", "Answer", "উত্তর দিন")}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 export default function CommentsPage() {
   const { t, fmtDate } = useI18n();
@@ -18,6 +154,7 @@ export default function CommentsPage() {
   const [likedIds, setLikedIds] = useState<Record<string, boolean>>({});
   const [newBody, setNewBody] = useState("");
   const [newPostId, setNewPostId] = useState("");
+  const [tab, setTab] = useState<"facebook" | "youtube" | "tiktok">("facebook");
 
   const load = useCallback(async () => {
     try {
@@ -58,6 +195,22 @@ export default function CommentsPage() {
       <p className="text-sm text-slate-500 mb-4">{t("commentsSub", "Check, answer, hide or finish post comments here.", "পোস্টের কমেন্ট এখানে যাচাই করুন, উত্তর দিন, লুকান বা শেষ করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
 
+      <div className="flex gap-2 mb-4">
+        {(["facebook", "youtube", "tiktok"] as const).map((k) => (
+          <button
+            key={k}
+            onClick={() => setTab(k)}
+            className={`text-sm rounded-lg px-4 py-2 ${tab === k ? "bg-[#FF5B2E] text-white" : "bg-white border"}`}
+          >
+            {k === "facebook" ? "Facebook" : k === "youtube" ? "YouTube" : "TikTok"}
+          </button>
+        ))}
+      </div>
+
+      {tab !== "facebook" ? (
+        <SocialCommentsPanel platform={tab} />
+      ) : (
+      <>
       <div className="flex gap-2 mb-4">
         <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)} className="border rounded-lg px-3 py-2 bg-white">
           <option value="">{t("cAll", "All statuses", "সব অবস্থা")}</option>
@@ -140,6 +293,8 @@ export default function CommentsPage() {
             </div>
           ))}
         </div>
+      )}
+      </>
       )}
     </div>
   );

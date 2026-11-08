@@ -13,8 +13,22 @@ import {
 /**
  * "Connect TikTok" — TikTok Login Kit (TikTok for Developers).
  *
- * Flow: Channels page → GET /login (TikTok authorize URL, scope
- * user.info.basic — only what is needed to read the profile) → user
+ * Scopes (all requested at connect; TikTok re-consents on reconnect):
+ *  - user.info.basic — read the profile (verify the connect).
+ *  - video.list — Display API: list the account's videos.
+ *  - video.publish — Content Posting API: Direct Post videos.
+ *  - video.upload — Content Posting API: inbox-draft uploads.
+ *  - comment.list — Comment API: read comments on the account's videos.
+ * Each scope needs TikTok's app review before it works for a public
+ * account; an unapproved scope fails honestly with TikTok's own
+ * scope_not_authorized error. A channel connected BEFORE these scopes
+ * were added carries only user.info.basic: the stored scopes
+ * (migration 34) say so, and reconnecting upgrades the token.
+ * NOTE: DMs are NOT part of Login Kit at all — they need the separate
+ * TikTok for Business "Business Messaging" product (see tiktok.ts and
+ * docs/youtube-tiktok-setup.md); no Login Kit scope can grant them.
+ *
+ * Flow: Channels page → GET /login (TikTok authorize URL) → user
  * approves on tiktok.com → TikTok calls GET /callback?code&state →
  * code is exchanged for an access + refresh token (open.tiktokapis.com
  * /v2/oauth/token/) → the profile is VERIFIED by reading it
@@ -26,7 +40,8 @@ import {
  * token_encrypted = access token (lives ~24h),
  * refresh_token_encrypted = refresh token (migration 33 — needed so
  * the channel can be refreshed instead of silently dying after a day),
- * picture_url = avatar. Incoming TikTok DMs resolve through the
+ * picture_url = avatar, scopes = granted scopes (migration 34).
+ * Incoming TikTok DMs resolve through the
  * existing findChannelByExternalId('tiktok', ...) webhook lookup.
  *
  * Setup the owner must do first (no code can do this for him):
@@ -43,7 +58,7 @@ import {
  */
 export const tiktokOAuthRouter = Router();
 
-const SCOPES = ['user.info.basic'];
+const SCOPES = ['user.info.basic', 'video.list', 'video.publish', 'video.upload', 'comment.list'];
 
 function authorizeUrl(state: string): string {
   const url = new URL(`${config.tiktok.authBaseUrl.replace(/\/$/, '')}/v2/auth/authorize/`);
@@ -157,6 +172,7 @@ tiktokOAuthRouter.get('/callback', async (req: Request, res: Response) => {
       pictureUrl: profile.avatarUrl || null,
       refreshToken: tokens.refresh_token ?? null,
       expiresAt,
+      scopes: SCOPES.join(','),
       duplicateMessage: 'This TikTok account is already connected to this workspace.',
     });
     if (!result.ok) {

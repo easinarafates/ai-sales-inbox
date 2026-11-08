@@ -387,6 +387,13 @@ export async function createOAuthChannel(
      * token never wipes the good one.
      */
     refreshToken?: string | null;
+    /**
+     * Granted OAuth scopes (migration 34) — space/comma-joined, as
+     * granted at connect time. Lets the API tell honestly whether a
+     * channel can upload/post (YouTube youtube.upload, TikTok
+     * video.publish) or only read — a reconnect replaces the value.
+     */
+    scopes?: string | null;
     /** Absolute token expiry (ISO). Defaults to now + 59 days (Meta). */
     expiresAt?: string | null;
   },
@@ -414,7 +421,8 @@ export async function createOAuthChannel(
            connected_by_user_id = COALESCE($3, connected_by_user_id),
            display_name = $4, picture_url = COALESCE($5, picture_url),
            source_id = COALESCE($6, source_id), token_expires_at = $7, status = 'connected',
-           refresh_token_encrypted = COALESCE($11, refresh_token_encrypted)
+           refresh_token_encrypted = COALESCE($11, refresh_token_encrypted),
+           scopes = COALESCE($12, scopes)
        WHERE workspace_id = $8 AND platform = $9 AND external_id = $10
        RETURNING id, platform, external_id, display_name, status, token_expires_at, picture_url, source_id, created_at`,
       [
@@ -429,6 +437,7 @@ export async function createOAuthChannel(
         input.platform,
         input.externalId,
         refreshTokenEncrypted,
+        input.scopes ?? null,
       ],
     );
     rows = updated.rows;
@@ -442,8 +451,8 @@ export async function createOAuthChannel(
     }
     const inserted = await query<ChannelRow>(
       workspaceId,
-      `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id, refresh_token_encrypted)
-     VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8, $9, $10, $11)
+      `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id, refresh_token_encrypted, scopes)
+     VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8, $9, $10, $11, $12)
      RETURNING id, platform, external_id, display_name, status, token_expires_at, picture_url, source_id, created_at`,
       [
         workspaceId,
@@ -457,6 +466,7 @@ export async function createOAuthChannel(
         userTokenEncrypted,
         connectedByUserId,
         refreshTokenEncrypted,
+        input.scopes ?? null,
       ],
     );
     rows = inserted.rows;

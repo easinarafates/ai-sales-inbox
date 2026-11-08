@@ -22,9 +22,12 @@
  * (workspace_id, platform, platform_event_id) — the same message id twice
  * is stored once and never answered twice.
  *
- * Outbound DMs: sendTikTokDM() below is STUB-LOGGED ONLY until approval
- * (same as the other channels). It never claims a DM was sent. A real
- * TikTok Messaging API client plugs in here after approval.
+ * Outbound DMs: sendTikTokDM() below calls the REAL TikTok for Business
+ * "Business Messaging" API (business-api.tiktok.com/open_api/v1.3) —
+ * a separate product from Login Kit with its own Business Account
+ * authorization (business_id + Access-Token) and its own approval.
+ * Without approval / credentials it fails honestly; it never claims a
+ * DM was sent. Reply-only: the customer must message first (48h window).
  *
  * This router is mounted by the integrator — see integration-notes.md in
  * this folder for the exact lines (apps/api/src/index.ts).
@@ -34,6 +37,12 @@ import { config } from '../config';
 import { pool, query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { enqueueMessage } from '../queue/client';
+import {
+  getTikTokBusinessConfig,
+  resolveTikTokDMConversationId,
+  sendTikTokBusinessDM,
+  sendTikTokBusinessDMImage,
+} from '../channels/tiktok';
 
 export const tiktokDmRouter = Router();
 
@@ -54,7 +63,7 @@ interface CustomerRow {
 }
 
 /** Find a customer by a channel identity, or create one. Identity shape: {platform, senderId, name?}. */
-async function findOrCreateCustomer(
+export async function findOrCreateCustomer(
   workspaceId: string,
   platform: string,
   senderId: string,
@@ -86,7 +95,7 @@ async function findOrCreateCustomer(
   throw new Error('findOrCreateCustomer: could not create or find a customer');
 }
 
-async function findOrCreateConversation(
+export async function findOrCreateConversation(
   workspaceId: string,
   channelId: string | null,
   customerId: string,
@@ -143,7 +152,7 @@ async function findOrCreateConversation(
   throw new Error('findOrCreateConversation: could not create or find a conversation');
 }
 
-async function saveIncomingMessage(
+export async function saveIncomingMessage(
   workspaceId: string,
   conversationId: string,
   body: string,
@@ -166,7 +175,7 @@ async function saveIncomingMessage(
  * Dedup via webhook_events UNIQUE (workspace_id, platform, platform_event_id).
  * Returns true if this is a new event, false if it was already processed.
  */
-async function recordWebhookEvent(
+export async function recordWebhookEvent(
   workspaceId: string,
   platform: string,
   platformEventId: string,
@@ -335,23 +344,38 @@ tiktokDmRouter.post('/tiktok-dm', async (req: AuthRequest, res: Response) => {
 });
 
 // ---------------------------------------------------------------------------
-// Outbound DM — STUB-LOGGED ONLY until approval (same as other channels)
+// Outbound DM — REAL TikTok Business Messaging API client
 // ---------------------------------------------------------------------------
 
 export interface SendTikTokDMResult {
-  /** Always false until a real TikTok Messaging API client is wired in. */
+  /** True only when TikTok's Business Messaging API accepted the message (real message id returned). */
   sent: boolean;
-  /** True while this is a stub — the DM was only written to the log. */
+  /** Always false now — the stub is gone; a failed send returns sent:false with TikTok's own error. */
   stub: boolean;
-  reason: 'not_approved' | 'no_live_client';
+  reason?: 'not_approved' | 'not_configured' | 'no_conversation' | 'send_failed';
+  messageId?: string;
+  error?: string;
 }
 
 /**
- * Send a TikTok DM. STUB ONLY: it logs the intent and returns
- * { sent: false, stub: true } — it NEVER claims a DM was sent, and it
- * never sends anything while TIKTOK_DM_APPROVED is false. After TikTok
- * approves DM access, a real TikTok Messaging API client plugs in here
- * (same pattern as the Meta send step) and `sent` becomes real.
+ * Send a TikTok DM for real (TikTok for Business — Business Messaging
+ * API, business-api.tiktok.com/open_api/v1.3/business/message/send/).
+ *
+ * Gates, in order (each fails honestly, never a fake send):
+ *  1) TIKTOK_DM_APPROVED must be 'true' (TikTok's approval for the
+ *     messaging product — the same gate as the inbound webhook).
+ *  2) TIKTOK_BUSINESS_ACCESS_TOKEN + TIKTOK_BUSINESS_ID must be set —
+ *     the Login Kit token can NEVER send a DM (different product, and
+ *     the Login Kit open_id is not a business_id).
+ *  3) The customer must have messaged first: the Business Messaging
+ *     conversation is resolved from their TikTok user id (list +
+ *     content/list); reply-only, 48h window, ~10 replies. No
+ *     conversation → no send (TikTok forbids business-initiated DMs).
+ *
+ * On success TikTok returns a real message id. On failure the result
+ * carries TikTok's own error message, and deliverOutgoingMessage marks
+ * the message row 'failed' with it — the owner sees why, and the AI is
+ * never charged for a failed send.
  */
 export async function sendTikTokDM(
   workspaceId: string,
@@ -359,13 +383,65 @@ export async function sendTikTokDM(
   text: string,
 ): Promise<SendTikTokDMResult> {
   if (!isTikTokDMApproved()) {
-    console.log(
-      `[tiktok-dm] STUB — TikTok DM not approved, DM NOT sent (workspace ${workspaceId}, to ${recipientId}): ${asString(text).slice(0, 80)}`,
-    );
-    return { sent: false, stub: true, reason: 'not_approved' };
+    return {
+      sent: false,
+      stub: false,
+      reason: 'not_approved',
+      error: 'TikTok DM এখনো অনুমোদিত হয়নি — TikTok Business Messaging অনুমোদনের জন্য আবেদন করতে হবে (TikTok DM is not approved yet)',
+    };
   }
-  console.log(
-    `[tiktok-dm] STUB — no live TikTok Messaging API client yet, DM NOT sent (workspace ${workspaceId}, to ${recipientId}): ${asString(text).slice(0, 80)}`,
-  );
-  return { sent: false, stub: true, reason: 'no_live_client' };
+  const cfg = getTikTokBusinessConfig();
+  if (!cfg.configured) {
+    return {
+      sent: false,
+      stub: false,
+      reason: 'not_configured',
+      error:
+        'TikTok Business Messaging সেটআপ হয়নি — TIKTOK_BUSINESS_ACCESS_TOKEN আর TIKTOK_BUSINESS_ID দিতে হবে (TikTok for Business-এ আলাদা আবেদন করে পাওয়া যায়; Login Kit টোকেন দিয়ে DM পাঠানো যায় না)',
+    };
+  }
+  const resolved = await resolveTikTokDMConversationId(cfg, recipientId);
+  if (!resolved.ok) {
+    return { sent: false, stub: false, reason: 'no_conversation', error: resolved.error };
+  }
+  const result = await sendTikTokBusinessDM(cfg, resolved.data.conversationId, text);
+  if (!result.ok) {
+    console.error('[tiktok-dm] Business Messaging send failed:', result.error);
+    return { sent: false, stub: false, reason: 'send_failed', error: result.error };
+  }
+  return { sent: true, stub: false, messageId: result.data.messageId };
+}
+
+/**
+ * Send a TikTok DM image for real (media/upload/ then send with
+ * message_type IMAGE). Same gates as sendTikTokDM. Used by
+ * deliverOutgoingImageMessage (product photos) on tiktok_dm chats.
+ */
+export async function sendTikTokDMImage(
+  workspaceId: string,
+  recipientId: string,
+  image: Buffer,
+): Promise<SendTikTokDMResult> {
+  if (!isTikTokDMApproved()) {
+    return { sent: false, stub: false, reason: 'not_approved', error: 'TikTok DM এখনো অনুমোদিত হয়নি (TikTok DM is not approved yet)' };
+  }
+  const cfg = getTikTokBusinessConfig();
+  if (!cfg.configured) {
+    return {
+      sent: false,
+      stub: false,
+      reason: 'not_configured',
+      error: 'TikTok Business Messaging সেটআপ হয়নি — TIKTOK_BUSINESS_ACCESS_TOKEN আর TIKTOK_BUSINESS_ID দিতে হবে',
+    };
+  }
+  const resolved = await resolveTikTokDMConversationId(cfg, recipientId);
+  if (!resolved.ok) {
+    return { sent: false, stub: false, reason: 'no_conversation', error: resolved.error };
+  }
+  const result = await sendTikTokBusinessDMImage(cfg, resolved.data.conversationId, image);
+  if (!result.ok) {
+    console.error('[tiktok-dm] Business Messaging image send failed:', result.error);
+    return { sent: false, stub: false, reason: 'send_failed', error: result.error };
+  }
+  return { sent: true, stub: false, messageId: result.data.messageId };
 }

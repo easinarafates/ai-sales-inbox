@@ -12,6 +12,7 @@ import { instagramOAuthRouter } from './channels/instagram-oauth';
 import { tiktokOAuthRouter } from './channels/tiktok-oauth';
 import { whatsappOAuthRouter } from './channels/whatsapp-oauth';
 import { youtubeOAuthRouter } from './channels/youtube-oauth';
+import { socialApiRouter } from './channels/social-routes';
 import { inboxRouter } from './inbox/routes';
 import { knowledgeRouter } from './knowledge/routes';
 import { ordersRouter } from './orders/routes';
@@ -142,6 +143,7 @@ app.use('/api', followupsRouter); // /api/followups
 app.use('/api', leadsRouter); // /api/leads
 app.use('/api', reviewsRouter); // /api/reviews + /api/orders/:id/request-review
 app.use('/api', schedulingRouter); // /api/scheduled-posts
+app.use('/api', socialApiRouter); // /api/youtube/* + /api/tiktok/* (live videos/comments/DMs)
 app.use('/api', subscriptionsRouter); // /api/subscriptions/* (plans, current, subscribe, upgrade, downgrade, cancel, renew)
 app.use('/api', courierRouter); // /api/courier/bookings, /api/courier/track/:trackingNumber, /api/courier/shipments
 app.use('/api', topupRouter); // /api/billing/topup/request, /api/billing/topup/requests, /:id/approve, /:id/reject

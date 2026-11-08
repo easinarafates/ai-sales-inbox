@@ -20,12 +20,14 @@ import {
   type MediaType,
   type ScheduledPost,
 } from "@/lib/api-scheduling";
+import { youtubeApi, type YoutubeStatus } from "@/lib/api-social";
 
-// Only Facebook can actually publish today (see publisher.ts). Instagram
-// and TikTok publishing is coming soon; Messenger/WhatsApp are message
+// Facebook, YouTube and TikTok can actually publish (see publisher.ts).
+// Instagram publishing is coming soon; Messenger/WhatsApp are message
 // channels, never post platforms, so they are not offered at all.
-const PLATFORM_OPTIONS = ["facebook"];
-const PLATFORM_COMING_SOON = ["instagram", "tiktok"];
+// YouTube + TikTok take video posts only (the API rejects text/image).
+const PLATFORM_OPTIONS = ["facebook", "youtube", "tiktok"];
+const PLATFORM_COMING_SOON = ["instagram"];
 const STATUS_OPTIONS = ["scheduled", "draft", "published", "cancelled"];
 
 function dhakaDateStr(d: Date): string {
@@ -134,6 +136,9 @@ export default function SchedulePage() {
   const [captionAi, setCaptionAi] = useState(false);
   const [captionAnalysis, setCaptionAnalysis] = useState("");
 
+  // YouTube quota / reconnect hint (shown when YouTube is selected).
+  const [ytStatus, setYtStatus] = useState<YoutubeStatus | null>(null);
+
   // Edit form
   const [editing, setEditing] = useState<ScheduledPost | null>(null);
   const [editCaption, setEditCaption] = useState("");
@@ -175,6 +180,7 @@ export default function SchedulePage() {
     }
     load();
     productsApi.list().then((d) => setProducts(asArray(d))).catch(() => undefined);
+    youtubeApi.status().then(setYtStatus).catch(() => undefined);
   }, [load, router]);
 
   const selectedCount = counts[selectedDay] ?? 0;
@@ -553,7 +559,14 @@ export default function SchedulePage() {
             </label>
           ))}
         </div>
-        <p className="text-xs text-slate-500">{t("schedule.onlyFacebook", "Only Facebook posts can be published right now — Instagram and TikTok are coming soon.", "এখন শুধু ফেসবুক পোস্ট প্রকাশ করা যায় — Instagram আর TikTok শীঘ্রই আসছে।")}</p>
+        <p className="text-xs text-slate-500">{t("schedule.onlyFacebook", "Facebook, YouTube and TikTok posts can be published — YouTube and TikTok take video posts only. Instagram is coming soon.", "ফেসবুক, YouTube আর TikTok পোস্ট প্রকাশ করা যায় — YouTube আর TikTok-এ শুধু ভিডিও পোস্ট হয়। Instagram শীঘ্রই আসছে।")}</p>
+        {platforms.includes("youtube") && ytStatus && (
+          <p className="text-xs text-slate-500">
+            {ytStatus.needsReconnectForUpload
+              ? t("schedule.ytReconnect", "YouTube is connected read-only — reconnect YouTube on the Channels page to allow video uploads.", "YouTube শুধু পড়ার অনুমতি নিয়ে যুক্ত আছে — ভিডিও আপলোড করতে Channels পেজ থেকে YouTube আবার যুক্ত করুন।")
+              : t("schedule.ytQuota", "YouTube uploads today: {n}/{max} (daily quota 10,000 units, one upload ~1,600).", "আজ YouTube আপলোড: {n}/{max} (দৈনিক কোটা ১০,০০০ ইউনিট, এক আপলোড ~১,৬০০)।").replace("{n}", String(ytStatus.quota.uploadsToday)).replace("{max}", String(ytStatus.quota.maxUploadsPerDay))}
+          </p>
+        )}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
           <label className="text-sm">
             {t("date_label", "Date", "তারিখ")}

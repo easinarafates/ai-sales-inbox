@@ -188,6 +188,24 @@ export const config = {
     redirectUri: process.env.TIKTOK_OAUTH_REDIRECT_URI ?? 'http://localhost:4000/api/channels/tiktok/callback',
     apiBaseUrl: optional('TIKTOK_API_BASE_URL', 'https://open.tiktokapis.com'),
     authBaseUrl: optional('TIKTOK_AUTH_BASE_URL', 'https://www.tiktok.com'),
+    /**
+     * TikTok Business Messaging API (TikTok for Business — a SEPARATE
+     * product from Login Kit, business-api.tiktok.com/open_api/v1.3).
+     * The Login Kit token can NEVER send a DM: Business Messaging needs
+     * its own Business Account authorization (business_id + Access-Token)
+     * plus TikTok's approval, and it is unavailable for accounts
+     * registered in the US / EEA / Switzerland / UK. It is reply-only:
+     * the customer must message first (48h window, ~10 replies).
+     * TIKTOK_BUSINESS_ACCESS_TOKEN / TIKTOK_BUSINESS_ID come from env
+     * only. Without them, DM replies fail honestly (never faked).
+     * TIKTOK_BUSINESS_API_BASE_URL exists only so the offline verifier
+     * can point at a stub server.
+     */
+    business: {
+      baseUrl: optional('TIKTOK_BUSINESS_API_BASE_URL', 'https://business-api.tiktok.com/open_api/v1.3'),
+      accessToken: process.env.TIKTOK_BUSINESS_ACCESS_TOKEN ?? '',
+      businessId: process.env.TIKTOK_BUSINESS_ID ?? '',
+    },
   },
   /**
    * Google OAuth for YouTube (YouTube Data API v3, readonly). Client
@@ -204,6 +222,8 @@ export const config = {
     redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI ?? 'http://localhost:4000/api/channels/youtube/callback',
     tokenUrl: optional('GOOGLE_OAUTH_TOKEN_URL', 'https://oauth2.googleapis.com/token'),
     apiBaseUrl: optional('GOOGLE_API_BASE_URL', 'https://www.googleapis.com'),
+    /** Resumable-upload host (www.googleapis.com/upload). Overridden only by the offline verifier's stub server. */
+    uploadBaseUrl: optional('GOOGLE_UPLOAD_BASE_URL', 'https://www.googleapis.com/upload'),
   },
   tiktokCommentsApproved: process.env.TIKTOK_COMMENTS_APPROVED === 'true',
   tiktokSchedulingAudited: process.env.TIKTOK_SCHEDULING_AUDITED === 'true',
