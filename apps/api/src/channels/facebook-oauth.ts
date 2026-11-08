@@ -189,13 +189,22 @@ facebookOAuthRouter.get('/callback', async (req: Request, res: Response) => {
   if (!config.meta.appId || !config.meta.appSecret) {
     return webRedirect(res, 'facebook', { facebook: 'error', reason: 'config' });
   }
+  // Await the completers inside the try: returning their promise
+  // un-awaited would let a rejection escape this catch (Express 4 does
+  // not catch async-handler rejections), leaving the browser hanging
+  // until the function timed out with a 504 — that is exactly the
+  // WhatsApp 504: any exchange/WABA failure hung the callback instead
+  // of redirecting with an error. Awaiting makes the catch redirect
+  // with reason=exchange_failed within seconds.
   try {
-    if (verified.channel === 'instagram') return completeInstagramOAuth(verified, q.code, res);
-    if (verified.channel === 'whatsapp') return completeWhatsappOAuth(verified, q.code, res);
-    return completeFacebookOAuth(verified, q.code, res);
+    if (verified.channel === 'instagram') await completeInstagramOAuth(verified, q.code, res);
+    else if (verified.channel === 'whatsapp') await completeWhatsappOAuth(verified, q.code, res);
+    else await completeFacebookOAuth(verified, q.code, res);
   } catch (err) {
     console.error('[meta-oauth] callback failed:', (err as Error).message);
-    return webRedirect(res, verified.channel, { [verified.channel]: 'error', reason: 'exchange_failed' });
+    if (!res.headersSent) {
+      return webRedirect(res, verified.channel, { [verified.channel]: 'error', reason: 'exchange_failed' });
+    }
   }
 });
 

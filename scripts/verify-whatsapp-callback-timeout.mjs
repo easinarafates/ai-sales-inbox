@@ -166,6 +166,10 @@ function startStub() {
           return;
         }
         if (req.method === 'POST' && url.pathname === '/oauth/access_token') {
+          // Test-only: code=hang-forever never answers — proves the
+          // callback's 15s Graph cap + awaited error handling respond
+          // with exchange_failed instead of hanging (the old 504).
+          if (params.get('code') === 'hang-forever') return;
           if (params.get('grant_type') === 'fb_exchange_token') send(200, { access_token: 'long-token-1' });
           else send(200, { access_token: 'short-token-1' });
           return;
@@ -235,6 +239,10 @@ async function main() {
   check('whatsapp /connect: validates the pick against a live WABA list', waSrc.includes('resolveWabas(verified)'));
   check('whatsapp: empty list returns reason no_waba (page shows the message)', waSrc.includes("'no_waba'"));
   check('whatsapp: phone-number lookups run in parallel (Promise.all)', waSrc.includes('Promise.all'));
+
+  const fbSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/channels/facebook-oauth.ts'), 'utf8');
+  check('shared callback AWAITS the completers (un-awaited return was the 504 root cause)', /await completeWhatsappOAuth\(/.test(fbSrc) && /await completeFacebookOAuth\(/.test(fbSrc) && /await completeInstagramOAuth\(/.test(fbSrc), 'facebook-oauth.ts callback awaits all three completers');
+  check('shared callback catch guards against double-redirect (headersSent)', fbSrc.includes('res.headersSent'));
 
   // ---------- Live: dummy Meta app + slow-WABA stub ----------
   const stamp = Date.now();
@@ -314,6 +322,22 @@ async function main() {
     const bad = await api('/api/channels/facebook/callback?code=x&state=garbage', { redirect: 'manual' });
     const badMs = Date.now() - t4;
     check('callback with bad state → fast bad_state redirect (no hang)', bad.status === 302 && /bad_state/.test(bad.location ?? '') && badMs < 3000, `status=${bad.status} ${badMs}ms`);
+
+    // --- Root-cause regression: a HANGING code exchange must NOT hang the callback ---
+    // Before the fix the shared callback did `return completeWhatsappOAuth(...)`
+    // un-awaited, so the 15s Graph abort became an unhandled rejection and NO
+    // response was ever sent (browser hung to the 504). Now it must answer
+    // with an exchange_failed redirect at ~15s, for whatsapp AND facebook.
+    const t5 = Date.now();
+    const hang = await api(`/api/channels/facebook/callback?code=hang-forever&state=${encodeURIComponent(stateFor('whatsapp'))}`, { redirect: 'manual' });
+    const hangMs = Date.now() - t5;
+    check('hanging code exchange (whatsapp) → exchange_failed redirect, not a hang', hang.status === 302 && /whatsapp=error/.test(hang.location ?? '') && /exchange_failed/.test(hang.location ?? ''), `status=${hang.status} ${hangMs}ms loc=${(hang.location ?? '').slice(0, 120)}`);
+    check(`hanging code exchange (whatsapp) answers within 25s (${hangMs}ms)`, hangMs < 25000, `${hangMs}ms`);
+    const t6 = Date.now();
+    const hangFb = await api(`/api/channels/facebook/callback?code=hang-forever&state=${encodeURIComponent(stateFor('facebook'))}`, { redirect: 'manual' });
+    const hangFbMs = Date.now() - t6;
+    check('hanging code exchange (facebook) → exchange_failed redirect', hangFb.status === 302 && /facebook=error/.test(hangFb.location ?? '') && /exchange_failed/.test(hangFb.location ?? ''), `status=${hangFb.status} ${hangFbMs}ms loc=${(hangFb.location ?? '').slice(0, 120)}`);
+    check(`hanging code exchange (facebook) answers within 25s (${hangFbMs}ms)`, hangFbMs < 25000, `${hangFbMs}ms`);
   } finally {
     run.stop();
     stub.server.close();
