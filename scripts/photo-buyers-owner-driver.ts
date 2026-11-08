@@ -96,7 +96,7 @@ async function main(): Promise<void> {
 
   const showCases: [string, string | null][] = [
     ['জিন্সটা দেখাও', 'Jeans'],
-    ['শার্টের ছবি দাও', null], // ambiguous: Shirt + T-shirt
+    ['শার্টের ছবি দাও', 'Shirt'], // exact alias: শার্ট → Shirt (T-shirt is টি-শার্ট)
     ['টি-শার্টটা দেখতে চাই', 'T-shirt'],
     ['জিন্সের দাম কত?', null], // no show word
     ['প্যান্ট দেখাও', null], // no Pants product in the catalog
@@ -117,7 +117,8 @@ async function main(): Promise<void> {
   const webchatChannelId = (wc.rows[0] as { id: string } | undefined)?.id ?? null;
   out.webchatChannelId = webchatChannelId;
 
-  // --- (1) List request → 3 photos + 3 captions + interest question ---
+  // --- (1) List request → ONE clean TEXT list, NO photos ---
+  // (AI-training 2026-11-08: the list is text, not photo cards.)
   const l1 = await seedConversation('List Customer', [{ platform: 'webchat', senderId: 'wc-d-list-1' }], 'webchat', webchatChannelId);
   const r1 = await processBatch(workspaceId, l1.conversationId, [{ body: 'কি কি প্রোডাক্ট আছে?' }]);
   const rows1 = await outRows(l1.conversationId);

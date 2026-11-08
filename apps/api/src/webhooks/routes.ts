@@ -9,6 +9,7 @@ import { enrichCustomerProfileIfNeeded } from '../channels/meta-profile';
 import { inferGenderFromName } from '../customers/gender';
 import { decryptToken } from '../db/crypto';
 import { sendMarkSeen, sendMetaTextMessage } from '../channels/meta-send';
+import { downloadMetaAttachment, uploadMediaToBlob } from '../ai-agent/media';
 import {
   applyDotCommand,
   getWorkspaceOwnerPsid,
@@ -175,18 +176,66 @@ async function saveIncomingMessage(
   conversationId: string,
   body: string,
   platformMessageId?: string,
+  media?: { url: string | null; type: string | null; msgType?: string },
 ): Promise<void> {
   await query(
     workspaceId,
-    `INSERT INTO messages (workspace_id, conversation_id, direction, type, body, platform_message_id)
-     VALUES ($1, $2, 'in', 'text', $3, $4)`,
-    [workspaceId, conversationId, body, platformMessageId ?? null],
+    `INSERT INTO messages (workspace_id, conversation_id, direction, type, body, platform_message_id, media_url, media_type)
+     VALUES ($1, $2, 'in', $3, $4, $5, $6, $7)`,
+    [
+      workspaceId,
+      conversationId,
+      media?.msgType ?? 'text',
+      body,
+      platformMessageId ?? null,
+      media?.url ?? null,
+      media?.type ?? null,
+    ],
   );
   await query(
     workspaceId,
     'UPDATE conversations SET updated_at = now() WHERE workspace_id = $1 AND id = $2',
     [workspaceId, conversationId],
   );
+}
+
+/**
+ * Customer media (2026-11-08): a Messenger message can carry attachments
+ * instead of (or with) text — a photo ("এই প্রোডাক্টটা লাগবে") or a voice
+ * note. The attachment URL is short-lived, so it is downloaded with the
+ * Page token NOW, re-uploaded to Vercel Blob, and the Blob URL is stored
+ * on the message (media_url / media_type, migration 27) so the AI can
+ * analyse it when the queue runs. Returns null when the attachment
+ * cannot be fetched or stored — the caller then saves the message as
+ * text-only with a placeholder body so the AI can reply honestly.
+ */
+async function processMessageAttachment(
+  attachment: { type?: string; payload?: { url?: string } },
+  pageToken: string | null,
+): Promise<{ url: string | null; type: string | null; msgType: string; body: string } | null> {
+  const kind = attachment.type ?? '';
+  const url = attachment.payload?.url ?? '';
+  if (kind === 'image') {
+    if (!url) return { url: null, type: null, msgType: 'image', body: '[ছবি]' };
+    const media = await downloadMetaAttachment(url, pageToken);
+    if (!media) return { url: null, type: null, msgType: 'image', body: '[ছবি]' };
+    const blobUrl = await uploadMediaToBlob(media.buffer, media.mimeType, `customer-photo-${Date.now()}.jpg`);
+    return { url: blobUrl, type: 'image', msgType: 'image', body: '[ছবি]' };
+  }
+  if (kind === 'audio') {
+    if (!url) return { url: null, type: null, msgType: 'voice', body: '[ভয়েস মেসেজ]' };
+    const media = await downloadMetaAttachment(url, pageToken);
+    if (!media) return { url: null, type: null, msgType: 'voice', body: '[ভয়েস মেসেজ]' };
+    const ext = media.mimeType.includes('mp4') || media.mimeType.includes('aac') ? 'm4a' : 'mp3';
+    const blobUrl = await uploadMediaToBlob(media.buffer, media.mimeType, `customer-voice-${Date.now()}.${ext}`);
+    return { url: blobUrl, type: 'audio', msgType: 'voice', body: '[ভয়েস মেসেজ]' };
+  }
+  if (kind === 'video') {
+    // Video is saved as a placeholder — the AI cannot watch videos (yet),
+    // so it will ask for a photo or the product name instead of guessing.
+    return { url: null, type: null, msgType: 'video', body: '[ভিডিও]' };
+  }
+  return null;
 }
 
 /**
@@ -250,7 +299,13 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
     for (const event of messaging) {
       const sender = event.sender as { id?: string } | undefined;
       const recipient = event.recipient as { id?: string } | undefined;
-      const message = event.message as { mid?: string; text?: string; is_echo?: boolean; app_id?: string } | undefined;
+      const message = event.message as {
+        mid?: string;
+        text?: string;
+        is_echo?: boolean;
+        app_id?: string;
+        attachments?: { type?: string; payload?: { url?: string } }[];
+      } | undefined;
       const platform = (body.object as string) === 'instagram' ? 'instagram' : 'messenger';
 
       // --- Message echoes: the owner replying AS the Page ---
@@ -282,12 +337,31 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
         continue;
       }
 
-      if (!sender?.id || !message?.text) continue;
+      if (!sender?.id || !message) continue;
+      // A message with no text but WITH an attachment (photo / voice note)
+      // is a real customer message too — it must not be dropped. The
+      // attachment is processed below (downloaded + stored on Blob).
+      if (!message.text && !(message.attachments?.length ?? 0)) continue;
       // The channel is the page/account that received the message.
       const channel = await findChannelByExternalId(platform, recipient?.id ?? '');
       if (!channel) continue; // Unknown page — not connected to any workspace.
       const eventId = message.mid ?? `${sender.id}-${Date.now()}`;
       if (!(await recordWebhookEvent(channel.workspace_id, platform, eventId, event))) continue; // duplicate
+      // Page token once, for the attachment download + mark_seen below.
+      let pageToken: string | null = null;
+      try {
+        pageToken = channel.token_encrypted ? decryptToken(channel.token_encrypted) : null;
+      } catch {
+        pageToken = null;
+      }
+      // The message's attachment (photo / voice / video), if any: downloaded
+      // with the Page token and stored on Blob; the Blob URL + type ride
+      // on the saved message so the AI can analyse them. A text message
+      // has no attachment (media = null).
+      const attachment = (message.attachments ?? [])[0];
+      const media = attachment ? await processMessageAttachment(attachment, pageToken) : null;
+      const messageText = message.text ?? media?.body ?? '';
+      const messageMedia = media ? { url: media.url, type: media.type, msgType: media.msgType } : undefined;
 
       // --- Owner guard (REVISED 2026-11-08): the shop owner messaging his own Page ---
       // The owner is NEVER a buyer and NEVER gets an AI reply — but his
@@ -304,9 +378,9 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       if (ownerPsid && ownerPsid === sender.id) {
         const ownerConv = await findOwnerTestConversation(channel.workspace_id, channel.id, ownerPsid);
         if (ownerConv) {
-          await saveIncomingMessage(channel.workspace_id, ownerConv, message.text, message.mid);
+          await saveIncomingMessage(channel.workspace_id, ownerConv, messageText, message.mid, messageMedia);
         }
-        const ownerCmd = parseDotCommand(message.text);
+        const ownerCmd = parseDotCommand(messageText);
         if (ownerCmd) {
           const enabled =
             ownerCmd === 'toggle'
@@ -344,27 +418,19 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       // via waitUntil (keeps the serverless function alive for it on
       // Vercel; a no-op locally): a failed receipt is logged and never
       // blocks the message or the reply.
-      if (channel.token_encrypted) {
-        let pageToken: string | null = null;
-        try {
-          pageToken = decryptToken(channel.token_encrypted);
-        } catch {
-          pageToken = null;
-        }
-        if (pageToken) {
-          waitUntil(
-            sendMarkSeen({
-              platform: platform as 'messenger' | 'instagram',
-              nodeId: channel.external_id,
-              pageToken,
-              recipientId: sender.id,
+      if (pageToken) {
+        waitUntil(
+          sendMarkSeen({
+            platform: platform as 'messenger' | 'instagram',
+            nodeId: channel.external_id,
+            pageToken,
+            recipientId: sender.id,
+          })
+            .then((r) => {
+              if (!r.ok) console.error('[webhook/meta] mark_seen failed:', r.error ?? 'unknown');
             })
-              .then((r) => {
-                if (!r.ok) console.error('[webhook/meta] mark_seen failed:', r.error ?? 'unknown');
-              })
-              .catch((err) => console.error('[webhook/meta] mark_seen failed:', (err as Error).message)),
-          );
-        }
+            .catch((err) => console.error('[webhook/meta] mark_seen failed:', (err as Error).message)),
+        );
       }
 
       // --- Dot commands from a customer ---
@@ -373,18 +439,18 @@ webhooksRouter.post('/meta', async (req: AuthRequest, res: Response) => {
       // ignored silently: the message is saved so the owner can see it,
       // but it is never enqueued for an AI reply and never toggles
       // anything — the customer is never told the command exists.
-      const dotCmd = parseDotCommand(message.text);
+      const dotCmd = parseDotCommand(messageText);
       if (dotCmd) {
         const customer = await findOrCreateCustomer(channel.workspace_id, platform, sender.id);
         const conversationId = await findOrCreateConversation(channel.workspace_id, channel.id, customer.id);
-        await saveIncomingMessage(channel.workspace_id, conversationId, message.text, message.mid);
+        await saveIncomingMessage(channel.workspace_id, conversationId, messageText, message.mid, messageMedia);
         continue;
       }
 
       const customer = await findOrCreateCustomer(channel.workspace_id, platform, sender.id);
       const conversationId = await findOrCreateConversation(channel.workspace_id, channel.id, customer.id);
-      await saveIncomingMessage(channel.workspace_id, conversationId, message.text, message.mid);
-      await enqueueMessage(channel.workspace_id, conversationId, message.text).catch((err) =>
+      await saveIncomingMessage(channel.workspace_id, conversationId, messageText, message.mid, messageMedia);
+      await enqueueMessage(channel.workspace_id, conversationId, messageText).catch((err) =>
         console.error('[webhook/meta] enqueue failed:', (err as Error).message),
       );
       // --- Profile enrich AFTER save/enqueue (fire-and-forget) ---

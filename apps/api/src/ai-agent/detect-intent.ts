@@ -34,6 +34,61 @@ export const BENGALI_PRODUCT_ALIASES: [bengali: string, english: string][] = [
   ['কুর্তি', 'kurti'],
 ];
 
+// Romanized-Bengali (Banglish) product words, as customers actually type
+// them ("jins er dam koto", "shart ase?"). Same shape as the Bengali
+// aliases so the show/list matchers treat Banglish like Bengali — a
+// Banglish product question must find the product, and a Banglish
+// "ছবি দেন" must ask which product, exactly like the Bengali one.
+export const ROMANIZED_PRODUCT_ALIASES: [romanized: string, english: string][] = [
+  ['jins', 'jeans'],
+  ['jinz', 'jeans'],
+  ['jeans', 'jeans'],
+  ['shart', 'shirt'],
+  ['shirt', 'shirt'],
+  ['tishart', 't-shirt'],
+  ['t-shart', 't-shirt'],
+  ['tshirt', 't-shirt'],
+  ['pant', 'pants'],
+  ['shari', 'saree'],
+  ['saree', 'saree'],
+  ['panjabi', 'panjabi'],
+  ['kurti', 'kurti'],
+];
+
+// ---------------------------------------------------------------------------
+// Greeting detection (2026-11-08) — "Hi" / "হ্যালো" / সালাম.
+//
+// A greeting is NOT a new conversation when the chat is already underway:
+// the agent answers a REPEAT greeting contextually ("স্যার, আপনি কি
+// প্রোডাক্টটা নেবেন, নাকি নতুন করে কিছু বলতে চাচ্ছেন?") instead of a
+// fresh generic welcome. detectGreeting only says the message IS a
+// greeting; agent.ts decides first-vs-repeat from the conversation's
+// outgoing history. Conservative: the whole message must be (or start
+// with) a greeting — "Hi, jeans er dam koto?" is a price question, not
+// a greeting, because it carries a product word.
+// ---------------------------------------------------------------------------
+
+const GREETING_PATTERNS = [
+  // NOTE: no \b after Bengali words — \b is an ASCII word boundary and
+  // never matches after a Bengali letter. The lookahead (?=$|[\s,!.?])
+  // ends the greeting at a space, punctuation or end-of-string instead,
+  // so "সালাম" matches but "সালামি" does not.
+  /^(আসসালামু আলাইকুম|আসসালামু|সালাম|আদাব|হ্যালো|হাই)(?=$|[\s,!.?])/,
+  /^(hi|hello|hey|hii+|helo|hlo|salam|salaam|assalamualaikum|assalamu alaikum|good morning|good afternoon|good evening)\b/i,
+];
+
+/** Product / shop words — a message carrying one is a question, not a bare greeting. */
+const GREETING_EXCLUSION = /দাম|টাকা|প্রোডাক্ট|পণ্য|জিন্স|শার্ট|প্যান্ট|অর্ডার|ডেলিভারি|স্টক|ছবি|price|jeans|shirt|pant|order|delivery|stock|photo|product/i;
+
+/** Is this message (only) a greeting? */
+export function detectGreeting(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  if (!t) return false;
+  if (GREETING_EXCLUSION.test(t)) return false;
+  return GREETING_PATTERNS.some((re) => re.test(t));
+}
+
 // ---------------------------------------------------------------------------
 // "Why do you reply so fast?" — deflect, never admit being an AI.
 // Every pattern needs a speed word AND a reply/answer word, so a
@@ -93,7 +148,7 @@ export function detectProductListRequest(text: string | null | undefined): boole
 // so the LLM asks which one.
 // ---------------------------------------------------------------------------
 
-const SHOW_WORDS = /দেখাও|দেখান|ছবি|দেখতে চাই|দেখতে|দেখি|photo|picture|show|pic/i;
+const SHOW_WORDS = /দেখাও|দেখান|ছবি|দেখতে চাই|দেখতে|দেখি|dekhao|dekhan|dekhte|dekhi|chobi|chhobi|photo|picture|show|pic/i;
 
 /** Text-only pre-check: might this be a show request? (Needs the catalog to confirm.) */
 export function looksLikeShowRequest(text: string | null | undefined): boolean {
@@ -109,9 +164,11 @@ export interface CatalogProduct {
 /** The single product the customer wants to see, or null. Longest-match
  * wins: a generic word is a substring of a specific one ("শার্ট" inside
  * "টি-শার্ট", "shirt" inside "t-shirt"), so the product whose matched
- * alias is longest is the one the customer meant. A tie at the top
- * ("শার্ট" matches both Shirt and T-shirt) is ambiguous — returns null
- * so the LLM asks which one. */
+ * alias is longest is the one the customer meant. An alias whose English
+ * word IS the product's name beats one that is only part of a longer
+ * name, so "শার্ট"/"shart" picks the Shirt (the T-shirt is
+ * "টি-শার্ট"/"tishart"). A genuine tie at the top is ambiguous —
+ * returns null so the LLM asks which one. */
 export function matchShowProduct(
   text: string | null | undefined,
   products: CatalogProduct[],
@@ -131,10 +188,19 @@ export function matchShowProduct(
       };
       consider(lower.includes(nameLower), nameLower.length);
       consider(squished.includes(nameSquished), nameSquished.length);
-      for (const [bn, en] of BENGALI_PRODUCT_ALIASES) {
+      for (const [bn, en] of [...BENGALI_PRODUCT_ALIASES, ...ROMANIZED_PRODUCT_ALIASES]) {
         if (!nameLower.includes(en)) continue;
-        consider(lower.includes(bn), bn.length);
-        consider(squished.includes(bn), bn.length);
+        // Exact: the alias's English word IS the product's name (e.g.
+        // "shart"→"shirt" for the product named "Shirt"). Partial: it is
+        // only part of a longer name (e.g. "shart"→"shirt" inside
+        // "T-shirt"). An exact alias match wins over a partial one, so
+        // "শার্ট"/"shart" picks the Shirt — the T-shirt is
+        // "টি-শার্ট"/"tishart".
+        const enSquished = en.replace(/-/g, '');
+        const exact = enSquished.length > 0 && enSquished === nameSquished;
+        const bonus = exact ? 100 : 0;
+        consider(lower.includes(bn), bn.length + bonus);
+        consider(squished.includes(bn), bn.length + bonus);
       }
       return { product: p, best };
     })

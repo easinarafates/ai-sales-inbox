@@ -203,7 +203,7 @@ async function main() {
   const promptSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/prompts.ts'), 'utf8');
   check('prompt: rule 9 never admits AI/robot/bot/automated', promptSrc.includes('9. তুমি কখনো বলবে না তুমি AI') && promptSrc.includes('"AI" শব্দটা উত্তরে কখনো লিখো না'));
   check('prompt: fast-reply deflection wording', promptSrc.includes('আপনার সেবা দেওয়ার জন্য আমরা সবসময় দ্রুত উত্তর দেওয়ার চেষ্টা করি'));
-  check('prompt: send_product_photos in the tool list (list → all ids, pick → one id)', promptSrc.includes('send_product_photos') && promptSrc.includes('কি কি প্রোডাক্ট আছে') && promptSrc.includes('টেক্সটে তালিকা লিখো না'));
+  check('prompt: send_product_photos in the tool list (list → TEXT list, pick → one photo)', promptSrc.includes('send_product_photos') && promptSrc.includes('কি কি প্রোডাক্ট আছে') && promptSrc.includes('টেক্সটে পরিষ্কার তালিকা লিখো'));
 
   const intentSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/detect-intent.ts'), 'utf8');
   check('detect-intent: fast-reply detector exported', intentSrc.includes('export function detectFastReplyQuestion'));
@@ -212,20 +212,20 @@ async function main() {
 
   const agentSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/agent.ts'), 'utf8');
   check('agent: fast-reply deflection runs before the AI call', agentSrc.includes('detectFastReplyQuestion(batchedText)') && agentSrc.includes("reason: 'deflected_fast_reply'"));
-  check('agent: photo flows run before the AI call', agentSrc.includes('detectProductListRequest(batchedText)') && agentSrc.includes("reason: 'product_photos_sent'") && agentSrc.includes("reason: 'product_photo_sent'"));
+  check('agent: photo flows run before the AI call', agentSrc.includes('detectProductListRequest(batchedText)') && agentSrc.includes("reason: 'product_list_sent'") && agentSrc.includes("reason: 'product_photo_sent'"));
   check('agent: photo flows use deliverOutgoingImageMessage', agentSrc.includes('deliverOutgoingImageMessage(workspaceId, conversationId'));
   check('agent: deterministic reply does not re-list after photos', agentSrc.includes("tool !== 'send_product_photos'") && agentSrc.includes('photoSent.length === 1'));
   check('agent: show flow is checked BEFORE the list flow (a pick wins)', agentSrc.indexOf('const showProduct = matchShowProduct(batchedText, photoProducts);') < agentSrc.indexOf("if (detectProductListRequest(latestText)"));
   check('agent: list fires only when the NEWEST message asks for it', agentSrc.includes("const latestText = batchedMessages.length > 0 ? (batchedMessages[batchedMessages.length - 1]?.body ?? '') : '';") && agentSrc.includes('detectProductListRequest(latestText)'));
-  check('agent: list is NOT re-sent when it was the preceding reply', agentSrc.includes("const listJustSent = (lastOut[0]?.body ?? '').includes('আপনি কোন প্রোডাক্টে আগ্রহী?')") && agentSrc.includes('if (!listJustSent) {'));
+  check('agent: list is NOT re-sent when it was the preceding reply', agentSrc.includes("const listJustSent = lastBody.includes('আমাদের প্রোডাক্টগুলো:')") && agentSrc.includes('if (!listJustSent) {'));
 
   const custSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/customers/routes.ts'), 'utf8');
   check('customers: list is buyers-only (EXISTS orders)', custSrc.includes('EXISTS (SELECT 1 FROM orders o'));
   check('customers: owner PSID explicitly excluded (NOT_OWNER)', custSrc.includes('NOT_OWNER') && custSrc.includes("customers.primary_identity IN ('messenger:' || w.owner_psid, 'facebook_comment:' || w.owner_psid)"));
 
   const hookSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/webhooks/routes.ts'), 'utf8');
-  check('webhook: owner guard before mark_seen (never an AI reply)', hookSrc.includes('Owner guard (REVISED 2026-11-08)') && hookSrc.indexOf('ownerPsid && ownerPsid === sender.id') < hookSrc.indexOf('mark_seen'));
-  check('webhook: owner messages SAVED in his test chat (not dropped)', hookSrc.includes('findOwnerTestConversation(channel.workspace_id, channel.id, ownerPsid)') && hookSrc.includes('await saveIncomingMessage(channel.workspace_id, ownerConv, message.text, message.mid);'));
+  check('webhook: owner guard before mark_seen (never an AI reply)', hookSrc.includes('Owner guard (REVISED 2026-11-08)') && hookSrc.indexOf('ownerPsid && ownerPsid === sender.id') < hookSrc.indexOf('sendMarkSeen({'));
+  check('webhook: owner messages SAVED in his test chat (not dropped)', hookSrc.includes('findOwnerTestConversation(channel.workspace_id, channel.id, ownerPsid)') && hookSrc.includes('await saveIncomingMessage(channel.workspace_id, ownerConv, messageText, message.mid, messageMedia);'));
   check('webhook: owner dot toggles the workspace AI switch', hookSrc.includes('toggleWorkspaceAiMode(channel.workspace_id)') && hookSrc.includes('setWorkspaceAiMode(channel.workspace_id'));
   check('webhook: owner comments skipped too', hookSrc.includes('commentOwnerPsid'));
 
@@ -284,19 +284,21 @@ async function main() {
     const ch = await api('/api/channels', { method: 'POST', body: { platform: 'webchat', externalId: 'site-photo', displayName: 'Photo Test Site' } });
     check('boot 1: webchat channel → 201', ch.status === 201, `status=${ch.status}`);
 
-    // (a) List request → 3 photos + 3 captions + interest question.
+    // (a) List request → ONE clean TEXT list (one product per line:
+    // name + price), NO photos. (AI-training 2026-11-08: the user
+    // explicitly wanted the list as text, not photo cards.)
     const mList = await webchat(api, 'wc-photo-list-1', 'List Customer', 'কি কি প্রোডাক্ট আছে?');
     check('boot 1: list webchat message accepted', mList.status === 200 && !!mList.data?.conversationId, `status=${mList.status}`);
     const listConvId = mList.data?.conversationId ?? '';
     const listFound = await pollFor(async () => {
       const t = await threadOut(api, listConvId);
-      const imgs = t.out.filter((m) => m.type === 'image');
-      const q = t.out.some((m) => (m.body ?? '').includes('আগ্রহী'));
-      return imgs.length === 3 && q ? t : null;
+      const txt = t.out.filter((m) => m.type === 'text').map((m) => m.body ?? '').join('\n');
+      const hasAll = ['Jeans', 'Shirt', 'T-shirt'].every((n) => txt.includes(n));
+      const hasPrices = /৳(৫০০|৬০০|৪০০)|500|600|400/.test(txt);
+      return txt.includes('আমাদের প্রোডাক্টগুলো:') && hasAll && hasPrices ? t : null;
     });
-    check('boot 1: list → 3 image messages (one per product)', !!listFound && listFound.out.filter((m) => m.type === 'image').length === 3, `images=${(listFound?.out ?? []).filter((m) => m.type === 'image').length}`);
-    check('boot 1: list → correct photo URLs', !!listFound && [IMG.jeans, IMG.shirt, IMG.tshirt].every((u) => listFound.out.some((m) => m.type === 'image' && m.body === u)), JSON.stringify((listFound?.out ?? []).filter((m) => m.type === 'image').map((m) => m.body)));
-    check('boot 1: list → name + price caption below each photo', !!listFound && ['Jeans', 'Shirt', 'T-shirt'].every((n) => listFound.out.some((m) => m.type === 'text' && (m.body ?? '').includes(n) && /৳(৫০০|৬০০|৪০০)|500|600|400/.test(m.body ?? ''))), JSON.stringify((listFound?.out ?? []).filter((m) => m.type === 'text').map((m) => m.body)));
+    check('boot 1: list → ONE text list, ZERO images', !!listFound && listFound.out.filter((m) => m.type === 'text').length === 1 && listFound.out.filter((m) => m.type === 'image').length === 0, `text=${(listFound?.out ?? []).filter((m) => m.type === 'text').length} images=${(listFound?.out ?? []).filter((m) => m.type === 'image').length}`);
+    check('boot 1: list → one product per line, name + price on the line', !!listFound && ['Jeans', 'Shirt', 'T-shirt'].every((n) => { const line = (listFound.out.find((m) => m.type === 'text')?.body ?? '').split('\n').find((l) => l.includes(n)); return !!line && /৳(৫০০|৬০০|৪০০)|500|600|400/.test(line); }), JSON.stringify((listFound?.out ?? []).filter((m) => m.type === 'text').map((m) => m.body)));
     check('boot 1: list → interest question, chat stays open', !!listFound && listFound.conv.status === 'open' && listFound.conv.mode === 'ai', `status=${listFound?.conv?.status ?? '?'}`);
 
     // (b) Show request → the jeans photo + details + price.
@@ -436,7 +438,7 @@ async function main() {
     check('driver: list-request unit matrix all correct', driverResult.listUnitAllOk === true, JSON.stringify((driverResult.listUnit ?? []).filter((c) => !c.ok)));
     check('driver: show-product unit matrix all correct', driverResult.showUnitAllOk === true, JSON.stringify((driverResult.showUnit ?? []).filter((c) => !c.ok)));
     const lf = driverResult.listFlow ?? {};
-    check('driver: list flow → product_photos_sent, 3 images + interest question', lf.result?.replied === true && lf.result?.reason === 'product_photos_sent' && (lf.images ?? []).length === 3 && (lf.captions ?? []).some((b) => (b ?? '').includes('আগ্রহী')) && lf.state?.status === 'open', JSON.stringify({ r: lf.result, imgs: (lf.images ?? []).length, caps: lf.captions }));
+    check('driver: list flow → product_list_sent, ONE text list, 0 images', lf.result?.replied === true && lf.result?.reason === 'product_list_sent' && (lf.images ?? []).length === 0 && (lf.captions ?? []).length === 1 && ['Jeans', 'Shirt', 'T-shirt'].every((n) => (lf.captions[0] ?? '').includes(n)) && /৳(৫০০|৬০০|৪০০)|500|600|400/.test(lf.captions[0] ?? '') && lf.state?.status === 'open', JSON.stringify({ r: lf.result, imgs: (lf.images ?? []).length, caps: lf.captions }));
     const sf = driverResult.showFlow ?? {};
     check('driver: show flow → product_photo_sent, jeans photo + ৳৫০০ details', sf.result?.replied === true && sf.result?.reason === 'product_photo_sent' && (sf.images ?? []).length === 1 && (sf.texts ?? []).some((b) => (b ?? '').includes('৳৫০০') || (b ?? '').includes('500')), JSON.stringify({ r: sf.result, imgs: sf.images, texts: sf.texts }));
     const ff = driverResult.fastFlow ?? {};

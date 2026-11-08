@@ -50,14 +50,17 @@ import {
 } from './providers';
 import { computeAiCostPaisa } from './pricing';
 import { deliverOutgoingMessage, deliverOutgoingImageMessage, type DeliveryResult } from '../channels/meta-send';
-import { detectAnger, detectOffTopic, escalateConversation, isCantAnswerReply } from '../inbox/escalation';
+import { detectAnger, detectGibberish, detectOffTopic, escalateConversation, isCantAnswerReply } from '../inbox/escalation';
 import {
   BENGALI_PRODUCT_ALIASES,
   detectFastReplyQuestion,
+  detectGreeting,
   detectProductListRequest,
   looksLikeShowRequest,
   matchShowProduct,
+  ROMANIZED_PRODUCT_ALIASES,
 } from './detect-intent';
+import { analyseCustomerImage, transcribeCustomerAudio } from './media';
 
 /** Flat MVP estimate per AI reply (paisa). Real per-token pricing plugs in here later. Must stay under the 20-paisa gate. */
 const AI_REPLY_COST_PAISA = 10;
@@ -71,6 +74,10 @@ export interface BatchedMessage {
   body: string;
   senderId?: string;
   platformMessageId?: string;
+  /** Blob URL of a customer photo / voice note (messages.media_url). */
+  mediaUrl?: string | null;
+  /** 'image' | 'audio' | 'video' | null (messages.media_type). */
+  mediaType?: string | null;
 }
 
 export interface ProcessBatchResult {
@@ -485,7 +492,9 @@ async function runDemoReply(
     return keywords.some((kw) => {
       const kwLower = kw.toLowerCase();
       if (nameLower.includes(kwLower) || kwLower.includes(nameLower) || nameLower.includes(kwLower.slice(0, 4))) return true;
-      return BENGALI_PRODUCT_ALIASES.some(([bn, en]) => kwLower.includes(bn) && nameLower.includes(en));
+      return [...BENGALI_PRODUCT_ALIASES, ...ROMANIZED_PRODUCT_ALIASES].some(
+        ([alias, en]) => kwLower.includes(alias) && nameLower.includes(en),
+      );
     });
   });
 
@@ -657,6 +666,26 @@ export async function processBatch(
   if (!conversation) return { replied: false, reason: 'conversation_not_found' };
   if (conversation.mode !== 'ai') return { replied: false, reason: 'human_mode' };
 
+  // Voice note? Transcribe FIRST — before the anger / off-topic /
+  // gibberish checks — so the transcript (the customer's actual words)
+  // is what those checks and the LLM see. A failed transcription is
+  // remembered (voiceFailed) and answered honestly AFTER the
+  // subscription gate below (which owns sending + charging); the body
+  // stays "[ভয়েস মেসেজ]" so the checks below cannot misfire on it.
+  // Voice REPLY (the AI speaking back) is not built — the reply is text.
+  let voiceFailed = false;
+  let voiceNote = false;
+  const audioMsg = [...batchedMessages].reverse().find((m) => m.mediaType === 'audio' && m.mediaUrl);
+  if (audioMsg) {
+    voiceNote = true;
+    const transcript = await transcribeCustomerAudio(audioMsg.mediaUrl as string);
+    if (transcript) {
+      audioMsg.body = transcript;
+    } else {
+      voiceFailed = true;
+    }
+  }
+
   // Angry customer? Escalate FIRST — before any AI call, before the
   // subscription gate — so no AI reply goes out to an angry customer.
   // The chat moves to the Inbox "Waiting" tab (status='waiting',
@@ -747,6 +776,156 @@ export async function processBatch(
     );
     return charged ? allowance.costPaisa : 0;
   };
+  const latestText = batchedMessages.length > 0 ? (batchedMessages[batchedMessages.length - 1]?.body ?? '') : '';
+
+  // Voice note that could not be transcribed — reply honestly, never
+  // fake it. The customer is asked to write instead. (Voice reply —
+  // the AI speaking back — is not built; the reply is text.)
+  if (voiceFailed) {
+    const sal = genderSalutation(replyGender);
+    const reply = sal
+      ? `${sal}, আপনার ভয়েস মেসেজটি শুনতে পারিনি। কষ্ট করে লিখে জানাবেন কি — কোন প্রোডাক্টটি চান?`
+      : 'আপনার ভয়েস মেসেজটি শুনতে পারিনি। কষ্ট করে লিখে জানাবেন কি — কোন প্রোডাক্টটি চান?';
+    const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+    if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.7 };
+    const cost = await chargeDeterministic();
+    return { replied: true, reason: 'voice_unheard', confidence: 0.9, costPaisa: cost };
+  }
+
+  // Gibberish guard (deterministic, pre-AI, ZERO token): a meaningless
+  // message gets ONE "আমি আপনার কথাটি বুঝতে পারিনি" reply per episode,
+  // then further gibberish is ignored silently — no reply, no charge,
+  // no AI call — until the customer writes something meaningful (which
+  // clears the flag). A normal message (Banglish, "Hi", "Ata", product
+  // words) can never match detectGibberish (see inbox/escalation.ts).
+  if (detectGibberish(latestText)) {
+    const { rows: gwRows } = await query<{ gibberish_warned: boolean }>(
+      workspaceId,
+      'SELECT gibberish_warned FROM conversations WHERE workspace_id = $1 AND id = $2',
+      [workspaceId, conversationId],
+    );
+    if (!gwRows[0]?.gibberish_warned) {
+      const sal = genderSalutation(replyGender);
+      const reply = sal
+        ? `${sal}, আমি আপনার কথাটি বুঝতে পারিনি, কষ্ট করে আবার বলবেন।`
+        : 'আমি আপনার কথাটি বুঝতে পারিনি, কষ্ট করে আবার বলবেন।';
+      const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+      if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.7 };
+      await query(
+        workspaceId,
+        'UPDATE conversations SET gibberish_warned = TRUE, updated_at = now() WHERE workspace_id = $1 AND id = $2',
+        [workspaceId, conversationId],
+      );
+      const cost = await chargeDeterministic();
+      return { replied: true, reason: 'gibberish_once', confidence: 0.9, costPaisa: cost };
+    }
+    return { replied: false, reason: 'gibberish_ignored' };
+  }
+  // A meaningful message resets the episode — a future gibberish gets
+  // its one reply again. (Only touches the row when the flag is set.)
+  await query(
+    workspaceId,
+    'UPDATE conversations SET gibberish_warned = FALSE, updated_at = now() WHERE workspace_id = $1 AND id = $2 AND gibberish_warned = TRUE',
+    [workspaceId, conversationId],
+  );
+
+  // Photo → product match (the CORE behaviour): the customer sent a photo
+  // saying they want that product. Gemini vision matches it against the
+  // REAL catalog (customer photo + product photos, see ai-agent/media.ts);
+  // the reply is then built deterministically from the DB — a matched
+  // product's name/price/stock, an out-of-stock note, or "not ours" with
+  // similar products. No price or stock is ever invented (the hallucination
+  // guard below also covers this reply). Vision unavailable → an honest
+  // fallback, never a guessed match.
+  const newestMedia = batchedMessages.length > 0 ? batchedMessages[batchedMessages.length - 1] : undefined;
+  if (newestMedia?.mediaType === 'image' && newestMedia.mediaUrl) {
+    const { rows: matchProducts } = await query<{
+      id: string; name: string; price_paisa: number; stock: number; description: string | null; image_url: string | null;
+    }>(
+      workspaceId,
+      `SELECT p.id, p.name, p.price_paisa, p.stock, p.description,
+              (SELECT pi.url FROM product_images pi WHERE pi.workspace_id = $1 AND pi.product_id = p.id ORDER BY pi.created_at ASC LIMIT 1) AS image_url
+       FROM products p WHERE p.workspace_id = $1 ORDER BY p.created_at ASC`,
+      [workspaceId],
+    );
+    const outcome = await analyseCustomerImage(newestMedia.mediaUrl, matchProducts.map((p) => ({
+      id: p.id, name: p.name, pricePaisa: Number(p.price_paisa), stock: Number(p.stock),
+      description: p.description, imageUrl: p.image_url,
+    })));
+    const sal = genderSalutation(replyGender);
+    if (!outcome) {
+      const reply = sal
+        ? `${sal}, আপনার ছবিটি দেখতে পারিনি। কষ্ট করে প্রোডাক্টের নাম লিখে জানাবেন?`
+        : 'আপনার ছবিটি দেখতে পারিনি। কষ্ট করে প্রোডাক্টের নাম লিখে জানাবেন?';
+      const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+      if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.7 };
+      const cost = await chargeDeterministic();
+      return { replied: true, reason: 'photo_unseen', confidence: 0.9, costPaisa: cost };
+    }
+    const matched = outcome.matchedId ? matchProducts.find((p) => p.id === outcome.matchedId) : undefined;
+    if (matched) {
+      if (Number(matched.stock) > 0) {
+        // In stock: the product's photo + name, price, details.
+        if (matched.image_url) {
+          await deliverOutgoingImageMessage(workspaceId, conversationId, matched.image_url);
+        }
+        const details =
+          `${matched.name}\nদাম: ${taka(Number(matched.price_paisa))}\nস্টক: ${Number(matched.stock)}টি আছে ✅` +
+          (matched.description ? `\n${matched.description}` : '') +
+          '\nঅর্ডার করতে চাইলে নাম, ফোন নম্বর ও ঠিকানা জানান।';
+        const body = sal ? `${sal}, এই প্রোডাক্টটি আমাদের কাছে আছে — ${details}\nধন্যবাদ, ${sal}।` : `এই প্রোডাক্টটি আমাদের কাছে আছে — ${details}\nধন্যবাদ।`;
+        const dsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, body);
+        if (!dsent.sent) return { replied: false, reason: 'send_failed', confidence: 0.95 };
+        const cost = await chargeDeterministic();
+        return { replied: true, reason: 'photo_matched_in_stock', confidence: 0.95, costPaisa: cost };
+      }
+      // Matched but out of stock — say so nicely, never invent a date.
+      const reply = sal
+        ? `${sal}, ${matched.name} এখন স্টক আউট হয়ে গেছে। খুব শীঘ্রই আসবে — আসলেই জানিয়ে দেবো। ততক্ষণে অন্য কোনো প্রোডাক্ট দেখতে চাইলে জানাবেন।`
+        : `${matched.name} এখন স্টক আউট হয়ে গেছে। খুব শীঘ্রই আসবে — আসলেই জানিয়ে দেবো। ততক্ষণে অন্য কোনো প্রোডাক্ট দেখতে চাইলে জানাবেন।`;
+      const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+      if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.95 };
+      const cost = await chargeDeterministic();
+      return { replied: true, reason: 'photo_matched_out_of_stock', confidence: 0.95, costPaisa: cost };
+    }
+    // Not our product — say so, and offer the similar ones (the vision
+    // match's similarIds, else the first few catalog products).
+    const similar = (outcome.similarIds.length > 0
+      ? outcome.similarIds.map((id) => matchProducts.find((p) => p.id === id)).filter((p): p is NonNullable<typeof p> => !!p)
+      : matchProducts.slice(0, 3));
+    const similarList = similar.length > 0
+      ? similar.map((p) => `• ${p.name} — ${taka(Number(p.price_paisa))}`).join('\n')
+      : '';
+    const reply = sal
+      ? `${sal}, আমাদের কাছে এই প্রোডাক্টটি নেই, তবে এই সিমিলার প্রোডাক্টগুলো দেখতে পারেন:\n${similarList}\nকোনটি সম্পর্কে জানতে চান?`
+      : `আমাদের কাছে এই প্রোডাক্টটি নেই, তবে এই সিমিলার প্রোডাক্টগুলো দেখতে পারেন:\n${similarList}\nকোনটি সম্পর্কে জানতে চান?`;
+    const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+    if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.9 };
+    const cost = await chargeDeterministic();
+    return { replied: true, reason: 'photo_not_our_product', confidence: 0.9, costPaisa: cost };
+  }
+
+  // Repeat greeting: the customer greets again after the chat is already
+  // underway (an outgoing reply exists) — do NOT send a fresh generic
+  // welcome. Ask contextually what they want. A FIRST greeting (no
+  // outgoing reply yet) falls through to the LLM for a normal welcome.
+  if (detectGreeting(latestText)) {
+    const { rows: outRows } = await query<{ n: string }>(
+      workspaceId,
+      "SELECT COUNT(*)::text AS n FROM messages WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'out'",
+      [workspaceId, conversationId],
+    );
+    if (Number(outRows[0]?.n ?? 0) > 0) {
+      const sal = genderSalutation(replyGender);
+      const reply = sal
+        ? `${sal}, আপনি কি প্রোডাক্টটা নেবেন, নাকি নতুন করে কিছু বলতে চাচ্ছেন?`
+        : 'আপনি কি প্রোডাক্টটা নেবেন, নাকি নতুন করে কিছু বলতে চাচ্ছেন?';
+      const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+      if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.9 };
+      const cost = await chargeDeterministic();
+      return { replied: true, reason: 'repeat_greeting', confidence: 0.9, costPaisa: cost };
+    }
+  }
 
   // "Why do you reply so fast?" — deflect as a human shop assistant.
   // NEVER "আমি AI বলে দ্রুত উত্তর দিই". Not off-topic, not escalated.
@@ -761,33 +940,16 @@ export async function processBatch(
     return { replied: true, reason: 'deflected_fast_reply', confidence: 0.9, costPaisa: cost };
   }
 
-  // Product photos — one image message per product, name + price below
-  // each, then the interest question. Only when EVERY product has a
-  // photo; otherwise fall through to the LLM (which has the
-  // send_product_photos tool and mentions photo-less products in text).
-  // The product query runs only when the text might be a list or show
-  // request, so ordinary questions pay no extra round-trip.
+  // Product photos / list — deterministic (no AI call).
   //
-  // FLOOD HARDENING (2026-11-08): the queue once batched the last 10
-  // incoming messages with no lower bound, so an old list request
-  // ("কি কি প্রোডাক্ট আছে?") stayed in batchedText and re-fired the
-  // whole list on EVERY later message — "জিন্সটা দেখাও", "Atogula
-  // kno", "Nibona" each got the full 7-message list again, 4 lists in
-  // a row. The queue now batches only unanswered messages, AND this
-  // block defends itself so a re-fired batch can never re-send the
-  // list: (1) a pick wins over a list — the show flow is checked
-  // FIRST, so "জিন্সটা দেখাও" always shows the jeans, never the list,
-  // even if an old list request is also in the batch; (2) the list
-  // fires ONLY when the NEWEST message is itself a list request — a
-  // stale list request earlier in the batch cannot fire it; (3) if the
-  // list was already the immediately-preceding reply (the latest
-  // outgoing message is the interest question), the list is NOT sent
-  // again — a short deterministic pointer reply goes out instead
-  // ("তালিকাটা একটু আগেই পাঠিয়েছি"), so the chat stays open and the
-  // customer is pointed at the list above. A genuine repeat list
-  // request sent right after receiving the list therefore gets a
-  // pointer text instead of a second photo list; asking again after
-  // any other exchange re-sends the list normally.
+  // (1) Single product FIRST: "জিন্সটা দেখাও" → its photo + details.
+  // (1b) Photo request WITHOUT a product ("ছবি দেন"): ask WHICH product
+  //     they want to see — never send every photo unasked.
+  // (2) List request ("কি কি প্রোডাক্ট আছে"): a CLEAN TEXT LIST, one
+  //     product per line (name + price) — not a jumbled sentence and
+  //     not a photo flood. Only when the NEWEST message asks for it, and
+  //     only when it was not already the immediately-preceding reply
+  //     (then a short pointer reply goes out instead).
   if (detectProductListRequest(batchedText) || looksLikeShowRequest(batchedText)) {
     const { rows: photoProducts } = await query<{
       id: string; name: string; price_paisa: number; stock: number; description: string | null; image_url: string | null;
@@ -798,7 +960,6 @@ export async function processBatch(
        FROM products p WHERE p.workspace_id = $1 ORDER BY p.created_at ASC`,
       [workspaceId],
     );
-    const latestText = batchedMessages.length > 0 ? (batchedMessages[batchedMessages.length - 1]?.body ?? '') : '';
 
     // (1) Single product FIRST: "জিন্সটা দেখাও" → its photo + details.
     const showProduct = matchShowProduct(batchedText, photoProducts);
@@ -823,56 +984,60 @@ export async function processBatch(
       // No photo or the send failed — fall through to the LLM path.
     }
 
-    // (2)+(3) The list: only when the NEWEST message asks for it, and
-    // only when it was not already the immediately-preceding reply.
-    if (detectProductListRequest(latestText) && photoProducts.length > 0 && photoProducts.every((p) => p.image_url)) {
+    // (1b) Photo request without a product: ask which one they want.
+    // (A list request is not a bare photo request — it goes to (2).)
+    if (looksLikeShowRequest(latestText) && !detectProductListRequest(latestText)) {
+      const sal = genderSalutation(replyGender);
+      const ask = sal
+        ? `${sal}, কোন প্রোডাক্টটি দেখতে চাচ্ছেন? নামটা লিখে জানান।`
+        : 'কোন প্রোডাক্টটি দেখতে চাচ্ছেন? নামটা লিখে জানান।';
+      const asent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, ask);
+      if (asent.sent) {
+        const cost = await chargeDeterministic();
+        return { replied: true, reason: 'ask_which_product_photo', confidence: 0.95, costPaisa: cost };
+      }
+      // Ask send failed — fall through to the LLM path.
+    }
+
+    // (2) The list, as a clean text list — one product per line.
+    if (detectProductListRequest(latestText) && photoProducts.length > 0) {
       const { rows: lastOut } = await query<{ body: string | null }>(
         workspaceId,
         `SELECT body FROM messages WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'out' ORDER BY created_at DESC LIMIT 1`,
         [workspaceId, conversationId],
       );
-      const listJustSent = (lastOut[0]?.body ?? '').includes('আপনি কোন প্রোডাক্টে আগ্রহী?');
+      const lastBody = lastOut[0]?.body ?? '';
+      const listJustSent = lastBody.includes('আমাদের প্রোডাক্টগুলো:') || lastBody.includes('আপনি কোন প্রোডাক্টে আগ্রহী?');
       if (!listJustSent) {
-        let allSent = true;
-        for (const p of photoProducts) {
-          const img = await deliverOutgoingImageMessage(workspaceId, conversationId, p.image_url as string);
-          if (!img.sent) { allSent = false; break; }
-          const cap = await sendChannelMessage(
-            workspaceId, conversationId, channel?.platform ?? null,
-            `${p.name} — দাম ${taka(Number(p.price_paisa))}`,
-          );
-          if (!cap.sent) { allSent = false; break; }
+        const list = photoProducts
+          .map((p) => `• ${p.name} — ${taka(Number(p.price_paisa))}${Number(p.stock) > 0 ? '' : ' (স্টক শেষ)'}`)
+          .join('\n');
+        const sal = genderSalutation(replyGender);
+        const reply = sal
+          ? `${sal}, আমাদের প্রোডাক্টগুলো:\n${list}\nকোনটি সম্পর্কে জানতে চান? নামটা লিখে জানান।`
+          : `আমাদের প্রোডাক্টগুলো:\n${list}\nকোনটি সম্পর্কে জানতে চান? নামটা লিখে জানান।`;
+        const lsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+        if (lsent.sent) {
+          const cost = await chargeDeterministic();
+          return { replied: true, reason: 'product_list_sent', confidence: 0.95, costPaisa: cost };
         }
-        if (allSent) {
-          const sal = genderSalutation(replyGender);
-          const q = sal
-            ? `${sal}, আমাদের এই প্রোডাক্টগুলো আছে — আপনি কোন প্রোডাক্টে আগ্রহী? নামটা লিখে জানান।`
-            : 'আমাদের এই প্রোডাক্টগুলো আছে — আপনি কোন প্রোডাক্টে আগ্রহী? নামটা লিখে জানান।';
-          const qsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, q);
-          if (qsent.sent) {
-            const cost = await chargeDeterministic();
-            return { replied: true, reason: 'product_photos_sent', confidence: 0.95, costPaisa: cost };
-          }
+        // List send failed — fall through to the LLM path.
+      } else {
+        // List was just sent — do NOT re-send it. Answer with a short
+        // pointer instead (deterministic, so it can never escalate the
+        // chat the way a can't-answer LLM reply would): the customer
+        // just got the list above; ask which product they want to see.
+        const sal2 = genderSalutation(replyGender);
+        const pointer = sal2
+          ? `${sal2}, প্রোডাক্টের তালিকাটা একটু আগেই পাঠিয়েছি — উপরে দেখতে পাবেন। কোন প্রোডাক্টটা দেখতে চান, নামটা লিখে জানান।`
+          : 'প্রোডাক্টের তালিকাটা একটু আগেই পাঠিয়েছি — উপরে দেখতে পাবেন। কোন প্রোডাক্টটা দেখতে চান, নামটা লিখে জানান।';
+        const psent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, pointer);
+        if (psent.sent) {
+          const cost = await chargeDeterministic();
+          return { replied: true, reason: 'list_already_sent', confidence: 0.95, costPaisa: cost };
         }
-        // A photo or caption failed — fall through to the LLM path, which
-        // answers in text (photos already sent stay sent).
+        // Pointer send failed — fall through to the LLM path.
       }
-      // List was just sent — do NOT re-send it. Answer with a short
-      // pointer instead (deterministic, so it can never escalate the
-      // chat the way a can't-answer LLM reply would — the demo-mode
-      // fall-through escalated the thread to waiting and killed every
-      // later reply): the customer just got the list above; ask which
-      // product they want to see.
-      const sal2 = genderSalutation(replyGender);
-      const pointer = sal2
-        ? `${sal2}, প্রোডাক্টের তালিকাটা একটু আগেই পাঠিয়েছি — উপরে দেখতে পাবেন। কোন প্রোডাক্টটা দেখতে চান, নামটা লিখে জানান।`
-        : 'প্রোডাক্টের তালিকাটা একটু আগেই পাঠিয়েছি — উপরে দেখতে পাবেন। কোন প্রোডাক্টটা দেখতে চান, নামটা লিখে জানান।';
-      const psent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, pointer);
-      if (psent.sent) {
-        const cost = await chargeDeterministic();
-        return { replied: true, reason: 'list_already_sent', confidence: 0.95, costPaisa: cost };
-      }
-      // Pointer send failed — fall through to the LLM path.
     }
   }
 
@@ -917,7 +1082,28 @@ export async function processBatch(
     messages: batchedMessages.map((m) => m.body),
   };
 
-  const prompt = `${SYSTEM_PROMPT}\n\n${buildUserPrompt(ctx)}`;
+  // PRODUCT-PUSH LIMIT (2026-11-08): don't dump products at the customer
+  // over and over. Count how many recent outgoing replies already
+  // mentioned a product name; once it is 2+ and the new message is NOT
+  // a product question, tell the model to stop pushing products and just
+  // answer the question. The deterministic list flow above already
+  // refuses to re-send the list consecutively — this covers the LLM.
+  const productMentions = historyRows.filter(
+    (m) => m.direction === 'out' && ctx.products.some((p) => (m.body ?? '').includes(p.name)),
+  ).length;
+  const isProductQuestion =
+    detectProductListRequest(batchedText) ||
+    looksLikeShowRequest(batchedText) ||
+    /দাম|price|স্টক|stock|অর্ডার|order/i.test(batchedText);
+  const productPushNote =
+    productMentions >= 2 && !isProductQuestion
+      ? 'এই চ্যাটে প্রোডাক্টের কথা ইতিমধ্যে ২ বার বলা হয়েছে — কাস্টমার আগ্রহ দেখায়নি। এবার প্রোডাক্টের কথা তুলো না; শুধু তার প্রশ্নের উত্তর দাও।'
+      : '';
+  const voicePromptNote = voiceNote
+    ? 'নতুন মেসেজটি কাস্টমারের ভয়েস মেসেজ থেকে লেখায় রূপান্তর করা হয়েছে — উত্তর টেক্সটে (বাংলায়) দাও, ভয়েসে নয়।'
+    : '';
+
+  const prompt = `${SYSTEM_PROMPT}\n\n${buildUserPrompt(ctx)}${productPushNote ? `\n\n${productPushNote}` : ''}${voicePromptNote ? `\n\n${voicePromptNote}` : ''}`;
 
   let ai: AiCallResult | null = null;
   let aiError: string | null = null;

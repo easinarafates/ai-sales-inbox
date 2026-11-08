@@ -30,6 +30,7 @@
  * the owner is already handling it (mode already 'human').
  */
 import { query } from '../db/pool';
+import { createNotification } from '../notifications/service';
 
 export type EscalationReason = 'ai_unsure' | 'angry_customer' | 'cant_answer' | 'off_topic';
 
@@ -212,7 +213,138 @@ export async function escalateConversation(
   );
   if (rows.length > 0) {
     console.log(`[escalation] conversation ${conversationId} → waiting (${reason})`);
+    if (reason === 'angry_customer' || reason === 'off_topic') {
+      // OWNER NOTIFICATION (2026-11-08): the header bell shows this —
+      // "কাস্টমার রেগে গিয়েছে, আপনি একে সামলান" — with the customer
+      // name and the conversation. Created only when the escalation
+      // actually happened (rows.length > 0), so it can never duplicate.
+      // ai_unsure / cant_answer get no bell row (they already make a ticket).
+      const owner = await query<{ customer_id: string | null; customer_name: string | null }>(
+        workspaceId,
+        `SELECT c.customer_id, cu.name AS customer_name
+         FROM conversations c LEFT JOIN customers cu ON cu.id = c.customer_id
+         WHERE c.workspace_id = $1 AND c.id = $2`,
+        [workspaceId, conversationId],
+      ).catch(() => ({ rows: [] as { customer_id: string | null; customer_name: string | null }[] }));
+      const name = owner.rows[0]?.customer_name ?? 'একজন কাস্টমার';
+      if (reason === 'angry_customer') {
+        await createNotification(workspaceId, {
+          type: 'angry_customer',
+          title: 'কাস্টমার রেগে গিয়েছে',
+          body: `${name} রেগে গিয়েছে — আপনি একে সামলান। চ্যাটটি Waiting-এ আছে।`,
+          conversationId,
+          customerId: owner.rows[0]?.customer_id ?? null,
+        });
+      } else {
+        await createNotification(workspaceId, {
+          type: 'off_topic',
+          title: 'কাস্টমার বিষয়ের বাইরে প্রশ্ন করছে',
+          body: `${name} দোকানের বাইরের বিষয়ে প্রশ্ন করছে — চ্যাটটি Waiting-এ আছে, আপনি দেখে নিন।`,
+          conversationId,
+          customerId: owner.rows[0]?.customer_id ?? null,
+        });
+      }
+    }
     return true;
   }
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Gibberish detection (2026-11-08) — deterministic, pre-AI, ZERO token.
+//
+// The owner asked: when a customer types gibberish ("হিজিবিজি") over and
+// over, the AI must NOT burn a token on every one. It replies ONCE per
+// episode ("স্যার, আমি আপনার কথাটি বুঝতে পারিনি, কষ্ট করে আবার বলবেন")
+// and then IGNORES further gibberish silently until the customer writes
+// something meaningful. The "once" state lives on the conversation
+// (gibberish_warned, migration 27) — see ai-agent/agent.ts.
+//
+// Conservative by design, in layers so a real message can never match:
+//  1. The literal word "হিজিবিজি" (Bengali for "gibberish") is gibberish.
+//  2. Bengali script is always a real message — never gibberish.
+//  3. No letters at all (digits / emoji / punctuation only) is not
+//     gibberish — a phone number, a quantity, or a 👍 is meaningful.
+//  4. Any RECOGNISED word saves the message — a generous allowlist of
+//     Banglish + English words customers actually use (greetings,
+//     products, price, order, delivery, "Ata", "Hi", "ok", ...).
+//  5. Any WORD-LIKE token saves it — 3+ letters with ≥25% vowels is a
+//     real word or a name ("Rahim", "random", "kemon"); random typing
+//     ("asdfgh", "ksdjfhs") has almost no vowels.
+// Only a message with no recognised word and no word-like token —
+// keyboard mash ("asdf", "qwerty", "zxcv"), consonant soup, or a
+// repeated character ("aaaa", "zzzz") — is gibberish. Banglish, short
+// replies, product words, numbers and greetings can never match.
+// ---------------------------------------------------------------------------
+
+/** Words customers actually type (Banglish + English) — any one of these saves a message from the gibberish guard. */
+const GIBBERISH_ALLOWLIST = new Set([
+  // Greetings / politeness.
+  'hi', 'hello', 'hey', 'yo', 'salam', 'salaam', 'assalamualaikum', 'alaikum', 'walaikum',
+  'good', 'morning', 'afternoon', 'evening', 'bye', 'thanks', 'thank', 'please', 'plz',
+  'sorry', 'dhonnobad', 'dhonnobadh', 'shukriya',
+  // Products.
+  'jeans', 'jean', 'jins', 'jinz', 'shirt', 'shart', 'tshirt', 't-shirt', 'tishart',
+  'pant', 'pants', 'paant', 'shari', 'saree', 'panjabi', 'kurti', 'product', 'products',
+  'dokan', 'shop',
+  // Price / stock / order / delivery / payment.
+  'price', 'dam', 'daam', 'koto', 'taka', 'tk', 'stock', 'ase', 'ache', 'ashe', 'nai', 'nei',
+  'order', 'delivery', 'dhaka', 'courier', 'parcel', 'payment', 'cash', 'bkash', 'nogod',
+  'nagad', 'rocket', 'cod', 'address', 'thikana', 'phone', 'number', 'nam', 'name',
+  'size', 'colour', 'color', 'rong', 'lal', 'nil', 'shobuj', 'holud', 'shada', 'kalo',
+  // Verbs / intent.
+  'chai', 'nibo', 'niben', 'dibo', 'diben', 'kinte', 'kinbo', 'nite', 'pathan',
+  'pathaben', 'korbo', 'korben', 'hobe', 'parbo', 'parben', 'lagbe', 'lagbo', 'dekhbo',
+  'dekhan', 'dekhao', 'dekhte', 'chobi', 'chhobi', 'photo', 'pic', 'picture', 'show',
+  // Pronouns / questions / small words.
+  'ami', 'apni', 'tumi', 'amar', 'apnar', 'tomar', 'ki', 'keno', 'kokhon', 'kothay',
+  'kothai', 'kobe', 'kore', 'thik', 'bhalo', 'valo', 'kemon', 'kemn', 'aso', 'asen',
+  'ata', 'eta', 'oita', 'eita', 'ar', 'abar', 'ekta', 'ek', 'dui', 'tin', 'char',
+  'ha', 'na', 'hya', 'bhai', 'vai', 'apu', 'apa', 'sir', 'madam', 'mem',
+  'ok', 'okk', 'okay', 'k', 'hm', 'hmm', 'haha', 'hehe', 'yes', 'no',
+]);
+
+/** Keyboard-mash fragments — a message containing one is gibberish. */
+const KEYBOARD_MASH = [
+  'asdf', 'qwer', 'wert', 'erty', 'rtyu', 'tyui', 'yuio', 'sdfg', 'dfgh',
+  'fghj', 'ghjk', 'hjkl', 'zxcv', 'xcvb', 'cvbn', 'vbnm', 'qwerty', 'asdfgh', 'zxcvbn',
+];
+
+/**
+ * Is this message gibberish / meaningless typing? Deterministic and
+ * conservative — see the layers above. Returns false for every real
+ * message: Bengali, Banglish, greetings, short replies, product words,
+ * numbers, emoji-only.
+ */
+export function detectGibberish(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  if (!t) return false;
+  // The literal word for "gibberish" is gibberish.
+  if (t.includes('হিজিবিজি')) return true;
+  // Bengali script is always a real message.
+  if (/[\u0980-\u09FF]/.test(t)) return false;
+  // No letters at all (digits / emoji / punctuation) is not gibberish.
+  const letters = t.replace(/[^A-Za-z]/g, '');
+  if (letters.length === 0) return false;
+  // One character repeated (aaaa, zzzz, qqqq) is gibberish — no real
+  // word is a single repeated letter. (Checked before the word-like
+  // test below, which would call "aaaa" word-like: it is all vowels.)
+  if (letters.length >= 3 && new Set(letters.toLowerCase()).size === 1) return true;
+  const lower = t.toLowerCase();
+  // Keyboard mash anywhere → gibberish.
+  if (KEYBOARD_MASH.some((frag) => lower.includes(frag))) return true;
+  const words = lower.split(/[^a-z]+/).filter(Boolean);
+  if (words.length === 0) return false;
+  // Any recognised word saves the message.
+  if (words.some((w) => GIBBERISH_ALLOWLIST.has(w))) return false;
+  // Any word-like token (3+ letters, ≥25% vowels) is a real word/name.
+  const wordLike = (w: string): boolean => {
+    if (w.length < 3) return false;
+    const vowels = (w.match(/[aeiou]/g) || []).length;
+    return vowels / w.length >= 0.25;
+  };
+  if (words.some(wordLike)) return false;
+  // Nothing recognisable and nothing word-like → gibberish.
+  return true;
 }

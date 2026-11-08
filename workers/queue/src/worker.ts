@@ -73,9 +73,9 @@ function startWorker(): void {
       // request re-sent the WHOLE product list instead of the jeans
       // photo (live bug 2026-11-08; same fix in the API's in-process
       // fallback, apps/api/src/queue/client.ts).
-      const { rows } = await query<{ body: string | null }>(
+      const { rows } = await query<{ body: string | null; media_url: string | null; media_type: string | null }>(
         workspaceId,
-        `SELECT body FROM messages
+        `SELECT body, media_url, media_type FROM messages
          WHERE workspace_id = $1 AND conversation_id = $2 AND direction = 'in'
            AND created_at > COALESCE(
              (SELECT MAX(created_at) FROM messages
@@ -84,7 +84,7 @@ function startWorker(): void {
          ORDER BY created_at ASC LIMIT 10`,
         [workspaceId, conversationId],
       );
-      const batched: BatchedMessage[] = rows.map((r) => ({ body: r.body ?? '' }));
+      const batched: BatchedMessage[] = rows.map((r) => ({ body: r.body ?? '', mediaUrl: r.media_url, mediaType: r.media_type }));
       if (batched.length === 0) return { replied: false, reason: 'no_messages' };
       const result = await processBatch(workspaceId, conversationId, batched);
       console.log(`[worker] conv ${conversationId}:`, result);
