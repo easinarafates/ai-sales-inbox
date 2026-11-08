@@ -17,6 +17,25 @@
  * logs it honestly; the text confirmation + invoice link still go out,
  * and a broken-Bengali image is NEVER sent.
  */
+// TRACING-ONLY (2026-11-08): Vercel's file tracer cannot see the
+// dynamicImport() calls below (they go through the Function constructor),
+// so it would exclude @sparticuz/chromium, puppeteer-core AND their
+// transitive deps (tar-fs, pump, tar-stream, ...) from the deployment —
+// the render then failed with "Cannot find package 'tar-fs'". These
+// require() calls make the tracer include the whole subtree. They are
+// never used at runtime: require() of an ESM-only package throws in
+// CommonJS, so the calls are wrapped in try/catch and the real load is
+// the dynamicImport() in renderInvoiceImagePng.
+try {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('@sparticuz/chromium');
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  require('puppeteer-core');
+} catch {
+  // ESM-only packages cannot be required in CommonJS; the real load is
+  // dynamicImport() in renderInvoiceImagePng.
+}
+
 // NOTE (2026-11-08): @sparticuz/chromium and puppeteer-core are ESM-only
 // ("type": "module"). The API is compiled to CommonJS, so a static
 // `import` here becomes a `require()` at runtime and CRASHES the whole
