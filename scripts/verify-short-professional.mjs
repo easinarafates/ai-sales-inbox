@@ -264,6 +264,12 @@ async function main() {
 
   const intentSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/detect-intent.ts'), 'utf8');
   check('A: detectShopLocation exported (Bengali + Banglish + English)', intentSrc.includes('export function detectShopLocation') && intentSrc.includes('দোকান (কোথায়|কোথাই|কই') && intentSrc.includes('where is (your |the )?(shop|store)'));
+  // Order-confirmation guard (2026-11-08, like-created orders): a like /
+  // Hi / OK / bare "হ্যাঁ" / question must NEVER create or confirm an
+  // order — only an explicit text confirmation may.
+  check('C: isExplicitOrderConfirmation exported (like/Hi/OK/question = false, explicit confirm = true)', intentSrc.includes('export function isExplicitOrderConfirmation') && intentSrc.includes('[লাইক]') && intentSrc.includes('অর্ডার\\s*(টি|টা)?\\s*কনফার্ম'));
+  check('C: create_order guard in the tool loop (blocks unless explicit, asks for "অর্ডার কনফার্ম করো")', agentSrc.includes("call.tool === 'create_order' && !isExplicitOrderConfirmation(batchedText)") && agentSrc.includes("reason: 'order_confirmation_blocked'") && agentSrc.includes('অর্ডার কনফার্ম করো'));
+  check('C: prompt rule 2চ requires explicit written confirmation before create_order', promptSrc.includes('2চ.') && promptSrc.includes('স্পষ্ট লিখিত সম্মতি') && promptSrc.includes('লাইক/স্টিকার'));
 
   // ---------- Static checks: B (invoice image) ----------
   const imgSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/orders/invoice-image.ts'), 'utf8');
@@ -467,6 +473,7 @@ async function main() {
     check('driver 1: shortenReply leaves a short reply untouched', driverResult.shortenShortUntouched?.ok === true, JSON.stringify(driverResult.shortenShortUntouched ?? {}));
     check('driver 1: shortenReply cuts one over-long sentence at a word boundary', driverResult.shortenOneLongSentence?.ok === true, JSON.stringify(driverResult.shortenOneLongSentence ?? {}));
     check('driver 1: detectShopLocation unit matrix all correct', driverResult.shopLocationUnitAllOk === true, JSON.stringify((driverResult.shopLocationUnit ?? []).filter((c) => !c.ok)));
+    check('driver 1: isExplicitOrderConfirmation unit matrix all correct (like/Hi/OK/question = false, explicit = true, cancel = false)', driverResult.orderConfirmUnitAllOk === true, JSON.stringify((driverResult.orderConfirmUnit ?? []).filter((c) => !c.ok)));
     check('driver 1: list is just the list (header + 3 lines, no trailing question)', driverResult.listJustTheList?.ok === true, JSON.stringify(driverResult.listJustTheList ?? {}).slice(0, 300));
     check('driver 1: shop location = ONE line from the knowledge book', driverResult.shopLocationOneLine?.ok === true, JSON.stringify(driverResult.shopLocationOneLine ?? {}));
     check('driver 1: like (no context) → short help reply, no product mention', driverResult.likeNoContext?.ok === true, JSON.stringify(driverResult.likeNoContext ?? {}));
@@ -500,6 +507,7 @@ async function main() {
         check('live: "অন্য কোনো কালারে আছে?" → one short "no" (≤2 lines)', liveResult.otherColour?.ok === true, JSON.stringify(liveResult.otherColour ?? {}));
         check('live: price question → short reply with the right price (≤2 lines)', liveResult.priceShort?.ok === true, JSON.stringify(liveResult.priceShort ?? {}));
         check('live: shop location → ONE line with a real provider', liveResult.shopLocationLive?.ok === true, JSON.stringify(liveResult.shopLocationLive ?? {}));
+        check('live: order-confirm guard — like after "দেখে নিশ্চিত করবেন" creates NO order, ambiguous question creates NO order, explicit "অর্ডার কনফার্ম করো" creates exactly 1', liveResult.orderConfirmGuard?.ok === true, JSON.stringify(liveResult.orderConfirmGuard ?? {}));
       }
     }
   }

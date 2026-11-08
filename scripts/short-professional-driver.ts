@@ -9,7 +9,7 @@
 // No secrets are printed.
 import { pool } from '../apps/api/src/db/pool';
 import { processBatch, shortenReply } from '../apps/api/src/ai-agent/agent';
-import { detectShopLocation } from '../apps/api/src/ai-agent/detect-intent';
+import { detectShopLocation, isExplicitOrderConfirmation } from '../apps/api/src/ai-agent/detect-intent';
 import { renderInvoiceImageForOrder } from '../apps/api/src/orders/invoice-image';
 
 const [workspaceId, jeansId, tshirtId, shirtId, channelId] = process.argv.slice(2);
@@ -118,6 +118,53 @@ async function main(): Promise<void> {
     ok: detectShopLocation(text) === expected,
   }));
   out.shopLocationUnitAllOk = (out.shopLocationUnit as { ok: boolean }[]).every((c) => c.ok);
+
+  // --- Unit 3: isExplicitOrderConfirmation (2026-11-08, like-created
+  // orders) — a like / Hi / OK / bare "হ্যাঁ" / question must NEVER
+  // count as an order confirmation; only an explicit order/confirm
+  // phrasing counts. A cancel request must NOT count either. ---
+  const confirmCases: [string, boolean][] = [
+    // Must NEVER confirm (false).
+    ['[লাইক]', false],
+    ['[স্টিকার]', false],
+    ['Hi', false],
+    ['হাই', false],
+    ['OK', false],
+    ['ঠিক আছে', false],
+    ['হ্যাঁ', false],
+    ['ধন্যবাদ', false],
+    ['আচ্ছা', false],
+    ['হুম', false],
+    ['ডেলিভারি চার্জ কত?', false],
+    ['কতদিনে আসবে?', false],
+    ['আমার অর্ডারটা কতদূর', false],
+    ['অর্ডার ক্যানসেল করো', false],
+    ['অর্ডার ক্যানসেল করতে চাই', false],
+    ['জিন্সের দাম কত?', false],
+    ['', false],
+    // Must confirm (true).
+    ['অর্ডার কনফার্ম করো', true],
+    ['অর্ডার কনফার্ম করুন', true],
+    ['হ্যাঁ, অর্ডার করবো', true],
+    ['অর্ডার করবো', true],
+    ['অর্ডার দাও', true],
+    ['কনফার্ম করো', true],
+    ['কনফার্ম', true],
+    ['আমি জিন্স কিনতে চাই', true],
+    ['আমি একটা জিন্স কিনতে চাই। নাম টেস্ট, ফোন 01712345678, ঠিকানা বাসা ১, রোড ২, ধানমন্ডি, ঢাকা। অর্ডার কনফার্ম করুন।', true],
+    ['confirm the order', true],
+    ['confirm order', true],
+    ['place order', true],
+    ['order korbo', true],
+    ['confirm koro', true],
+  ];
+  out.orderConfirmUnit = confirmCases.map(([text, expected]) => ({
+    text,
+    expected,
+    got: isExplicitOrderConfirmation(text),
+    ok: isExplicitOrderConfirmation(text) === expected,
+  }));
+  out.orderConfirmUnitAllOk = (out.orderConfirmUnit as { ok: boolean }[]).every((c) => c.ok);
 
   // --- Flow 1: product list is JUST the list (no trailing question) ---
   const listConv = await seedConversation('তালিকা কাস্টমার');

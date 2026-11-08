@@ -62,6 +62,7 @@ import {
   detectGreeting,
   detectProductListRequest,
   detectShopLocation,
+  isExplicitOrderConfirmation,
   looksLikeShowRequest,
   matchShowProduct,
   ROMANIZED_PRODUCT_ALIASES,
@@ -1468,6 +1469,31 @@ export async function processBatch(
   if (parsed && parsed.toolCalls.length > 0) {
     const results: { tool: string; result: unknown }[] = [];
     for (const call of parsed.toolCalls) {
+      // ORDER-CONFIRMATION GUARD (2026-11-08, user report — orders were
+      // created when the customer only gave a LIKE). create_order may
+      // ONLY run when the customer's message in THIS batch explicitly
+      // confirms / places the order in TEXT ("অর্ডার কনফার্ম করো",
+      // "হ্যাঁ, অর্ডার করবো", "confirm the order", "কিনতে চাই" with
+      // details). A like / sticker, "Hi", "OK", "ঠিক আছে", "হ্যাঁ"
+      // alone, "ধন্যবাদ", "আচ্ছা", "হুম", or any question is NEVER a
+      // confirmation. If the guard blocks it, do NOT run the tool and
+      // do NOT call the LLM again — reply deterministically asking for
+      // an explicit confirmation and stop. The tool itself still
+      // enforces a product + phone + address.
+      if (call.tool === 'create_order' && !isExplicitOrderConfirmation(batchedText)) {
+        const gsal = genderSalutation(replyGender);
+        const guardReply = gsal
+          ? `${gsal}, অর্ডারটি কনফার্ম করতে "অর্ডার কনফার্ম করো" লিখে জানান।`
+          : 'অর্ডারটি কনফার্ম করতে "অর্ডার কনফার্ম করো" লিখে জানান।';
+        const gsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, guardReply);
+        const gcharged = gsent.sent
+          ? await chargeForReply(
+              workspaceId, conversationId, inputTokens, outputTokens, replyCost, provider, allowance.mode === 'included',
+              { model: ai.model, providerCostPaisa: computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens), fallbackFrom: ai.fallbackFrom ?? null },
+            )
+          : false;
+        return { replied: gsent.sent, reason: 'order_confirmation_blocked', confidence: 0.95, costPaisa: gcharged ? replyCost : 0 };
+      }
       const args = { ...call.args, customerId: customer?.id ?? call.args.customerId, conversationId };
       const result = await runTool(toolDb, workspaceId, call.tool, args);
       results.push({ tool: call.tool, result });

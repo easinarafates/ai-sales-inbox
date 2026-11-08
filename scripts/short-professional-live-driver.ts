@@ -45,6 +45,21 @@ async function seedInMessage(conversationId: string, body: string, mediaType: st
   );
 }
 
+async function seedOutMessage(conversationId: string, body: string): Promise<void> {
+  await pool.query(
+    "INSERT INTO messages (workspace_id, conversation_id, direction, type, body) VALUES ($1, $2, 'out', 'text', $3)",
+    [workspaceId, conversationId, body],
+  );
+}
+
+async function countOrders(customerId: string): Promise<number> {
+  const r = await pool.query(
+    'SELECT count(*) AS n FROM orders WHERE workspace_id = $1 AND customer_id = $2',
+    [workspaceId, customerId],
+  );
+  return Number((r.rows[0] as { n: string }).n);
+}
+
 function countLines(s: string): number {
   return s.split('\n').map((l) => l.trim()).filter(Boolean).length;
 }
@@ -127,6 +142,62 @@ async function main(): Promise<void> {
     reason: lRes.reason,
     reply: lReply,
     ok: lRes.replied && lRes.reason === 'shop_location' && countLines(lReply) === 1 && lReply.includes('মাগুরায়'),
+  };
+
+  // --- Live 5: order-confirmation guard (2026-11-08, like-created
+  // orders). Seed a pending order: the customer gave Jeans + phone +
+  // address, and the AI's last message asked "দেখে নিশ্চিত করবেন, স্যার".
+  // (a) a LIKE after that question must NOT create an order;
+  // (b) an ambiguous question ("ডেলিভারি চার্জ কত?") must NOT create
+  // one either (even if the LLM tries, the guard blocks it);
+  // (c) an explicit "অর্ডার কনফার্ম করো" MUST create exactly one order.
+  const guardConv = await seedConversation('লাইভ অর্ডার গার্ড কাস্টমার');
+  await seedInMessage(guardConv.conversationId, 'আমি Jeans কিনতে চাই');
+  await seedInMessage(guardConv.conversationId, 'ফোন 01712345678');
+  await seedInMessage(guardConv.conversationId, 'ঠিকানা বাসা ১, রোড ২, ধানমন্ডি, ঢাকা');
+  await seedOutMessage(
+    guardConv.conversationId,
+    'স্যার, আপনার অর্ডারটি দেখে নিন — Jeans × 1 — ৳৫০০, ডেলিভারি চার্জ ৳১০০, মোট ৳৬০০। দেখে নিশ্চিত করবেন, স্যার।',
+  );
+  const ordersBefore = await countOrders(guardConv.customerId);
+  // (a) LIKE after the confirmation question.
+  await seedInMessage(guardConv.conversationId, '[লাইক]', 'sticker');
+  const likeRes = await processBatch(workspaceId, guardConv.conversationId, [
+    { body: '[লাইক]', mediaType: 'sticker' },
+  ]);
+  const ordersAfterLike = await countOrders(guardConv.customerId);
+  // (b) Ambiguous question after the confirmation question.
+  await seedInMessage(guardConv.conversationId, 'ডেলিভারি চার্জ কত?');
+  const ambRes = await processBatch(workspaceId, guardConv.conversationId, [
+    { body: 'ডেলিভারি চার্জ কত?', mediaType: null },
+  ]);
+  const ordersAfterAmbiguous = await countOrders(guardConv.customerId);
+  // (c) Explicit confirmation.
+  await seedInMessage(guardConv.conversationId, 'অর্ডার কনফার্ম করো');
+  const confRes = await processBatch(workspaceId, guardConv.conversationId, [
+    { body: 'অর্ডার কনফার্ম করো', mediaType: null },
+  ]);
+  const ordersAfterConfirm = await countOrders(guardConv.customerId);
+  const confOuts = await outMessages(guardConv.conversationId);
+  // The confirmation text is followed by the invoice image + one short
+  // suggestion, so the LAST message is the suggestion — look for the
+  // confirmation text among ALL outgoing messages, not just the last.
+  const confirmReply = confOuts.find((b) => /অর্ডার কনফার্ম করা হলো/.test(b)) ?? '';
+  out.orderConfirmGuard = {
+    ordersBefore,
+    ordersAfterLike,
+    ordersAfterAmbiguous,
+    ordersAfterConfirm,
+    likeReason: likeRes.reason,
+    ambiguousReason: ambRes.reason,
+    confirmReason: confRes.reason,
+    confirmReply: confirmReply.slice(0, 200),
+    ok:
+      ordersBefore === 0 &&
+      ordersAfterLike === 0 &&
+      ordersAfterAmbiguous === 0 &&
+      ordersAfterConfirm === 1 &&
+      /অর্ডার কনফার্ম করা হলো/.test(confirmReply),
   };
 
   console.log('LIVE_DRIVER_RESULT ' + JSON.stringify(out));

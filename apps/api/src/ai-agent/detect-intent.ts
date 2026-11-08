@@ -328,3 +328,60 @@ export function acknowledgmentKind(text: string | null | undefined): 'thanks' | 
   if (!text) return 'ack';
   return ACK_THANKS_PHRASES.has(normalizeAcknowledgment(text)) ? 'thanks' : 'ack';
 }
+
+// ---------------------------------------------------------------------------
+// Explicit order confirmation (2026-11-08, user report — orders created
+// when the customer only gave a LIKE). An order may ONLY be created or
+// confirmed when the customer's TEXT message explicitly says so. A like /
+// sticker, "Hi", "OK", "ঠিক আছে", "হ্যাঁ" alone, "ধন্যবাদ", "আচ্ছা",
+// "হুম", or any question is NEVER a confirmation. The agent's
+// create_order guard calls this before running the tool; the LLM prompt
+// repeats the rule. Conservative on the "yes" side (a bare "হ্যাঁ" does
+// NOT count — it must mention the order), generous on the "order" side
+// (any clear order/confirm phrasing counts, Bengali / Banglish /
+// English), because a customer who writes "অর্ডার কনফার্ম করো" must not
+// be asked twice.
+// ---------------------------------------------------------------------------
+const ORDER_CONFIRM_PATTERNS: RegExp[] = [
+  // Bengali — "অর্ডার কনফার্ম করো/করুন", "অর্ডারটি কনফার্ম".
+  /অর্ডার\s*(টি|টা)?\s*কনফার্ম/u,
+  // "কনফার্ম করো/করুন/করবো" — confirm it (in an order conversation this
+  // means confirm the order; the AI just asked "দেখে নিশ্চিত করবেন?").
+  /কনফার্ম\s*(করো|করুন|করবো|করেন|করে\s*দাও|করে\s*দিন)/u,
+  // "অর্ডার করবো/করো/করুন/দাও/দিবো/দেবো/নিশ্চিত/প্লেস/চাই" — will order.
+  /অর্ডার\s*(করবো|করো|করুন|দাও|দিবো|দেবো|নিশ্চিত|প্লেস|চাই|করতে\s*চাই|দিতে\s*চাই)/u,
+  // "হ্যাঁ, অর্ডার করবো" — yes, (I will) order.
+  /হ্যাঁ[,\s]+অর্ডার/u,
+  // Bare "কনফার্ম" / "confirm" — in an order conversation this means
+  // confirm the order.
+  /^কনফার্ম$/u,
+  /^confirm$/i,
+  // Order request — "কিনতে চাই" / "নিতে চাই" (want to buy/take). The
+  // create_order tool still enforces a product + phone + address, so
+  // this alone cannot create an order without complete details.
+  /(কিনতে|নিতে)\s*চাই/u,
+  // English.
+  /confirm\s+(the\s+)?order/i,
+  /place\s+(the\s+)?order/i,
+  /order\s+confirm/i,
+  // Banglish.
+  /order\s*(korbo|koro|korun|chai|korte\s*chai)/i,
+  /confirm\s*(koro|korun|korbo)/i,
+];
+
+/**
+ * Does this text EXPLICITLY confirm / place an order? A like/sticker
+ * marker ("[লাইক]", "[স্টিকার]"), a greeting, a bare acknowledgment,
+ * a thank-you, or any question returns false — none of those may ever
+ * create or confirm an order. A cancel request ("অর্ডার ক্যানসেল করো")
+ * also returns false (the patterns need "কনফার্ম"/"করবো"/"দাও" etc.
+ * right after "অর্ডার", and "ক্যানসেল" breaks the match).
+ */
+export function isExplicitOrderConfirmation(text: string | null | undefined): boolean {
+  if (!text) return false;
+  const t = text.trim();
+  // Non-text markers are never a confirmation (a like is not an order).
+  if (t === '[লাইক]' || t === '[স্টিকার]' || t === '[ছবি]' || t === '[ভিডিও]') return false;
+  const norm = t.toLowerCase().replace(/\s+/g, ' ');
+  return ORDER_CONFIRM_PATTERNS.some((re) => re.test(norm));
+}
