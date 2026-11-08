@@ -15,10 +15,13 @@
  *    as SHA-256 hashes. The emailed LINK is not testable here by a real
  *    send (no Resend key in this repo): the verifier inserts a
  *    reset row directly into the local PGlite DB to test the consume
- *    path honestly, and tests the mailer by behaviour — no Resend key →
- *    mailerConfigured=false + "no mailer configured" in the log; an
- *    invalid Resend key → still 200 generic with mailerConfigured=true
- *    and the failure logged, never a hang or 500.
+ *    path honestly, and tests the mailer by behaviour — run A strips
+ *    RESEND_API_KEY explicitly (a real key now lives in apps/api/.env,
+ *    and dotenv never overwrites an already-set process env var, so
+ *    the strip keeps this scenario deterministic) → mailerConfigured=false
+ *    + "no mailer configured" in the log; an invalid Resend key → still
+ *    200 generic with mailerConfigured=true and the failure logged,
+ *    never a hang or 500.
  * (b) Facebook account switching:
  *  - GET /api/channels/{facebook,instagram,whatsapp}/login without
  *    META_APP_ID → 503 (unchanged); with a dummy app id → 200 with a
@@ -215,7 +218,7 @@ async function main() {
   const testEmail = `auth-test+${stamp}@example.com`;
   let userId = '';
   rmDir(dirA);
-  const runA = startApi(portA, dirA, { META_APP_ID: '', META_APP_SECRET: '' });
+  const runA = startApi(portA, dirA, { META_APP_ID: '', META_APP_SECRET: '', RESEND_API_KEY: '', RESEND_FROM: '' });
   try {
     check('API A starts (health)', await waitForHealth(baseA));
     const api = makeApi(baseA);
@@ -327,7 +330,7 @@ async function main() {
   } else {
     const { validToken, expiredToken } = insertResetRows(dirA, userId);
     check('reset rows inserted into local PGlite (valid + expired)', true);
-    const runA2 = startApi(portA, dirA, { META_APP_ID: '', META_APP_SECRET: '' });
+    const runA2 = startApi(portA, dirA, { META_APP_ID: '', META_APP_SECRET: '', RESEND_API_KEY: '', RESEND_FROM: '' });
     try {
       check('API A restarts (health)', await waitForHealth(baseA));
       const api = makeApi(baseA);

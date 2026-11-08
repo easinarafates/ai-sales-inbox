@@ -29,8 +29,8 @@ export interface SendMailOptions {
   html?: string;
 }
 
-/** Send one email via Resend. Throws on failure — the caller logs it and never fails the request over it. */
-export async function sendMail(opts: SendMailOptions): Promise<void> {
+/** Send one email via Resend. Returns Resend's message id on success. Throws on failure — the caller logs it and never fails the request over it. */
+export async function sendMail(opts: SendMailOptions): Promise<string> {
   if (!isMailerConfigured()) {
     throw new Error('Mailer not configured (RESEND_API_KEY missing)');
   }
@@ -58,6 +58,8 @@ export async function sendMail(opts: SendMailOptions): Promise<void> {
       const detail = (await res.text()).slice(0, 200);
       throw new Error(`Resend rejected the send (HTTP ${res.status}): ${detail}`);
     }
+    const data = (await res.json()) as { id?: string };
+    return data?.id ?? '';
   } finally {
     clearTimeout(timeout);
   }

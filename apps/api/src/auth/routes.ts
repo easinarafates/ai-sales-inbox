@@ -199,7 +199,7 @@ authRouter.post('/forgot-password', async (req: AuthRequest, res: Response) => {
       const resetLink = `${config.webAppUrl}/reset-password?token=${token}`;
       if (isMailerConfigured()) {
         try {
-          await sendMail({
+          const messageId = await sendMail({
             to: normalisedEmail,
             subject: 'AI Sales Inbox — পাসওয়ার্ড রিসেট লিংক / Password reset link',
             text: [
@@ -219,7 +219,7 @@ authRouter.post('/forgot-password', async (req: AuthRequest, res: Response) => {
               'If you did not request this, please ignore this email — your password will not change.',
             ].join('\n'),
           });
-          console.log(`[auth/forgot-password] reset link emailed to ${normalisedEmail}`);
+          console.log(`[auth/forgot-password] reset link emailed to ${normalisedEmail}${messageId ? ` (resend id: ${messageId})` : ''}`);
         } catch (err) {
           console.error('[auth/forgot-password] failed to send reset email:', (err as Error).message);
         }
