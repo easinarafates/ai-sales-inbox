@@ -122,3 +122,68 @@ export const courierApi = {
       {}
     ),
 };
+
+/**
+ * Courier API keys (migration 32) — Steadfast + Pathao only. The API
+ * returns masked status only (hasSet flags, never a key value); the form
+ * sends the real keys only when the owner saves them.
+ */
+export interface CredentialFieldStatus {
+  key: string;
+  label: string;
+  labelBn: string;
+  type: "text" | "password";
+  required: boolean;
+  hasSet: boolean;
+  help?: string;
+  helpBn?: string;
+}
+
+export interface CredentialProviderStatus {
+  provider: "steadfast" | "pathao";
+  /** Where the working keys came from: db (saved on this page), env (server settings), none. */
+  source: "db" | "env" | "none";
+  hasKeys: boolean;
+  /** True only after a successful read-only verify check. */
+  verified: boolean;
+  verifiedAt: string | null;
+  fields: CredentialFieldStatus[];
+}
+
+export interface PathaoStoreOption {
+  storeId: number;
+  storeName: string;
+  isActive: boolean;
+  isDefault: boolean;
+}
+
+export interface CredentialVerifyResult {
+  provider: "steadfast" | "pathao";
+  connected: boolean;
+  source: "db" | "env" | "none";
+  reason?: string;
+  currentBalance?: number;
+  currency?: string;
+  /** Pathao only: the merchant's stores (read-only) — pick one as store_id. */
+  stores?: PathaoStoreOption[];
+  storeIdSet?: boolean;
+  note?: string;
+  verified?: boolean;
+}
+
+export const courierCredentialsApi = {
+  list: () =>
+    api.get<{ providers: CredentialProviderStatus[] }>(
+      "/api/courier/credentials"
+    ),
+  save: (provider: "steadfast" | "pathao", credentials: Record<string, string>) =>
+    api.put<{ provider: string; status: CredentialProviderStatus }>(
+      "/api/courier/credentials",
+      { provider, credentials }
+    ),
+  verify: (provider: "steadfast" | "pathao") =>
+    api.post<CredentialVerifyResult>(
+      `/api/courier/credentials/${provider}/verify`,
+      {}
+    ),
+};

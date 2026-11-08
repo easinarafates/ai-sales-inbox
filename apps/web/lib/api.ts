@@ -143,6 +143,11 @@ export interface Customer {
   /** Where the photo came from: 'meta' (Graph) or 'manual' (owner upload from the Inbox). */
   picture_source?: string;
   pictureSource?: string;
+  /** List endpoint only: total spent (real order totals, cancelled/returned excluded) + order count. */
+  total_spent_paisa?: number | string | null;
+  totalSpentPaisa?: number | string | null;
+  order_count?: number | null;
+  orderCount?: number | null;
   facebookId?: string;
   facebook_id?: string;
   [key: string]: unknown;
@@ -870,6 +875,18 @@ export const salesChannelsApi = {
   /** Connect the WhatsApp number the user picked. */
   whatsappConnect: (body: { session: string; wabaId: string; phoneNumberId: string }) =>
     api.post<{ channel: SalesChannel }>("/api/channels/whatsapp/connect", body),
+  /** Manual WhatsApp Cloud API connect — verified phone-number ID + permanent token. */
+  whatsappManualConnect: (body: { phoneNumberId: string; token: string; wabaId?: string }) =>
+    api.post<{ channel: SalesChannel }>("/api/channels/whatsapp/manual", body),
+  /** "Connect TikTok" — returns the TikTok authorize URL to redirect to. */
+  tiktokLogin: () =>
+    api.get<{ url: string }>("/api/channels/tiktok/login"),
+  /** "Connect YouTube" — returns the Google authorize URL to redirect to. */
+  youtubeLogin: () =>
+    api.get<{ url: string }>("/api/channels/youtube/login"),
+  /** Which connects are actually configured (booleans only, no secrets). */
+  setupStatus: () =>
+    api.get<{ metaConfigured: boolean; whatsappConfigIdConfigured: boolean; tiktokConfigured: boolean; youtubeConfigured: boolean }>("/api/channels/setup-status"),
 };
 
 export type CouponType = "percent" | "amount" | "free_delivery";
@@ -940,6 +957,27 @@ export interface CustomerDetail {
   conversations?: Conversation[];
   orders?: Order[];
   notes?: { id?: string; body?: string; text?: string; createdAt?: string; created_at?: string }[];
+  /** Totals computed from the customer's REAL order rows (never invented):
+   * totalSpentPaisa excludes cancelled/returned orders; grossTotalPaisa
+   * sums every order. lastOrderAt is the newest order's date (ISO). */
+  summary?: {
+    orderCount: number;
+    deliveredCount: number;
+    cancelledCount: number;
+    returnedCount: number;
+    totalSpentPaisa: number;
+    grossTotalPaisa: number;
+    lastOrderAt: string | null;
+  };
+  /** What the customer ordered, aggregated across orders: product name +
+   * total quantity + total amount + how many orders included it. */
+  productsOrdered?: {
+    productId: string | null;
+    productName: string;
+    quantity: number;
+    amountPaisa: number;
+    orderCount: number;
+  }[];
   [key: string]: unknown;
 }
 

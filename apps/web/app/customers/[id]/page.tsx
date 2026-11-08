@@ -5,6 +5,7 @@ import Link from "next/link";
 import {
   customersApi,
   getToken,
+  orderItemsOf,
   orderTotalPaisa,
   type CustomerDetail,
 } from "@/lib/api";
@@ -79,6 +80,40 @@ export default function CustomerDetailPage() {
             <p className="text-sm"><span className="text-slate-500">{t("common.id", "ID", "ID")}:</span> {c.id}</p>
           </div>
 
+          {/* Spending summary — computed from the customer's REAL order rows
+              (total spent excludes cancelled/returned orders). */}
+          {detail?.summary && (
+            <div className="card p-4">
+              <h3 className="font-bold mb-2">{t("customers.spendingTitle", "Spending summary", "খরচের হিসাব")}</h3>
+              <p className="text-2xl font-bold text-brand-dark">{fmtTaka(detail.summary.totalSpentPaisa)}</p>
+              <p className="text-xs text-slate-500 mb-3">{t("customers.totalSpentNote", "Total spent (cancelled / returned orders excluded)", "মোট খরচ (বাতিল / ফেরত অর্ডার বাদে)")}</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-sm">
+                <div className="border rounded-lg p-2"><p className="text-slate-500 text-xs">{t("customers.ordersCount", "Orders", "অর্ডার")}</p><p className="font-bold">{detail.summary.orderCount}</p></div>
+                <div className="border rounded-lg p-2"><p className="text-slate-500 text-xs">{t("customers.deliveredCount", "Delivered", "ডেলিভারি হয়েছে")}</p><p className="font-bold">{detail.summary.deliveredCount}</p></div>
+                <div className="border rounded-lg p-2"><p className="text-slate-500 text-xs">{t("customers.cancelledCount", "Cancelled", "বাতিল")}</p><p className="font-bold">{detail.summary.cancelledCount}</p></div>
+                <div className="border rounded-lg p-2"><p className="text-slate-500 text-xs">{t("customers.returnedCount", "Returned", "ফেরত")}</p><p className="font-bold">{detail.summary.returnedCount}</p></div>
+              </div>
+              <p className="text-sm mt-3"><span className="text-slate-500">{t("customers.lastOrder", "Last order:", "শেষ অর্ডার:")}</span> {detail.summary.lastOrderAt ? fmtDate(detail.summary.lastOrderAt) : "—"}</p>
+            </div>
+          )}
+
+          {/* What the customer ordered — product names + quantities + amounts. */}
+          <div className="card p-4">
+            <h3 className="font-bold mb-2">{t("customers.productsOrdered", "Products ordered", "যেসব পণ্য অর্ডার করেছে")}</h3>
+            {(!detail?.productsOrdered || detail.productsOrdered.length === 0) ? (
+              <p className="text-sm text-slate-500">{t("customers.noProductsOrdered", "No products ordered yet.", "এখনো কোনো পণ্য অর্ডার করেনি।")}</p>
+            ) : (
+              <ul className="text-sm space-y-1">
+                {detail.productsOrdered.map((p, i) => (
+                  <li key={`${p.productId || p.productName}-${i}`} className="border rounded-lg p-2 flex justify-between gap-2">
+                    <span>{p.productName} <span className="text-slate-500">× {p.quantity}{p.orderCount > 1 ? ` • ${p.orderCount} ${t("customers.ordersWord", "orders", "টি অর্ডারে")}` : ""}</span></span>
+                    <span className="font-medium shrink-0">{fmtTaka(p.amountPaisa)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+
           <div className="card p-4">
             <h3 className="font-bold mb-2">{t("customers.identities", "Identity on all channels", "সব চ্যানেলের পরিচয়")}</h3>
             {(!detail?.identities || detail.identities.length === 0) ? (
@@ -115,13 +150,27 @@ export default function CustomerDetailPage() {
             {(!detail?.orders || detail.orders.length === 0) ? (
               <p className="text-sm text-slate-500">{t("customers.noOrders", "No orders.", "কোনো অর্ডার নেই।")}</p>
             ) : (
-              <ul className="text-sm space-y-1">
-                {detail.orders.map((o) => (
-                  <li key={o.id} className="border rounded-lg p-2 flex justify-between gap-2">
-                    <span>{o.orderNumber || o.order_number || o.id} • {o.status || "—"} • {fmtDate(o.createdAt || o.created_at)}</span>
-                    <span className="font-medium">{fmtTaka(orderTotalPaisa(o))}</span>
-                  </li>
-                ))}
+              <ul className="text-sm space-y-2">
+                {detail.orders.map((o) => {
+                  const items = orderItemsOf(o);
+                  return (
+                    <li key={o.id} className="border rounded-lg p-2">
+                      <div className="flex justify-between gap-2">
+                        <span>{o.orderNumber || o.order_number || o.id} • {o.status || "—"} • {fmtDate(o.createdAt || o.created_at)}</span>
+                        <span className="font-medium shrink-0">{fmtTaka(orderTotalPaisa(o))}</span>
+                      </div>
+                      {items.length > 0 && (
+                        <ul className="mt-1 pl-3 text-slate-600 space-y-0.5">
+                          {items.map((it, i) => (
+                            <li key={it.id || i}>
+                              {it.productName || it.product_name || it.name || t("customers.unknownProduct", "Unknown product", "অজানা পণ্য")} × {it.quantity ?? it.qty ?? 1} — {fmtTaka((it.pricePaisa ?? it.price_paisa ?? it.price ?? 0) * (it.quantity ?? it.qty ?? 1))}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </div>

@@ -1,0 +1,14 @@
+-- 33-channels-refresh-tokens.sql — refresh tokens for TikTok + YouTube OAuth.
+--
+-- Why: TikTok access tokens live ~24h and YouTube (Google) access tokens
+-- ~1h. Without the refresh token the channel would silently die after
+-- that and "connected" would be a lie. The refresh token is stored
+-- encrypted (same as token_encrypted) and is never returned by any list
+-- endpoint. It is filled in by the TikTok / YouTube OAuth callbacks
+-- (apps/api/src/channels/tiktok-oauth.ts, youtube-oauth.ts); older rows
+-- and Meta channels simply stay NULL until the next reconnect — no
+-- backfill is possible, because the token only exists during OAuth.
+-- Idempotent: safe to re-run on every start (same pattern as the other
+-- migrations). Loads on local PGlite (auto-run on boot) and on Neon
+-- Postgres with psql — load it into Neon BEFORE the next API deploy.
+ALTER TABLE channels ADD COLUMN IF NOT EXISTS refresh_token_encrypted TEXT;

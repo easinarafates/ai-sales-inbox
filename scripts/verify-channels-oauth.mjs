@@ -207,8 +207,8 @@ async function main() {
 
   const pageSrc = fs.readFileSync(path.join(ROOT, 'apps/web/app/channels/page.tsx'), 'utf8');
   check('channels page has one card per OAuth channel (facebook/instagram/whatsapp)', pageSrc.includes('OAUTH_KINDS') && ['facebook', 'instagram', 'whatsapp'].every((k) => pageSrc.includes(`"${k}"`)));
-  check('channels page shows TikTok + YouTube as coming soon', pageSrc.includes('SOON_CARDS') && pageSrc.includes('comingSoon') && pageSrc.includes('"tiktok"') && pageSrc.includes('"youtube"'));
-  check('channels page has NO fake TikTok/YouTube connect calls', !pageSrc.includes('tiktokLogin') && !pageSrc.includes('youtubeLogin') && !pageSrc.includes('tiktokConnect') && !pageSrc.includes('youtubeConnect'));
+  check('channels page has TikTok + YouTube as real connect cards (no coming soon)', pageSrc.includes('OAUTH_CARDS') && pageSrc.includes('tiktokLogin') && pageSrc.includes('youtubeLogin') && !pageSrc.includes('SOON_CARDS') && !pageSrc.includes('comingSoon'));
+  check('channels page calls tiktokLogin + youtubeLogin (real flows, not fake)', pageSrc.includes('salesChannelsApi.tiktokLogin') && pageSrc.includes('salesChannelsApi.youtubeLogin'));
   check('channels page calls instagramLogin + whatsappLogin', pageSrc.includes('salesChannelsApi.instagramLogin') && pageSrc.includes('salesChannelsApi.whatsappLogin'));
   check('channels page shows which account was used (loggedInAs + {account})', pageSrc.includes('loggedInAs') && pageSrc.includes("{account}"));
   check('channels page has instagram + whatsapp pickers', pageSrc.includes('instagramPickTitle') && pageSrc.includes('whatsappPickTitle') && pageSrc.includes('instagramConnect(') && pageSrc.includes('whatsappConnect('));
@@ -623,7 +623,12 @@ async function main() {
     const convsD1 = await inboxList(apiD);
     const custsD1 = await customerList(apiD);
     check('D1 repeated messages → exactly 1 conversation', convsD1.length === 1, `conversations=${convsD1.length}`);
-    check('D1 repeated messages → exactly 1 customer', custsD1.length === 1, `customers=${custsD1.length}`);
+    // NOTE (buyers-only rule, customers/routes.ts): GET /api/customers
+    // lists buyers only — a person who only messaged (no order yet) is
+    // NOT in that list. "One customer" here means one customer identity
+    // behind the chat: the conversation's customer_id.
+    check('D1 repeated messages → exactly 1 customer identity (one customer_id on the chat)', convsD1.length === 1 && typeof convsD1[0]?.customer_id === 'string' && convsD1[0].customer_id.length > 0, `customer_id=${convsD1[0]?.customer_id ?? 'none'}`);
+    check('D1 messager with no order is NOT in the buyers-only Customers list', custsD1.length === 0, `customers=${custsD1.length}`);
     const convD1 = convsD1[0];
     check('D1 the one conversation holds both messages', convD1 ? (await inboundCount(apiD, convD1.id)) === 2 : false, `inbound=${convD1 ? await inboundCount(apiD, convD1.id) : 'none'}`);
 
@@ -633,9 +638,8 @@ async function main() {
     );
     check('D2 all 10 concurrent webhooks accepted', burst.every((r) => r.status === 200), `statuses=${burst.map((r) => r.status).join(',')}`);
     const convsD2 = await inboxList(apiD);
-    const custsD2 = await customerList(apiD);
     check('D2 concurrent messages → still exactly 1 conversation', convsD2.length === 1, `conversations=${convsD2.length}`);
-    check('D2 concurrent messages → still exactly 1 customer', custsD2.length === 1, `customers=${custsD2.length}`);
+    check('D2 concurrent messages → still exactly 1 customer identity (same customer_id)', convsD2.length === 1 && convsD2[0]?.customer_id === convD1?.customer_id, `customer_id=${convsD2[0]?.customer_id ?? 'none'}`);
     check('D2 all 12 inbound messages are in that one conversation', convD1 && convsD2[0]?.id === convD1.id && (await inboundCount(apiD, convD1.id)) === 12, `inbound=${convD1 ? await inboundCount(apiD, convD1.id) : 'none'}`);
 
     // ---- D3: identical redelivery (same mid twice at once) → 1 message ----
@@ -685,9 +689,8 @@ async function main() {
     const cD6b = await sendComment(apiD, 'page-d6', `d6-c2-${stampD}`, 'fbuser-1', 'Commenter', 'ডেলিভারি হবে?');
     check('D6 both comment webhooks accepted', cD6a.status === 200 && cD6b.status === 200, `status=${cD6a.status}/${cD6b.status}`);
     const convsD6 = await inboxList(apiD);
-    const custsD6 = await customerList(apiD);
     check('D6 repeated comments → exactly 1 conversation', convsD6.length === 1, `conversations=${convsD6.length}`);
-    check('D6 repeated comments → exactly 1 customer', custsD6.length === 1, `customers=${custsD6.length}`);
+    check('D6 repeated comments → exactly 1 customer identity (one customer_id on the chat)', convsD6.length === 1 && typeof convsD6[0]?.customer_id === 'string' && convsD6[0].customer_id.length > 0, `customer_id=${convsD6[0]?.customer_id ?? 'none'}`);
     check('D6 the comment conversation holds both comments', convsD6[0] ? (await inboundCount(apiD, convsD6[0].id)) === 2 : false, `inbound=${convsD6[0] ? await inboundCount(apiD, convsD6[0].id) : 'none'}`);
   } finally {
     runD.stop();

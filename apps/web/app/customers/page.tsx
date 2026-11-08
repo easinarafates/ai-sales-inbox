@@ -7,7 +7,7 @@ import { useI18n } from "@/lib/i18n";
 
 export default function CustomersPage() {
   const router = useRouter();
-  const { t } = useI18n();
+  const { t, fmtTaka } = useI18n();
   const [customers, setCustomers] = useState<Customer[]>([]);
   const [q, setQ] = useState("");
   const [error, setError] = useState("");
@@ -52,13 +52,15 @@ export default function CustomersPage() {
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">
-            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("customers.thName", "Name", "নাম")}</th><th className="p-3">{t("customers.thPhone", "Phone", "ফোন")}</th><th className="p-3">{t("customers.thAddress", "Address", "ঠিকানা")}</th><th className="p-3"></th></tr></thead>
+            <thead><tr className="table-head border-b text-left text-slate-500"><th className="p-3">{t("customers.thName", "Name", "নাম")}</th><th className="p-3">{t("customers.thPhone", "Phone", "ফোন")}</th><th className="p-3">{t("customers.thAddress", "Address", "ঠিকানা")}</th><th className="p-3">{t("customers.thTotalSpent", "Total spent", "মোট খরচ")}</th><th className="p-3">{t("customers.thOrders", "Orders", "অর্ডার")}</th><th className="p-3"></th></tr></thead>
             <tbody>
               {customers.map((c) => (
                 <tr key={c.id} className="border-b transition-colors hover:bg-orange-50">
                   <td className="p-3 font-medium">{c.name || t("common.unknown", "Unknown", "অজানা")}</td>
                   <td className="p-3">{c.phone || "—"}</td>
                   <td className="p-3">{c.address || "—"}</td>
+                  <td className="p-3 font-medium">{fmtTaka(Number(c.total_spent_paisa ?? c.totalSpentPaisa ?? 0))}</td>
+                  <td className="p-3">{c.order_count ?? c.orderCount ?? 0}</td>
                   <td className="p-3 text-right"><Link href={`/customers/${c.id}`} className="text-brand-dark underline">{t("customers.profileLink", "Profile", "প্রোফাইল")}</Link></td>
                 </tr>
               ))}

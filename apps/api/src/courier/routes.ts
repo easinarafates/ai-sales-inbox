@@ -20,11 +20,20 @@ import { getWorkspaceId, requireAuth } from '../auth/auth';
 import {
   CourierValidationError,
   getCourierProvider,
-  providerForName,
+  PathaoCourierProvider,
   ProviderNotConfiguredError,
   SteadfastCourierProvider,
-  type OrderForBooking,
 } from './provider';
+import {
+  CREDENTIAL_PROVIDERS,
+  maskedStatus,
+  providerForWorkspace,
+  requireWorkspaceOwner,
+  resolveCourierCredentials,
+  saveCourierCredentials,
+  setCredentialsVerified,
+  type CourierCredentialProvider,
+} from './credentials';
 import { bookCourierForOrder } from './book';
 import { getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import { processDueShipmentChecks } from './tracking-check';
@@ -142,7 +151,7 @@ courierRouter.get('/courier/track/:trackingNumber', async (req: AuthRequest, res
     });
     return;
   }
-  const provider = providerForName(shipment.courier ?? getCourierProvider().name);
+  const provider = await providerForWorkspace(workspaceId, shipment.courier ?? getCourierProvider().name);
   try {
     const result = await provider.track(trackingNumber);
     res.json({ ...result, shipment: publicShipment(shipment) });
@@ -166,22 +175,26 @@ courierRouter.get('/courier/track/:trackingNumber', async (req: AuthRequest, res
 });
 
 /** GET /api/courier/provider — current provider + all options with their status.
- * The selection itself is env-based (COURIER_PROVIDER); this endpoint only
- * reports it honestly — it never returns a key value. */
+ * "configured" now counts DB-stored keys too (migration 32), not just env —
+ * a provider whose keys were entered on the Courier page reports honestly
+ * as configured. It never returns a key value. */
 courierRouter.get('/courier/provider', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
   const { config } = await import('../config');
   const current = getCourierProvider().name;
+  const steadfastResolved = await resolveCourierCredentials(workspaceId, 'steadfast');
+  const pathaoResolved = await resolveCourierCredentials(workspaceId, 'pathao');
   const configured: Record<string, boolean> = {
     stub: true,
-    steadfast: Boolean(config.courier.steadfast.apiKey && config.courier.steadfast.secretKey),
-    pathao: Boolean(config.courier.pathao.clientId && config.courier.pathao.clientSecret),
+    steadfast: !!steadfastResolved,
+    pathao: !!pathaoResolved,
     redx: Boolean(config.courier.redx.apiKey),
     sundarban: false,
   };
   const needs: Record<string, string> = {
     stub: '',
-    steadfast: 'STEADFAST_API_KEY / STEADFAST_SECRET_KEY',
-    pathao: 'PATHAO_CLIENT_ID / PATHAO_CLIENT_SECRET',
+    steadfast: 'Steadfast Api-Key / Secret-Key (কুরিয়ার পেজে বসান)',
+    pathao: 'Pathao Client ID / Client Secret / মার্চেন্ট ইমেইল / পাসওয়ার্ড (কুরিয়ার পেজে বসান)',
     redx: 'REDX_API_KEY',
     sundarban: 'সুন্দরবন মার্চেন্ট API (এখনো যুক্ত হয়নি)',
   };
@@ -197,10 +210,102 @@ courierRouter.get('/courier/provider', async (req: AuthRequest, res: Response) =
   });
 });
 
+/**
+ * Courier API keys (migration 32) — owner only.
+ *
+ * GET /api/courier/credentials — masked status for Steadfast + Pathao:
+ * which fields are set (hasSet), where the keys came from (db/env/none)
+ * and whether they passed a read-only verify. NEVER a key value.
+ * PUT /api/courier/credentials {provider, credentials} — save (encrypts
+ * the whole object, clears any previous verification). Returns the
+ * masked status. Unknown fields are ignored; missing required fields → 400.
+ * POST /api/courier/credentials/:provider/verify — READ-ONLY check, never
+ * a test booking: Steadfast GET /get_balance; Pathao issue-token + GET
+ * /aladdin/api/v1/stores (also returns the merchant's stores so the owner
+ * can pick the store_id). Success marks the provider verified; failure
+ * returns {connected:false, reason} honestly.
+ */
+courierRouter.get('/courier/credentials', requireWorkspaceOwner, async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const providers = [];
+  for (const provider of CREDENTIAL_PROVIDERS) {
+    providers.push(await maskedStatus(workspaceId, provider));
+  }
+  res.json({ providers });
+});
+
+courierRouter.put('/courier/credentials', requireWorkspaceOwner, async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { provider, credentials } = (req.body ?? {}) as { provider?: string; credentials?: Record<string, unknown> };
+  if (!provider || !CREDENTIAL_PROVIDERS.includes(provider as CourierCredentialProvider)) {
+    res.status(400).json({ error: "provider must be 'steadfast' or 'pathao'" });
+    return;
+  }
+  if (!credentials || typeof credentials !== 'object' || Array.isArray(credentials)) {
+    res.status(400).json({ error: 'credentials object is required' });
+    return;
+  }
+  try {
+    const status = await saveCourierCredentials(workspaceId, provider as CourierCredentialProvider, credentials as Record<string, string>);
+    res.json({ provider: status.provider, status });
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message });
+  }
+});
+
+courierRouter.post('/courier/credentials/:provider/verify', requireWorkspaceOwner, async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const provider = req.params.provider as CourierCredentialProvider;
+  if (!CREDENTIAL_PROVIDERS.includes(provider)) {
+    res.status(400).json({ error: "provider must be 'steadfast' or 'pathao'" });
+    return;
+  }
+  const resolved = await resolveCourierCredentials(workspaceId, provider);
+  if (!resolved) {
+    res.json({
+      provider,
+      connected: false,
+      source: 'none',
+      reason:
+        provider === 'steadfast'
+          ? 'Steadfast-এর Api-Key / Secret-Key এখনো দেওয়া হয়নি — কুরিয়ার পেজে চাবি বসিয়ে সংরক্ষণ করুন।'
+          : 'Pathao-এর Client ID / Client Secret / মার্চেন্ট ইমেইল / পাসওয়ার্ড এখনো দেওয়া হয়নি — কুরিয়ার পেজে চাবি বসিয়ে সংরক্ষণ করুন।',
+    });
+    return;
+  }
+  try {
+    if (provider === 'steadfast') {
+      const instance = (await providerForWorkspace(workspaceId, 'steadfast')) as SteadfastCourierProvider;
+      const balance = await instance.getBalance();
+      if (resolved.source === 'db') await setCredentialsVerified(workspaceId, 'steadfast', true);
+      res.json({ provider, connected: true, source: resolved.source, verified: resolved.source === 'db', currentBalance: balance, currency: 'BDT' });
+      return;
+    }
+    const instance = (await providerForWorkspace(workspaceId, 'pathao')) as PathaoCourierProvider;
+    const { stores } = await instance.verifyConnection();
+    if (resolved.source === 'db') await setCredentialsVerified(workspaceId, 'pathao', true);
+    res.json({
+      provider,
+      connected: true,
+      source: resolved.source,
+      verified: resolved.source === 'db',
+      stores,
+      storeIdSet: !!resolved.credentials.storeId,
+      note: resolved.credentials.storeId
+        ? undefined
+        : 'স্টোর ID এখনো দেওয়া হয়নি — নিচের তালিকা থেকে আপনার স্টোর বেছে সংরক্ষণ করুন, তারপর বুকিং হবে।',
+    });
+  } catch (err) {
+    if (resolved.source === 'db') await setCredentialsVerified(workspaceId, provider, false).catch(() => undefined);
+    res.json({ provider, connected: false, source: resolved.source, reason: (err as Error).message });
+  }
+});
+
 /** GET /api/courier/balance — Steadfast merchant balance (read-only).
- * Only available when Steadfast is the selected provider and its keys exist. */
+ * Uses this workspace's stored keys (DB first, env fallback). */
 courierRouter.get('/courier/balance', async (req: AuthRequest, res: Response) => {
-  const provider = getCourierProvider();
+  const workspaceId = getWorkspaceId(req);
+  const provider = await providerForWorkspace(workspaceId, 'steadfast');
   if (provider.name !== 'steadfast') {
     res.status(400).json({
       available: false,

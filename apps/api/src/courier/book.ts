@@ -17,10 +17,10 @@ import { query, queryOne } from '../db/pool';
 import { getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import {
   getCourierProvider,
-  providerForName,
   type CourierProvider,
   type OrderForBooking,
 } from './provider';
+import { providerForWorkspace } from './credentials';
 
 export interface BookedShipment {
   id: string;
@@ -46,6 +46,7 @@ interface OrderRow {
   customer_id: string | null;
   total_paisa: number;
   status: string;
+  order_number: string | null;
   customer_name: string | null;
   customer_phone: string | null;
   delivery_address: string | null;
@@ -58,7 +59,7 @@ export async function bookCourierForOrder(
 ): Promise<BookCourierResult> {
   const order = await queryOne<OrderRow>(
     workspaceId,
-    'SELECT id, customer_id, total_paisa, status, customer_name, customer_phone, delivery_address FROM orders WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, customer_id, total_paisa, status, order_number, customer_name, customer_phone, delivery_address FROM orders WHERE workspace_id = $1 AND id = $2',
     [workspaceId, orderId],
   );
   if (!order) {
@@ -100,11 +101,22 @@ export async function bookCourierForOrder(
     workspaceId,
   );
   const { chargePaisa: deliveryChargePaisa } = resolveDeliveryCharge(chargeRules, deliveryAddress);
+  // Total item quantity for the booking (Pathao requires item_quantity;
+  // weight is not tracked per product, so 0.5 kg — the Pathao minimum —
+  // is passed as the documented assumption in provider.ts).
+  const itemCount = await queryOne<{ qty: string }>(
+    workspaceId,
+    'SELECT COALESCE(SUM(quantity), 0)::bigint AS qty FROM order_items WHERE workspace_id = $1 AND order_id = $2',
+    [workspaceId, order.id],
+  );
   const orderForBooking: OrderForBooking = {
     id: order.id,
     customerId: order.customer_id,
     totalPaisa: Number(order.total_paisa),
     status: order.status,
+    orderNumber: order.order_number,
+    itemQuantity: Math.max(1, Number(itemCount?.qty ?? 1)),
+    itemWeight: 0.5,
     customerName: order.customer_name ?? customer?.name ?? null,
     customerPhone: order.customer_phone ?? customer?.phone ?? null,
     customerAddress: deliveryAddress,
@@ -112,8 +124,13 @@ export async function bookCourierForOrder(
   };
 
   // The owner picks the courier in the order panel; the courier page's
-  // generic booking uses the env-selected provider.
-  const provider: CourierProvider = providerName ? providerForName(providerName) : getCourierProvider();
+  // generic booking uses the env-selected provider. Either way the
+  // provider is wired with THIS workspace's stored keys (DB first, env
+  // fallback — see courier/credentials.ts), so keys entered in the UI
+  // are actually used for the booking.
+  const provider: CourierProvider = providerName
+    ? await providerForWorkspace(workspaceId, providerName)
+    : await providerForWorkspace(workspaceId, getCourierProvider().name);
   const booking = await provider.createBooking(orderForBooking);
 
   const { rows } = await query<BookedShipment>(

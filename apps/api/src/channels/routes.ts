@@ -10,7 +10,7 @@ import { SUBSCRIBED_FIELDS, subscribePageToApp } from './meta-oauth';
 export const channelsRouter = Router();
 channelsRouter.use(requireAuth);
 
-const PLATFORMS = ['messenger', 'facebook_comment', 'instagram', 'webchat', 'whatsapp', 'tiktok', 'tiktok_dm'] as const;
+const PLATFORMS = ['messenger', 'facebook_comment', 'instagram', 'webchat', 'whatsapp', 'tiktok', 'tiktok_dm', 'youtube'] as const;
 type Platform = (typeof PLATFORMS)[number];
 
 /**
@@ -28,6 +28,20 @@ function isApproved(platform: string): boolean {
   // Phase 1 platforms are not gated.
   return APPROVAL_GATED[platform] ?? true;
 }
+
+/** GET /api/channels/setup-status — which connects are actually configured.
+ * Lets the Channels page show "needs setup" honestly (with the Bengali
+ * explanation) instead of a fake connect button: Meta app present?
+ * WhatsApp Embedded Signup config id present? TikTok / Google keys present?
+ * No secret is ever returned — booleans only. */
+channelsRouter.get('/setup-status', async (_req: AuthRequest, res: Response) => {
+  res.json({
+    metaConfigured: !!config.meta.appId,
+    whatsappConfigIdConfigured: !!config.whatsapp.configId,
+    tiktokConfigured: !!config.tiktok.clientKey && !!config.tiktok.clientSecret,
+    youtubeConfigured: !!config.google.clientId && !!config.google.clientSecret,
+  });
+});
 
 /** POST /api/channels — connect a page/account. Token is stored encrypted. */
 channelsRouter.post('/', async (req: AuthRequest, res: Response) => {

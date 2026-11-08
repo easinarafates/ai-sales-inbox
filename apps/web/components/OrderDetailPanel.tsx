@@ -248,9 +248,13 @@ export default function OrderDetailPanel({
             {COURIER_ORDER.map((name) => {
               const p = providers.find((x) => x.name === name);
               const configured = p?.configured ?? false;
+              // This shop uses only Steadfast + Pathao: Sundarban / RedX
+              // stay visible but muted and honestly "not connected".
+              const notUsed = name === "sundarban" || name === "redx";
               return (
-                <button key={name} disabled={busy} onClick={() => sendToCourier(name)} className="w-full text-left border rounded-lg px-3 py-2 text-sm hover:bg-orange-50 disabled:opacity-50">
+                <button key={name} disabled={busy} onClick={() => sendToCourier(name)} className={`w-full text-left border rounded-lg px-3 py-2 text-sm hover:bg-orange-50 disabled:opacity-50 ${notUsed ? "opacity-60" : ""}`}>
                   <span className="font-medium">{COURIER_LABEL[name] || name}</span>
+                  {notUsed && <span className="text-xs text-slate-400"> {t("orders.courierNotUsed", "(not used)", "(ব্যবহার করা হয় না)")}</span>}
                   <span className={`block text-xs ${configured ? "text-green-700" : "text-slate-500"}`}>
                     {configured
                       ? t("orders.courierReady", "Connected — booking will be made now.", "যুক্ত আছে — এখনই বুকিং হবে।")

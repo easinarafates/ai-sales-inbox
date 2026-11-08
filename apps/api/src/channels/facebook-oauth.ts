@@ -176,7 +176,14 @@ facebookOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response)
  */
 facebookOAuthRouter.get('/callback', async (req: Request, res: Response) => {
   const q = req.query as Record<string, string | undefined>;
-  if (q.error) return webRedirect(res, 'facebook', { facebook: 'error', reason: 'cancelled' });
+  // A denied/cancelled login still carries the state — redirect to the
+  // channel the user was actually connecting (instagram/whatsapp), not
+  // always 'facebook', so the Channels page shows the right card's error.
+  if (q.error) {
+    const cancelled = q.state ? verifyState(q.state) : null;
+    const ch = cancelled?.channel ?? 'facebook';
+    return webRedirect(res, ch, { [ch]: 'error', reason: 'cancelled' });
+  }
   const verified = q.state ? verifyState(q.state) : null;
   if (!verified || !q.code) return webRedirect(res, 'facebook', { facebook: 'error', reason: 'bad_state' });
   if (!config.meta.appId || !config.meta.appSecret) {

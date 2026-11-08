@@ -51,6 +51,9 @@ interface CustomerRow {
   picture_url: string | null;
   picture_source: string | null;
   channel_identities: unknown;
+  /** List endpoint only: real order totals (cancelled/returned excluded) + order count. */
+  total_spent_paisa?: number | string | null;
+  order_count?: number | null;
   created_at: string;
   updated_at: string;
 }
@@ -74,6 +77,17 @@ const BUYERS_ONLY = `EXISTS (SELECT 1 FROM orders o WHERE o.workspace_id = custo
  */
 const NOT_OWNER = `NOT EXISTS (SELECT 1 FROM workspaces w WHERE w.id = customers.workspace_id AND w.owner_psid IS NOT NULL AND customers.primary_identity IN ('messenger:' || w.owner_psid, 'facebook_comment:' || w.owner_psid))`;
 
+/** GET /api/customers?q= — search by name or phone (empty q lists all).
+ * Each row also carries total_spent_paisa (sum of order totals, cancelled /
+ * returned orders excluded — that money was never spent) and order_count,
+ * computed from real orders in one cheap aggregate — no per-row query. */
+const CUSTOMER_ORDER_STATS = `LEFT JOIN (
+    SELECT customer_id, COUNT(*)::int AS order_count,
+           COALESCE(SUM(CASE WHEN status NOT IN ('cancelled', 'returned') THEN total_paisa ELSE 0 END), 0)::bigint AS total_spent_paisa
+    FROM orders WHERE workspace_id = $1 GROUP BY customer_id
+  ) s ON s.customer_id = customers.id`;
+const CUSTOMER_COLUMNS = `id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at, COALESCE(s.total_spent_paisa, 0)::bigint AS total_spent_paisa, COALESCE(s.order_count, 0)::int AS order_count`;
+
 /** GET /api/customers?q= — search by name or phone (empty q lists all). */
 customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -81,7 +95,7 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   if (!q) {
     const { rows } = await query<CustomerRow>(
       workspaceId,
-      `SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers WHERE workspace_id = $1 AND ${BUYERS_ONLY} AND ${NOT_OWNER} ORDER BY created_at DESC LIMIT 200`,
+      `SELECT ${CUSTOMER_COLUMNS} FROM customers ${CUSTOMER_ORDER_STATS} WHERE workspace_id = $1 AND ${BUYERS_ONLY} AND ${NOT_OWNER} ORDER BY created_at DESC LIMIT 200`,
       [workspaceId],
     );
     res.json({ customers: rows });
@@ -90,7 +104,7 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
   const like = `%${q}%`;
   const { rows } = await query<CustomerRow>(
     workspaceId,
-    `SELECT id, name, phone, address, gender, name_manually_set, picture_url, picture_source, channel_identities, created_at, updated_at FROM customers
+    `SELECT ${CUSTOMER_COLUMNS} FROM customers ${CUSTOMER_ORDER_STATS}
      WHERE workspace_id = $1 AND ${BUYERS_ONLY} AND ${NOT_OWNER} AND (name ILIKE $2 OR phone ILIKE $2)
      ORDER BY created_at DESC LIMIT 200`,
     [workspaceId, like],
@@ -100,7 +114,16 @@ customersRouter.get('/customers', async (req: AuthRequest, res: Response) => {
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** GET /api/customers/:id — profile + identities, conversations, orders, notes. */
+/** GET /api/customers/:id — profile + identities, conversations, orders, notes.
+ * Also returns a `summary` computed from REAL order rows only (never
+ * invented amounts) and a `productsOrdered` list (product names +
+ * quantities + amounts, aggregated across the customer's orders):
+ * - totalSpentPaisa: sum of total_paisa over orders that are NOT cancelled
+ *   or returned (that money was never spent); grossTotalPaisa sums all.
+ * - orderCount / deliveredCount / cancelledCount / returnedCount, lastOrderAt.
+ * - Every order carries its `items` (product name + quantity + line price).
+ * A product deleted from the catalogue still shows with its stored line
+ * price and the name "Unknown product" — the amount is never lost. */
 customersRouter.get('/customers/:id', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
   // A non-UUID id (e.g. /customers/merge hitting this route) must be a 400,
@@ -126,7 +149,7 @@ customersRouter.get('/customers/:id', async (req: AuthRequest, res: Response) =>
   );
   const { rows: orders } = await query(
     workspaceId,
-    `SELECT id, conversation_id, source, status, payment_status, total_paisa, created_at FROM orders
+    `SELECT id, order_number, conversation_id, source, status, payment_status, total_paisa, delivery_charge_paisa, created_at FROM orders
      WHERE workspace_id = $1 AND customer_id = $2 ORDER BY created_at DESC LIMIT 100`,
     [workspaceId, req.params.id],
   );
@@ -136,12 +159,81 @@ customersRouter.get('/customers/:id', async (req: AuthRequest, res: Response) =>
      WHERE workspace_id = $1 AND customer_id = $2 ORDER BY created_at DESC LIMIT 100`,
     [workspaceId, req.params.id],
   );
+  // All order items for this customer in one query (real order_items rows
+  // joined to the product name at order time — never invented).
+  const { rows: itemRows } = await query(
+    workspaceId,
+    `SELECT oi.order_id, oi.product_id, p.name AS product_name, oi.quantity, oi.price_paisa
+     FROM order_items oi LEFT JOIN products p ON p.id = oi.product_id AND p.workspace_id = $1
+     WHERE oi.workspace_id = $1 AND oi.order_id IN (SELECT id FROM orders WHERE workspace_id = $1 AND customer_id = $2)`,
+    [workspaceId, req.params.id],
+  );
+  const itemsByOrder = new Map<string, typeof itemRows>();
+  for (const it of itemRows) {
+    const list = itemsByOrder.get(it.order_id as string) ?? [];
+    list.push(it);
+    itemsByOrder.set(it.order_id as string, list);
+  }
+  const ordersWithItems = (orders as unknown as Record<string, unknown>[]).map((o) => ({
+    ...o,
+    items: (itemsByOrder.get(o.id as string) ?? []).map((it) => ({
+      productId: it.product_id ?? null,
+      product_id: it.product_id ?? null,
+      productName: (it.product_name as string | null) ?? null,
+      product_name: (it.product_name as string | null) ?? null,
+      quantity: Number(it.quantity ?? 0),
+      pricePaisa: Number(it.price_paisa ?? 0),
+      price_paisa: Number(it.price_paisa ?? 0),
+    })),
+  }));
+  const orderCount = orders.length;
+  const cancelledCount = orders.filter((o) => o.status === 'cancelled').length;
+  const returnedCount = orders.filter((o) => o.status === 'returned').length;
+  const deliveredCount = orders.filter((o) => o.status === 'delivered').length;
+  const totalSpentPaisa = orders
+    .filter((o) => o.status !== 'cancelled' && o.status !== 'returned')
+    .reduce((sum, o) => sum + Number(o.total_paisa ?? 0), 0);
+  const grossTotalPaisa = orders.reduce((sum, o) => sum + Number(o.total_paisa ?? 0), 0);
+  const lastOrderAt = orders.length > 0 ? (orders[0].created_at as string) : null;
+  // Products ordered, aggregated across all orders (cancelled/returned
+  // orders included here — the list shows WHAT was ordered; the money
+  // summary above is where cancelled/returned are excluded).
+  const byProduct = new Map<string, { productId: string | null; productName: string; quantity: number; amountPaisa: number; orderCount: number; orderIds: Set<string> }>();
+  for (const it of itemRows) {
+    const key = (it.product_id as string | null) ?? `__no_product__:${it.order_id}`;
+    const entry = byProduct.get(key) ?? {
+      productId: (it.product_id as string | null) ?? null,
+      productName: (it.product_name as string | null) ?? 'Unknown product',
+      quantity: 0,
+      amountPaisa: 0,
+      orderCount: 0,
+      orderIds: new Set<string>(),
+    };
+    entry.quantity += Number(it.quantity ?? 0);
+    entry.amountPaisa += Number(it.quantity ?? 0) * Number(it.price_paisa ?? 0);
+    entry.orderIds.add(it.order_id as string);
+    entry.orderCount = entry.orderIds.size;
+    byProduct.set(key, entry);
+  }
+  const productsOrdered = [...byProduct.values()]
+    .map(({ orderIds: _orderIds, ...rest }) => rest)
+    .sort((a, b) => b.amountPaisa - a.amountPaisa);
   res.json({
     customer,
     identities: customer.channel_identities,
     conversations,
-    orders,
+    orders: ordersWithItems,
     notes,
+    summary: {
+      orderCount,
+      deliveredCount,
+      cancelledCount,
+      returnedCount,
+      totalSpentPaisa,
+      grossTotalPaisa,
+      lastOrderAt,
+    },
+    productsOrdered,
   });
 });
 

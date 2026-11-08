@@ -10,9 +10,12 @@ import {
 } from "@/lib/api";
 import {
   courierApi,
+  courierCredentialsApi,
   deliveryChargesApi,
   shipmentOrderId,
   shipmentTrackingNumber,
+  type CredentialProviderStatus,
+  type CredentialVerifyResult,
   type CourierProviderInfo,
   type DeliveryChargeRule,
   type Shipment,
@@ -53,6 +56,15 @@ export default function CourierPage() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [shipments, setShipments] = useState<Shipment[]>([]);
   const [providerInfo, setProviderInfo] = useState<CourierProviderInfo | null>(null);
+  // Courier API keys (migration 32) — Steadfast + Pathao only. Values are
+  // never read back from the API (masked hasSet flags only); the inputs
+  // below hold what the owner types until saved.
+  const [credStatus, setCredStatus] = useState<CredentialProviderStatus[] | null>(null);
+  const [credForbidden, setCredForbidden] = useState(false);
+  const [credValues, setCredValues] = useState<Record<string, Record<string, string>>>({});
+  const [savingCred, setSavingCred] = useState("");
+  const [verifyingCred, setVerifyingCred] = useState("");
+  const [verifyResults, setVerifyResults] = useState<Record<string, CredentialVerifyResult>>({});
   const [checking, setChecking] = useState(false);
   const [selectedOrderId, setSelectedOrderId] = useState("");
   const [trackingInput, setTrackingInput] = useState("");
@@ -79,22 +91,72 @@ export default function CourierPage() {
 
   const load = useCallback(async () => {
     try {
-      const [orderData, shipmentData, providerData, chargeData] = await Promise.all([
+      const [orderData, shipmentData, providerData, chargeData, credData] = await Promise.all([
         ordersApi.list(),
         courierApi.listShipments(),
         courierApi.providerInfo().catch(() => null),
         deliveryChargesApi.list().catch(() => null),
+        courierCredentialsApi.list().catch((err: unknown) => {
+          if (err instanceof Error && /403/.test(err.message)) setCredForbidden(true);
+          return null;
+        }),
       ]);
       setOrders(asArray(orderData));
       setShipments(shipmentData);
       if (providerData) setProviderInfo(providerData);
       if (chargeData) applyChargeRules(chargeData.rules || []);
+      if (credData) setCredStatus(credData.providers || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("courier.loadFailed", "Could not load courier information.", "কুরিয়ার তথ্য লোড করা যায়নি।"));
     } finally {
       setLoading(false);
     }
   }, [t]);
+
+  const setCredField = (provider: string, key: string, value: string) => {
+    setCredValues((prev) => ({ ...prev, [provider]: { ...(prev[provider] ?? {}), [key]: value } }));
+  };
+
+  const saveCreds = async (provider: "steadfast" | "pathao") => {
+    setError("");
+    setNotice("");
+    setSavingCred(provider);
+    try {
+      const res = await courierCredentialsApi.save(provider, credValues[provider] ?? {});
+      setCredStatus((prev) => (prev ? prev.map((p) => (p.provider === provider ? res.status : p)) : [res.status]));
+      setCredValues((prev) => ({ ...prev, [provider]: {} }));
+      setNotice(t("courier.keysSaved", "API keys saved. Press Verify to check the connection (read-only — no booking is made).", "API চাবি সংরক্ষণ করা হয়েছে। সংযোগ যাচাই করতে Verify চাপুন (শুধু দেখা হবে — কোনো বুকিং হবে না)।"));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("courier.keysSaveFailed", "Could not save the API keys.", "API চাবি সংরক্ষণ করা যায়নি।"));
+    } finally {
+      setSavingCred("");
+    }
+  };
+
+  const verifyCreds = async (provider: "steadfast" | "pathao") => {
+    setError("");
+    setNotice("");
+    setVerifyingCred(provider);
+    try {
+      const res = await courierCredentialsApi.verify(provider);
+      setVerifyResults((prev) => ({ ...prev, [provider]: res }));
+      if (res.connected) {
+        setNotice(
+          provider === "steadfast"
+            ? t("courier.steadfastVerified", "Steadfast is connected — balance check passed (read-only, no booking made).", "Steadfast যুক্ত হয়েছে — ব্যালেন্স দেখা গেছে (শুধু দেখা হয়েছে, কোনো বুকিং হয়নি)।")
+            : t("courier.pathaoVerified", "Pathao is connected — login and store list check passed (read-only, no booking made).", "Pathao যুক্ত হয়েছে — লগইন ও স্টোরের তালিকা দেখা গেছে (শুধু দেখা হয়েছে, কোনো বুকিং হয়নি)।")
+        );
+        await load();
+      } else {
+        setError(res.reason || t("courier.verifyFailed", "Connection check failed.", "সংযোগ যাচাই ব্যর্থ হয়েছে।"));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("courier.verifyFailed", "Connection check failed.", "সংযোগ যাচাই ব্যর্থ হয়েছে।"));
+    } finally {
+      setVerifyingCred("");
+    }
+  };
 
   const applyChargeRules = (rules: DeliveryChargeRule[]) => {
     const inside = rules.find((r) => r.scope === "inside_dhaka");
@@ -230,29 +292,137 @@ export default function CourierPage() {
         </p>
         {providerInfo && (
           <ul className="text-sm text-slate-600 space-y-1">
-            {providerInfo.providers.map((p) => (
+            {providerInfo.providers.filter((p) => p.name === "steadfast" || p.name === "pathao").map((p) => (
               <li key={p.name}>
-                <span className="font-medium">{p.name === "steadfast" ? "Steadfast" : p.name === "pathao" ? "Pathao" : p.name === "redx" ? "RedX" : t("courier.stubName", "Local only (stub)", "শুধু লোকাল (স্টাব)")}</span>
+                <span className="font-medium">{p.name === "steadfast" ? "Steadfast" : "Pathao"}</span>
                 {" — "}
                 {p.selected ? t("courier.selected", "selected", "নির্বাচিত") + " • " : ""}
                 {p.configured
                   ? t("courier.connected", "connected", "যুক্ত আছে")
-                  : p.name === "stub"
-                    ? t("courier.stubDesc", "saves bookings locally only, no tracking number", "শুধু লোকালভাবে বুকিং সংরক্ষণ করে, ট্র্যাকিং নম্বর দেয় না")
-                    : t("courier.needsKeys", "keys needed", "চাবি লাগবে") + ` (${p.needs})`}
+                  : t("courier.needsKeys", "keys needed", "চাবি লাগবে") + ` (${p.needs})`}
               </li>
             ))}
+            <li className="text-xs text-slate-400">
+              {t("courier.othersNotUsed", "RedX / Sundarban — not connected and not used (this shop uses only Steadfast and Pathao).", "RedX / সুন্দরবন — যুক্ত হয়নি এবং ব্যবহার করা হয় না (এই শপ শুধু Steadfast ও Pathao ব্যবহার করে)।")}
+            </li>
           </ul>
         )}
         <p className="text-xs text-slate-500 mt-2">
-          {t("courier.providerNote", "All four options stay available — the provider is chosen in the server settings (COURIER_PROVIDER). Real booking and live tracking need that provider's merchant API key.", "চারটি অপশনই থাকবে — প্রোভাইডার সার্ভার সেটিংসে (COURIER_PROVIDER) বেছে নেওয়া হয়। আসল বুকিং ও লাইভ ট্র্যাকিং পেতে সেই প্রোভাইডারের মার্চেন্ট API চাবি লাগবে।")}
+          {t("courier.providerNote", "This shop uses only Steadfast and Pathao. Enter their merchant API keys below — real booking and live tracking need the keys, and the connection is checked read-only (no test booking).", "এই শপ শুধু Steadfast ও Pathao ব্যবহার করে। নিচে তাদের মার্চেন্ট API চাবি বসান — আসল বুকিং ও লাইভ ট্র্যাকিং পেতে চাবি লাগবে, আর সংযোগ শুধু দেখে যাচাই করা হয় (কোনো টেস্ট বুকিং হয় না)।")}
         </p>
         {providerInfo && !providerInfo.configured && (
           <p className="text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-lg p-3 mt-3">
-            {t("courier.notConnectedBody", "Booking now will only save the request — no tracking number will come. To get real booking and live tracking you need a Pathao / Steadfast / RedX merchant API key.", "এখন বুকিং করলে শুধু অনুরোধটি সংরক্ষণ হবে — ট্র্যাকিং নম্বর আসবে না। আসল বুকিং ও লাইভ ট্র্যাকিং পেতে Pathao / Steadfast / RedX-এর মার্চেন্ট API চাবি লাগবে।")}
+            {t("courier.notConnectedBody", "Booking now will only save the request — no tracking number will come. To get real booking and live tracking, enter the Steadfast or Pathao API keys below.", "এখন বুকিং করলে শুধু অনুরোধটি সংরক্ষণ হবে — ট্র্যাকিং নম্বর আসবে না। আসল বুকিং ও লাইভ ট্র্যাকিং পেতে নিচে Steadfast বা Pathao-এর API চাবি বসান।")}
           </p>
         )}
       </div>
+
+      {/* Courier API keys — Steadfast + Pathao only (migration 32).
+          Keys are saved encrypted and never shown back; Verify does a
+          READ-ONLY check (Steadfast balance / Pathao store list) — never
+          a test booking (Steadfast has no sandbox). */}
+      {credForbidden ? (
+        <div className="card p-4 mb-6">
+          <p className="text-sm text-slate-600">{t("courier.keysOwnerOnly", "Only the workspace owner can see or change courier API keys.", "শুধু ওয়ার্কস্পেসের মালিকই কুরিয়ার API চাবি দেখতে বা বদলাতে পারবেন।")}</p>
+        </div>
+      ) : credStatus && (
+        <div className="card p-4 mb-6">
+          <p className="font-bold mb-1">{t("courier.keysTitle", "Courier API keys", "কুরিয়ার API চাবি")}</p>
+          <p className="text-xs text-slate-500 mb-4">
+            {t("courier.keysNote", "Enter the merchant API keys once — they are stored encrypted and never shown back. Verify only reads (balance / store list); it never books a parcel. Until keys are verified, the provider honestly shows “not connected”.", "মার্চেন্ট API চাবি একবার বসান — এগুলো এনক্রিপ্ট করে রাখা হয়, আর কখনো দেখানো হয় না। Verify শুধু দেখে যাচাই করে (ব্যালেন্স / স্টোরের তালিকা); কোনো পার্সেল বুক হয় না। চাবি যাচাই না হওয়া পর্যন্ত প্রোভাইডার সত্যিভাবে “যুক্ত হয়নি” দেখাবে।")}
+          </p>
+          {credStatus.map((status) => {
+            const provider = status.provider;
+            const label = provider === "steadfast" ? "Steadfast" : "Pathao";
+            const values = credValues[provider] ?? {};
+            const result = verifyResults[provider];
+            return (
+              <div key={provider} className="border rounded-xl p-4 mb-4 last:mb-0">
+                <div className="flex flex-wrap items-center gap-2 mb-1">
+                  <p className="font-bold">{label}</p>
+                  {status.verified ? (
+                    <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded-full">{t("courier.verifiedBadge", "✓ Connected (verified)", "✓ যুক্ত আছে (যাচাই হয়েছে)")}</span>
+                  ) : status.hasKeys ? (
+                    <span className="text-xs bg-amber-100 text-amber-800 px-2 py-0.5 rounded-full">{t("courier.keysSavedBadge", "Keys saved — not verified yet", "চাবি সংরক্ষণ হয়েছে — এখনো যাচাই হয়নি")}</span>
+                  ) : (
+                    <span className="text-xs bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full">{t("courier.keysNeededBadge", "Keys needed — not connected", "চাবি লাগবে — যুক্ত হয়নি")}</span>
+                  )}
+                  {status.source === "env" && (
+                    <span className="text-xs text-slate-500">{t("courier.fromEnv", "(keys from server settings)", "(চাবি সার্ভার সেটিংস থেকে)")}</span>
+                  )}
+                </div>
+                {provider === "steadfast" && (
+                  <p className="text-xs text-slate-500 mb-3">{t("courier.steadfastWhere", "Get the keys from the Steadfast merchant panel: portal.packzy.com → API (Api-Key + Secret-Key).", "চাবি পাবেন Steadfast মার্চেন্ট প্যানেলে: portal.packzy.com → API (Api-Key + Secret-Key)।")}</p>
+                )}
+                {provider === "pathao" && (
+                  <p className="text-xs text-slate-500 mb-3">{t("courier.pathaoWhere", "Get the keys from the Pathao merchant panel (merchant.pathao.com → Merchant API Credentials): Client ID + Client Secret, plus your merchant login email and password. The Store ID comes from the Verify check below.", "চাবি পাবেন Pathao মার্চেন্ট প্যানেলে (merchant.pathao.com → Merchant API Credentials): Client ID + Client Secret, আর আপনার মার্চেন্ট লগইন ইমেইল ও পাসওয়ার্ড। স্টোর ID নিচের Verify থেকে পাবেন।")}</p>
+                )}
+                <div className="space-y-2">
+                  {status.fields.map((f) => (
+                    <div key={f.key}>
+                      <label className="block text-sm font-medium mb-1">
+                        {f.labelBn || f.label}
+                        {f.required ? " *" : ""}
+                        {f.hasSet && <span className="text-xs text-green-700 font-normal"> {t("courier.fieldSaved", "(saved)", "(সংরক্ষিত)")}</span>}
+                      </label>
+                      <input
+                        type={f.type}
+                        value={values[f.key] ?? ""}
+                        onChange={(e) => setCredField(provider, f.key, e.target.value)}
+                        placeholder={f.hasSet ? t("courier.fieldSavedPlaceholder", "Saved — leave empty to keep, type to replace", "সংরক্ষিত আছে — রাখতে খালি রাখুন, বদলাতে লিখুন") : f.label}
+                        autoComplete="off"
+                        className="w-full max-w-md border rounded-lg px-3 py-2"
+                      />
+                      {(f.helpBn || f.help) && <p className="text-xs text-slate-400 mt-0.5">{f.helpBn || f.help}</p>}
+                    </div>
+                  ))}
+                </div>
+                {result && result.connected && provider === "pathao" && result.stores && result.stores.length > 0 && !result.storeIdSet && (
+                  <div className="mt-3">
+                    <label className="block text-sm font-medium mb-1">{t("courier.pickStore", "Pick your store (pickup location)", "আপনার স্টোর বেছে নিন (পিকআপের জায়গা)")}</label>
+                    <select
+                      value={values.storeId ?? ""}
+                      onChange={(e) => setCredField(provider, "storeId", e.target.value)}
+                      className="w-full max-w-md border rounded-lg px-3 py-2 bg-white"
+                    >
+                      <option value="">{t("courier.pickStorePlaceholder", "— Pick a store —", "— স্টোর বেছে নিন —")}</option>
+                      {result.stores.filter((s) => s.isActive).map((s) => (
+                        <option key={s.storeId} value={String(s.storeId)}>{s.storeName}{s.isDefault ? " (default)" : ""}</option>
+                      ))}
+                    </select>
+                    <p className="text-xs text-slate-500 mt-1">{t("courier.pickStoreNote", "After picking, press Save keys — booking needs the store.", "বেছে নিয়ে “Save keys” চাপুন — বুকিং করতে স্টোর লাগবে।")}</p>
+                  </div>
+                )}
+                {result && result.connected && provider === "steadfast" && typeof result.currentBalance === "number" && (
+                  <p className="text-sm text-green-800 bg-green-50 rounded-lg p-2 mt-3">
+                    {t("courier.balanceIs", "Steadfast balance:", "Steadfast ব্যালেন্স:")} ৳{result.currentBalance}
+                  </p>
+                )}
+                {result && !result.connected && result.reason && (
+                  <p className="text-sm text-red-700 bg-red-50 rounded-lg p-2 mt-3">{result.reason}</p>
+                )}
+                <div className="flex flex-wrap gap-2 mt-3">
+                  <button
+                    onClick={() => saveCreds(provider)}
+                    disabled={savingCred === provider}
+                    className="bg-brand text-white px-5 py-2 rounded-lg hover:bg-brand-dark disabled:opacity-50"
+                  >
+                    {savingCred === provider ? t("courier.saving", "Saving…", "সংরক্ষণ হচ্ছে…") : t("courier.saveKeys", "Save keys", "চাবি সংরক্ষণ করুন")}
+                  </button>
+                  <button
+                    onClick={() => verifyCreds(provider)}
+                    disabled={verifyingCred === provider || !status.hasKeys}
+                    title={!status.hasKeys ? t("courier.verifyNeedsKeys", "Save the keys first.", "আগে চাবি সংরক্ষণ করুন।") : ""}
+                    className="bg-green-600 text-white px-5 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {verifyingCred === provider ? t("courier.verifying", "Verifying…", "যাচাই হচ্ছে…") : t("courier.verifyButton", "Verify (read-only)", "যাচাই করুন (শুধু দেখা হবে)")}
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
 
       {/* Delivery charges (owner settings — requirement C). The AI quotes
           these charges and the order total (COD) uses them. Defaults:

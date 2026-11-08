@@ -27,6 +27,7 @@
  */
 import { pool, query, queryOne } from '../db/pool';
 import { SteadfastCourierProvider } from './provider';
+import { providerForWorkspace } from './credentials';
 import { deliverOutgoingMessage } from '../channels/meta-send';
 
 /** Terminal statuses — Steadfast will not change them again; stop checking. */
@@ -159,8 +160,11 @@ export async function processDueShipmentChecks(workspaceId?: string): Promise<Sh
     total.failed += r.failed;
     total.errors.push(...r.errors);
   };
-  const provider = new SteadfastCourierProvider();
+  // Each workspace's shipments are checked with THAT workspace's stored
+  // Steadfast keys (DB first, env fallback) — keys entered in the UI are
+  // actually used here, not just at booking time.
   if (workspaceId) {
+    const provider = (await providerForWorkspace(workspaceId, 'steadfast')) as SteadfastCourierProvider;
     merge(await processDueForWorkspace(workspaceId, provider));
     return total;
   }
@@ -171,6 +175,7 @@ export async function processDueShipmentChecks(workspaceId?: string): Promise<Sh
   );
   for (const { workspace_id } of workspaces) {
     try {
+      const provider = (await providerForWorkspace(workspace_id, 'steadfast')) as SteadfastCourierProvider;
       merge(await processDueForWorkspace(workspace_id, provider));
     } catch (err) {
       total.failed += 1;

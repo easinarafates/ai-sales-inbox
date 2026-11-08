@@ -157,6 +157,54 @@ export const config = {
    * TikTok posts are never published.
    */
   whatsappApproved: process.env.WHATSAPP_APPROVED === 'true',
+  /**
+   * WhatsApp Embedded Signup config id (Meta app → WhatsApp → Embedded
+   * Signup). A plain Facebook Login with the whatsapp_* scopes does NOT
+   * create a WhatsApp Business account or phone number — without this
+   * config_id Meta just logs the user in and /me/whatsapp_business_accounts
+   * comes back empty for anyone who has no WABA yet (the "login shows but
+   * nothing connects" bug). With the id, the dialog runs the Embedded
+   * Signup flow (create/use a WABA + pick a number). If unset, the login
+   * still works for accounts that already have a WABA, and the manual
+   * Cloud API connect (POST /api/channels/whatsapp/manual) is the
+   * fallback. Never a secret — it is a public config id, not a token.
+   */
+  whatsapp: {
+    configId: process.env.WHATSAPP_CONFIG_ID ?? process.env.META_WHATSAPP_CONFIG_ID ?? '',
+  },
+  /**
+   * TikTok Login Kit (TikTok for Developers). Client key/secret come from
+   * env only — never hardcoded. If either is missing, GET
+   * /api/channels/tiktok/login answers 503 with a Bengali message saying
+   * what the owner must provide; no fake "connected" state is ever shown.
+   * TIKTOK_OAUTH_REDIRECT_URI must be registered in the TikTok app
+   * (Login Kit → Redirect URIs). The *_BASE_URL overrides exist only so
+   * the offline verifier can point at a stub server; production always
+   * uses tiktok.com / open.tiktokapis.com.
+   */
+  tiktok: {
+    clientKey: process.env.TIKTOK_CLIENT_KEY ?? '',
+    clientSecret: process.env.TIKTOK_CLIENT_SECRET ?? '',
+    redirectUri: process.env.TIKTOK_OAUTH_REDIRECT_URI ?? 'http://localhost:4000/api/channels/tiktok/callback',
+    apiBaseUrl: optional('TIKTOK_API_BASE_URL', 'https://open.tiktokapis.com'),
+    authBaseUrl: optional('TIKTOK_AUTH_BASE_URL', 'https://www.tiktok.com'),
+  },
+  /**
+   * Google OAuth for YouTube (YouTube Data API v3, readonly). Client
+   * id/secret come from env only — never hardcoded. If either is missing,
+   * GET /api/channels/youtube/login answers 503 with a Bengali message.
+   * GOOGLE_OAUTH_REDIRECT_URI must be added in the Google Cloud console
+   * (APIs & Services → Credentials → OAuth client → Authorized redirect
+   * URIs). The token/API URL overrides exist only for the offline
+   * verifier's stub server; production uses googleapis.com.
+   */
+  google: {
+    clientId: process.env.GOOGLE_CLIENT_ID ?? '',
+    clientSecret: process.env.GOOGLE_CLIENT_SECRET ?? '',
+    redirectUri: process.env.GOOGLE_OAUTH_REDIRECT_URI ?? 'http://localhost:4000/api/channels/youtube/callback',
+    tokenUrl: optional('GOOGLE_OAUTH_TOKEN_URL', 'https://oauth2.googleapis.com/token'),
+    apiBaseUrl: optional('GOOGLE_API_BASE_URL', 'https://www.googleapis.com'),
+  },
   tiktokCommentsApproved: process.env.TIKTOK_COMMENTS_APPROVED === 'true',
   tiktokSchedulingAudited: process.env.TIKTOK_SCHEDULING_AUDITED === 'true',
   whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN ?? '',
@@ -192,6 +240,10 @@ export const config = {
       clientSecret: process.env.PATHAO_CLIENT_SECRET ?? '',
       username: process.env.PATHAO_USERNAME ?? '',
       password: process.env.PATHAO_PASSWORD ?? '',
+      /** Merchant store id (pickup location) — the Courier page's verify
+       * check lists the merchant's stores; env fallback for shops that
+       * already set it. DB-stored credentials win over env (migration 32). */
+      storeId: process.env.PATHAO_STORE_ID ?? '',
     },
     steadfast: {
       // Official Steadfast API base (docs: portal.packzy.com/api/v1).

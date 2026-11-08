@@ -31,6 +31,15 @@ import { checkChannelLimit } from '../subscriptions/service';
 
 export const GRAPH_VERSION = 'v21.0';
 export const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
+/**
+ * Graph base for Meta calls. META_GRAPH_BASE_URL overrides it for
+ * offline testing only (same rule as meta-send.ts's sendGraphBase);
+ * production always uses graph.facebook.com.
+ */
+export function graphBase(): string {
+  const override = (process.env.META_GRAPH_BASE_URL ?? '').replace(/\/$/, '');
+  return override || GRAPH_BASE;
+}
 export const DIALOG_BASE = `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`;
 export const STATE_TTL = '10m';
 export const SESSION_TTL = '10m';
@@ -43,7 +52,7 @@ export const SESSION_TTL = '10m';
  */
 export const PAGE_TOKEN_TTL_MS = 59 * 24 * 60 * 60 * 1000;
 
-export type OAuthChannel = 'facebook' | 'instagram' | 'whatsapp';
+export type OAuthChannel = 'facebook' | 'instagram' | 'whatsapp' | 'tiktok' | 'youtube';
 
 /** One Page as returned by /me/accounts (token included server-side). */
 export interface FbPickPage {
@@ -104,8 +113,12 @@ export function webRedirect(res: Response, channel: OAuthChannel, params: Record
  * The Channels page passes reauthenticate only from its explicit
  * "Use a different Facebook account" action, so a normal connect stays
  * one click and does not ask for a password every time.
+ *
+ * `configId` is the WhatsApp Embedded Signup config id: without it the
+ * dialog is a plain Facebook Login and Meta never creates/lists a
+ * WhatsApp Business account (see config.whatsapp.configId).
  */
-export function loginUrl(scopes: string[], state: string, opts?: { reauthenticate?: boolean }): string {
+export function loginUrl(scopes: string[], state: string, opts?: { reauthenticate?: boolean; configId?: string }): string {
   const url = new URL(DIALOG_BASE);
   url.searchParams.set('client_id', config.meta.appId);
   url.searchParams.set('redirect_uri', config.meta.oauthRedirectUri);
@@ -113,6 +126,7 @@ export function loginUrl(scopes: string[], state: string, opts?: { reauthenticat
   url.searchParams.set('scope', scopes.join(','));
   url.searchParams.set('response_type', 'code');
   if (opts?.reauthenticate) url.searchParams.set('auth_type', 'reauthenticate');
+  if (opts?.configId) url.searchParams.set('config_id', opts.configId);
   return url.toString();
 }
 
@@ -155,7 +169,7 @@ export function verifySession(token: string, purpose: string): Record<string, un
 
 /** Meta Graph call. Tokens are sent in a POST body / Bearer header, never in a URL. */
 export async function graphFetch(path: string, init: RequestInit): Promise<Record<string, unknown>> {
-  const res = await fetchWithTimeout(`${GRAPH_BASE}${path}`, init);
+  const res = await fetchWithTimeout(`${graphBase()}${path}`, init);
   const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
   if (!res.ok) {
     throw new Error(`Meta Graph ${path} failed (${res.status})${data?.error?.message ? `: ${data.error.message}` : ''}`);
@@ -205,7 +219,7 @@ export async function exchangeForLongLived(shortToken: string): Promise<string> 
  */
 export async function fetchMeName(longLivedToken: string): Promise<string> {
   try {
-    const res = await fetchWithTimeout(`${GRAPH_BASE}/me?fields=name`, {
+    const res = await fetchWithTimeout(`${graphBase()}/me?fields=name`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${longLivedToken}` },
     });
@@ -225,7 +239,7 @@ export async function fetchMeName(longLivedToken: string): Promise<string> {
  */
 export async function fetchMeId(longLivedToken: string): Promise<string> {
   try {
-    const res = await fetchWithTimeout(`${GRAPH_BASE}/me?fields=id`, {
+    const res = await fetchWithTimeout(`${graphBase()}/me?fields=id`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${longLivedToken}` },
     });
@@ -238,7 +252,7 @@ export async function fetchMeId(longLivedToken: string): Promise<string> {
 }
 
 export async function fetchPages(longLivedToken: string): Promise<FbPickPage[]> {
-  const url = new URL(`${GRAPH_BASE}/me/accounts`);
+  const url = new URL(`${graphBase()}/me/accounts`);
   url.searchParams.set('fields', 'id,name,category,picture{url},access_token');
   const res = await fetchWithTimeout(url.toString(), {
     method: 'GET',
@@ -366,9 +380,19 @@ export async function createOAuthChannel(
      */
     userToken?: string | null;
     connectedByUserId?: string | null;
+    /**
+     * Refresh token (migration 33, encrypted) — TikTok (~24h access
+     * tokens) and YouTube (~1h) only. A reconnect without one keeps the
+     * stored value (COALESCE), so a re-login that returns no refresh
+     * token never wipes the good one.
+     */
+    refreshToken?: string | null;
+    /** Absolute token expiry (ISO). Defaults to now + 59 days (Meta). */
+    expiresAt?: string | null;
   },
 ): Promise<CreateResult> {
-  const expiresAt = new Date(Date.now() + PAGE_TOKEN_TTL_MS).toISOString();
+  const expiresAt = input.expiresAt ?? new Date(Date.now() + PAGE_TOKEN_TTL_MS).toISOString();
+  const refreshTokenEncrypted = input.refreshToken ? encryptToken(input.refreshToken) : null;
   const userTokenEncrypted = input.userToken ? encryptToken(input.userToken) : null;
   const connectedByUserId = input.connectedByUserId || null;
   const dupe = await query(
@@ -389,7 +413,8 @@ export async function createOAuthChannel(
        SET token_encrypted = $1, user_token_encrypted = COALESCE($2, user_token_encrypted),
            connected_by_user_id = COALESCE($3, connected_by_user_id),
            display_name = $4, picture_url = COALESCE($5, picture_url),
-           source_id = COALESCE($6, source_id), token_expires_at = $7, status = 'connected'
+           source_id = COALESCE($6, source_id), token_expires_at = $7, status = 'connected',
+           refresh_token_encrypted = COALESCE($11, refresh_token_encrypted)
        WHERE workspace_id = $8 AND platform = $9 AND external_id = $10
        RETURNING id, platform, external_id, display_name, status, token_expires_at, picture_url, source_id, created_at`,
       [
@@ -403,6 +428,7 @@ export async function createOAuthChannel(
         workspaceId,
         input.platform,
         input.externalId,
+        refreshTokenEncrypted,
       ],
     );
     rows = updated.rows;
@@ -416,8 +442,8 @@ export async function createOAuthChannel(
     }
     const inserted = await query<ChannelRow>(
       workspaceId,
-      `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id)
-     VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8, $9, $10)
+      `INSERT INTO channels (workspace_id, platform, external_id, display_name, token_encrypted, status, token_expires_at, picture_url, source_id, user_token_encrypted, connected_by_user_id, refresh_token_encrypted)
+     VALUES ($1, $2, $3, $4, $5, 'connected', $6, $7, $8, $9, $10, $11)
      RETURNING id, platform, external_id, display_name, status, token_expires_at, picture_url, source_id, created_at`,
       [
         workspaceId,
@@ -430,6 +456,7 @@ export async function createOAuthChannel(
         input.sourceId || null,
         userTokenEncrypted,
         connectedByUserId,
+        refreshTokenEncrypted,
       ],
     );
     rows = inserted.rows;

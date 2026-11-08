@@ -9,7 +9,9 @@ import { billingRouter } from './billing/routes';
 import { channelsRouter } from './channels/routes';
 import { facebookOAuthRouter } from './channels/facebook-oauth';
 import { instagramOAuthRouter } from './channels/instagram-oauth';
+import { tiktokOAuthRouter } from './channels/tiktok-oauth';
 import { whatsappOAuthRouter } from './channels/whatsapp-oauth';
+import { youtubeOAuthRouter } from './channels/youtube-oauth';
 import { inboxRouter } from './inbox/routes';
 import { knowledgeRouter } from './knowledge/routes';
 import { ordersRouter } from './orders/routes';
@@ -116,7 +118,9 @@ app.use('/api/workspaces', workspacesRouter); // POST /api/workspaces/:id/go-liv
 // lets everything else fall through to the channels router.
 app.use('/api/channels/facebook', facebookOAuthRouter); // /api/channels/facebook/{login,callback,pages,connect}
 app.use('/api/channels/instagram', instagramOAuthRouter); // /api/channels/instagram/{login,pages,connect} (callback is the shared /facebook/callback)
-app.use('/api/channels/whatsapp', whatsappOAuthRouter); // /api/channels/whatsapp/{login,accounts,connect} (callback is the shared /facebook/callback)
+app.use('/api/channels/whatsapp', whatsappOAuthRouter); // /api/channels/whatsapp/{login,accounts,connect,manual} (callback is the shared /facebook/callback)
+app.use('/api/channels/tiktok', tiktokOAuthRouter); // /api/channels/tiktok/{login,callback} (own TikTok callback)
+app.use('/api/channels/youtube', youtubeOAuthRouter); // /api/channels/youtube/{login,callback} (own Google callback)
 app.use('/api/channels', channelsRouter);
 app.use('/api/inbox', inboxRouter);
 app.use('/api/products', productsRouter);

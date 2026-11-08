@@ -27,6 +27,7 @@ const PLATFORM_KEYS: Record<string, string> = {
   whatsapp: "channels.platformWhatsapp",
   tiktok: "channels.platformTiktok",
   tiktok_dm: "channels.platformTiktok",
+  youtube: "channels.platformYoutube",
 };
 const PLATFORM_FALLBACK: Record<string, [string, string]> = {
   messenger: ["Facebook Page", "Facebook পেজ"],
@@ -51,9 +52,12 @@ const MANUAL_OPTIONS: { value: string; api: string }[] = [
 
 // One connect card per channel. Facebook, Instagram and WhatsApp connect
 // through the same Meta app (separate login endpoints, own scopes);
-// TikTok and YouTube are shown as coming soon — no fake connect flow.
-type OAuthKind = "facebook" | "instagram" | "whatsapp";
-const OAUTH_KINDS: OAuthKind[] = ["facebook", "instagram", "whatsapp"];
+// TikTok connects through TikTok Login Kit and YouTube through Google
+// OAuth — all five are real flows; a missing app key shows a Bengali
+// "not set up yet" message, never a fake connected state.
+type OAuthKind = "facebook" | "instagram" | "whatsapp" | "tiktok" | "youtube";
+const OAUTH_KINDS: OAuthKind[] = ["facebook", "instagram", "whatsapp", "tiktok", "youtube"];
+const META_KINDS: OAuthKind[] = ["facebook", "instagram", "whatsapp"];
 const OAUTH_CARDS: Record<OAuthKind, { title: string; desc: string; button: string; opening: string; color: string; platforms: string[] }> = {
   facebook: {
     title: "channels.facebookTitle",
@@ -79,11 +83,23 @@ const OAUTH_CARDS: Record<OAuthKind, { title: string; desc: string; button: stri
     color: "#128C7E",
     platforms: ["whatsapp"],
   },
+  tiktok: {
+    title: "channels.tiktokTitle",
+    desc: "channels.tiktokDesc",
+    button: "channels.tiktokButton",
+    opening: "channels.tiktokOpening",
+    color: "#000000",
+    platforms: ["tiktok", "tiktok_dm"],
+  },
+  youtube: {
+    title: "channels.youtubeTitle",
+    desc: "channels.youtubeDesc",
+    button: "channels.youtubeButton",
+    opening: "channels.youtubeOpening",
+    color: "#FF0000",
+    platforms: ["youtube"],
+  },
 };
-const SOON_CARDS: { key: string; title: string; desc: string }[] = [
-  { key: "tiktok", title: "channels.tiktokTitle", desc: "channels.tiktokDesc" },
-  { key: "youtube", title: "channels.youtubeTitle", desc: "channels.youtubeDesc" },
-];
 
 export default function ChannelsPage() {
   const router = useRouter();
@@ -97,8 +113,14 @@ export default function ChannelsPage() {
   const [displayName, setDisplayName] = useState("");
   const [token, setToken] = useState("");
   const [notice, setNotice] = useState("");
-  // Meta OAuth flows (Facebook / Instagram / WhatsApp).
+  // Meta OAuth flows (Facebook / Instagram / WhatsApp) + TikTok / YouTube.
   const [oauthBusy, setOauthBusy] = useState<OAuthKind | "">("");
+  const [setupStatus, setSetupStatus] = useState<{ metaConfigured: boolean; whatsappConfigIdConfigured: boolean; tiktokConfigured: boolean; youtubeConfigured: boolean } | null>(null);
+  // WhatsApp manual Cloud API connect (verified phone-number ID + token).
+  const [waManualPhoneId, setWaManualPhoneId] = useState("");
+  const [waManualToken, setWaManualToken] = useState("");
+  const [waManualWabaId, setWaManualWabaId] = useState("");
+  const [waManualBusy, setWaManualBusy] = useState(false);
   const [picker, setPicker] = useState<{ kind: OAuthKind; session: string; account: string } | null>(null);
   const [pickItems, setPickItems] = useState<FacebookPage[] | InstagramPage[] | WhatsappAccount[] | null>(null);
   const [connectingId, setConnectingId] = useState("");
@@ -118,7 +140,19 @@ export default function ChannelsPage() {
       case "cancelled":
         return t("channels.oauthErrorCancelled", "Login was cancelled.", "লগইন বাতিল করা হয়েছে।");
       case "config":
+        if (kind === "tiktok") {
+          return t("channels.tiktokSetupNeeded", "TikTok is not set up yet — the owner must add the TikTok app's Client Key and Client Secret first (developers.tiktok.com → create an app, turn on Login Kit).", "TikTok এখনো সেটআপ হয়নি — মালিককে প্রথমে TikTok অ্যাপের Client Key আর Client Secret দিতে হবে (developers.tiktok.com-এ গিয়ে অ্যাপ বানিয়ে Login Kit চালু করুন)।");
+        }
+        if (kind === "youtube") {
+          return t("channels.youtubeSetupNeeded", "YouTube is not set up yet — the owner must add the Google OAuth Client ID and Client Secret first (Google Cloud Console → OAuth client, YouTube Data API v3 on).", "YouTube এখনো সেটআপ হয়নি — মালিককে প্রথমে Google OAuth-এর Client ID আর Client Secret দিতে হবে (Google Cloud Console-এ OAuth ক্লায়েন্ট বানিয়ে YouTube Data API v3 চালু করুন)।");
+        }
         return t("channels.oauthErrorConfig", "Login is not set up yet — the Meta app has not been connected. Please contact the platform owner.", "লগইন এখনো সেটআপ হয়নি — Meta অ্যাপ যুক্ত করা হয়নি। মালিকের সাথে যোগাযোগ করুন।");
+      case "verify_failed":
+        return t("channels.oauthErrorVerifyFailed", "The account was found, but its profile could not be read — please try again.", "অ্যাকাউন্টটি পাওয়া গেছে, কিন্তু প্রোফাইলটি পড়া যায়নি — আবার চেষ্টা করুন।");
+      case "exchange_failed":
+        return t("channels.oauthErrorExchangeFailed", "The login could not be finished — please try again.", "লগইন শেষ করা যায়নি — আবার চেষ্টা করুন।");
+      case "ig_verify_failed":
+        return t("channels.instagramErrorVerifyFailed", "The Instagram account was found, but its profile could not be read — check that the Instagram account is a Business or Creator account linked to the Page, then try again.", "Instagram অ্যাকাউন্টটি পাওয়া গেছে, কিন্তু প্রোফাইলটি পড়া যায়নি — Instagram অ্যাকাউন্টটি Business বা Creator কি না আর পেজের সাথে যুক্ত কি না দেখে আবার চেষ্টা করুন।");
       case "limit":
         return t("channels.oauthErrorLimit", "Your plan's channel limit is full — upgrade your plan to connect another account.", "তোমার প্ল্যানের চ্যানেল সীমা শেষ — আরেকটি অ্যাকাউন্ট যুক্ত করতে প্ল্যান বড় করুন।");
       case "already_connected":
@@ -171,6 +205,12 @@ export default function ChannelsPage() {
     } finally {
       setLoading(false);
     }
+    try {
+      setSetupStatus(await salesChannelsApi.setupStatus());
+    } catch {
+      // Setup status is a hint only — a failure here must never block the page.
+      setSetupStatus(null);
+    }
   }, [t]);
 
   const loadPickItems = useCallback(async (kind: OAuthKind, session: string) => {
@@ -205,13 +245,17 @@ export default function ChannelsPage() {
       if (val === "connected") {
         const name = params.get("name");
         const connectedKey =
-          kind === "instagram" ? "channels.instagramConnected" : kind === "whatsapp" ? "channels.whatsappConnected" : "channels.facebookConnected";
+          kind === "instagram" ? "channels.instagramConnected" : kind === "whatsapp" ? "channels.whatsappConnected" : kind === "tiktok" ? "channels.tiktokConnected" : kind === "youtube" ? "channels.youtubeConnected" : "channels.facebookConnected";
         const connectedText =
           kind === "instagram"
             ? t(connectedKey, "Instagram account connected.", "Instagram অ্যাকাউন্ট যুক্ত হয়েছে।")
             : kind === "whatsapp"
               ? t(connectedKey, "WhatsApp number connected.", "WhatsApp নম্বর যুক্ত হয়েছে।")
-              : t(connectedKey, "Facebook Page connected.", "Facebook পেজ যুক্ত হয়েছে।");
+              : kind === "tiktok"
+                ? t(connectedKey, "TikTok account connected.", "TikTok অ্যাকাউন্ট যুক্ত হয়েছে।")
+                : kind === "youtube"
+                  ? t(connectedKey, "YouTube channel connected.", "YouTube চ্যানেল যুক্ত হয়েছে।")
+                  : t(connectedKey, "Facebook Page connected.", "Facebook পেজ যুক্ত হয়েছে।");
         setNotice(`${connectedText}${name ? ` ${name}` : ""}`);
         load();
       } else if (val === "pick") {
@@ -241,6 +285,17 @@ export default function ChannelsPage() {
     setNotice("");
     setOauthBusy(kind);
     try {
+      // TikTok / YouTube have their own authorize URLs (no Facebook login).
+      if (kind === "tiktok") {
+        const { url } = await salesChannelsApi.tiktokLogin();
+        window.location.href = url;
+        return;
+      }
+      if (kind === "youtube") {
+        const { url } = await salesChannelsApi.youtubeLogin();
+        window.location.href = url;
+        return;
+      }
       const opts = reauthenticate ? { reauthenticate: true } : undefined;
       const { url } =
         kind === "facebook"
@@ -252,6 +307,29 @@ export default function ChannelsPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : oauthError(kind, ""));
       setOauthBusy("");
+    }
+  };
+
+  const connectWhatsappManually = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    setWaManualBusy(true);
+    try {
+      await salesChannelsApi.whatsappManualConnect({
+        phoneNumberId: waManualPhoneId.trim(),
+        token: waManualToken.trim(),
+        ...(waManualWabaId.trim() ? { wabaId: waManualWabaId.trim() } : {}),
+      });
+      setWaManualPhoneId("");
+      setWaManualToken("");
+      setWaManualWabaId("");
+      setNotice(t("channels.whatsappManualConnected", "WhatsApp number connected.", "WhatsApp নম্বর যুক্ত হয়েছে।"));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : oauthError("whatsapp", ""));
+    } finally {
+      setWaManualBusy(false);
     }
   };
 
@@ -366,12 +444,12 @@ export default function ChannelsPage() {
   return (
     <div>
       <h1 className="page-title">{t("channels.title", "Channels", "চ্যানেল")}</h1>
-      <p className="page-subtitle">{t("channels.subtitle", "Connect your Facebook Page, Instagram and WhatsApp.", "ফেসবুক পেজ, ইনস্টাগ্রাম আর WhatsApp যুক্ত করুন।")}</p>
+      <p className="page-subtitle">{t("channels.subtitle", "Connect your Facebook Page, Instagram, WhatsApp, TikTok and YouTube.", "ফেসবুক পেজ, ইনস্টাগ্রাম, WhatsApp, TikTok আর YouTube যুক্ত করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {notice && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <h2 className="font-bold mb-3">{t("channels.connectTitle", "Connect a channel", "চ্যানেল যুক্ত করুন")}</h2>
-      <p className="text-sm text-slate-600 mb-4">{t("channels.connectDesc", "Connect each place your customers message you — Facebook, Instagram or WhatsApp. TikTok and YouTube are coming soon.", "তোমার কাস্টমাররা যেখান থেকে মেসেজ দেয়, সেটা যুক্ত করো — Facebook, Instagram বা WhatsApp। TikTok আর YouTube শীঘ্রই আসছে।")}</p>
+      <p className="text-sm text-slate-600 mb-4">{t("channels.connectDesc", "Connect each place your customers message you — Facebook, Instagram, WhatsApp, TikTok or YouTube.", "তোমার কাস্টমাররা যেখান থেকে মেসেজ দেয়, সেটা যুক্ত করো — Facebook, Instagram, WhatsApp, TikTok বা YouTube।")}</p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
         {OAUTH_KINDS.map((kind) => {
@@ -380,10 +458,10 @@ export default function ChannelsPage() {
           return (
             <div key={kind} className="card card-hover p-4">
               <h3 className="font-bold">
-                {t(card.title, kind === "facebook" ? "Connect Facebook Page" : kind === "instagram" ? "Connect Instagram" : "Connect WhatsApp", kind === "facebook" ? "Facebook পেজ যুক্ত করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : "WhatsApp যুক্ত করুন")}
+                {t(card.title, kind === "facebook" ? "Connect Facebook Page" : kind === "instagram" ? "Connect Instagram" : kind === "whatsapp" ? "Connect WhatsApp" : kind === "tiktok" ? "Connect TikTok" : "Connect YouTube", kind === "facebook" ? "Facebook পেজ যুক্ত করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : kind === "whatsapp" ? "WhatsApp যুক্ত করুন" : kind === "tiktok" ? "TikTok যুক্ত করুন" : "YouTube যুক্ত করুন")}
               </h3>
               <p className="text-sm text-slate-600 mt-1 mb-3">
-                {t(card.desc, kind === "facebook" ? "Log in with Facebook and pick the Page that should receive your shop's messages — no Page ID or token to type." : kind === "instagram" ? "Log in with Facebook and pick the Instagram account linked to your Page — Instagram messages will arrive in your inbox." : "Connect your WhatsApp Business number — customer WhatsApp messages will arrive in your inbox.", kind === "facebook" ? "Facebook দিয়ে লগইন করে যে পেজে তোমার দোকানের মেসেজ আসবে সেটা বেছে নাও — পেজ ID বা টোকেন টাইপ করতে হবে না।" : kind === "instagram" ? "Facebook দিয়ে লগইন করে তোমার পেজের সাথে যুক্ত Instagram অ্যাকাউন্টটি বেছে নাও — Instagram-এর মেসেজ ইনবক্সে আসবে।" : "তোমার WhatsApp Business নম্বরটি যুক্ত করো — কাস্টমারের WhatsApp মেসেজ ইনবক্সে আসবে।")}
+                {t(card.desc, kind === "facebook" ? "Log in with Facebook and pick the Page that should receive your shop's messages — no Page ID or token to type." : kind === "instagram" ? "Log in with Facebook and pick the Instagram account linked to your Page — Instagram messages will arrive in your inbox." : kind === "whatsapp" ? "Connect your WhatsApp Business number — customer WhatsApp messages will arrive in your inbox." : kind === "tiktok" ? "Log in with TikTok and link your TikTok account — your TikTok profile will be verified before it is stored." : "Sign in with Google and link your YouTube channel — the channel will be verified before it is stored.", kind === "facebook" ? "Facebook দিয়ে লগইন করে যে পেজে তোমার দোকানের মেসেজ আসবে সেটা বেছে নাও — পেজ ID বা টোকেন টাইপ করতে হবে না।" : kind === "instagram" ? "Facebook দিয়ে লগইন করে তোমার পেজের সাথে যুক্ত Instagram অ্যাকাউন্টটি বেছে নাও — Instagram-এর মেসেজ ইনবক্সে আসবে।" : kind === "whatsapp" ? "তোমার WhatsApp Business নম্বরটি যুক্ত করো — কাস্টমারের WhatsApp মেসেজ ইনবক্সে আসবে।" : kind === "tiktok" ? "TikTok দিয়ে লগইন করে তোমার TikTok অ্যাকাউন্টটি যুক্ত করো — যুক্ত করার আগে প্রোফাইলটি যাচাই করা হবে।" : "Google দিয়ে সাইন ইন করে তোমার YouTube চ্যানেলটি যুক্ত করো — যুক্ত করার আগে চ্যানেলটি যাচাই করা হবে।")}
               </p>
               {/* WhatsApp connects via Facebook Login (WABA OAuth) — that
                   stays as a small secondary note only; the card leads
@@ -406,35 +484,51 @@ export default function ChannelsPage() {
                 style={{ backgroundColor: card.color }}
               >
                 {oauthBusy === kind
-                  ? t(card.opening, "Opening Facebook…", "Facebook খুলছে…")
-                  : t(card.button, kind === "facebook" ? "Login with Facebook" : kind === "instagram" ? "Connect Instagram" : "Connect WhatsApp", kind === "facebook" ? "Facebook দিয়ে লগইন করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : "WhatsApp যুক্ত করুন")}
+                  ? t(card.opening, "Opening…", "খুলছে…")
+                  : t(card.button, kind === "facebook" ? "Login with Facebook" : kind === "instagram" ? "Connect Instagram" : kind === "whatsapp" ? "Connect WhatsApp" : kind === "tiktok" ? "Connect TikTok" : "Connect YouTube", kind === "facebook" ? "Facebook দিয়ে লগইন করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : kind === "whatsapp" ? "WhatsApp যুক্ত করুন" : kind === "tiktok" ? "TikTok যুক্ত করুন" : "YouTube যুক্ত করুন")}
               </button>
-              <p className="text-xs text-slate-500 mt-3">
-                {t("channels.switchAccountHint", "Facebook always uses the account signed in on facebook.com. To use another account, tap below — Facebook will ask you to log in again — or log out / switch accounts on facebook.com first.", "Facebook সবসময় facebook.com-এ যে অ্যাকাউন্টে লগইন করা আছে সেটাই ব্যবহার করে। অন্য অ্যাকাউন্ট ব্যবহার করতে নিচে চাপ দাও — Facebook আবার লগইন চাইবে — অথবা আগে facebook.com-এ গিয়ে লগআউট / অ্যাকাউন্ট বদলে নাও।")}
-              </p>
-              <button
-                onClick={() => loginWith(kind, true)}
-                disabled={oauthBusy !== ""}
-                className="mt-1 text-xs font-medium text-brand-dark underline hover:text-brand disabled:opacity-50"
-              >
-                {t("channels.switchAccount", "Use a different Facebook account", "অন্য Facebook অ্যাকাউন্ট ব্যবহার করো")}
-              </button>
+              {/* TikTok / YouTube need the owner's app keys first — say so
+                  on the card instead of letting the button fail silently. */}
+              {kind === "tiktok" && setupStatus && !setupStatus.tiktokConfigured && (
+                <p className="text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
+                  {t("channels.tiktokSetupNeeded", "TikTok is not set up yet — the owner must add the TikTok app's Client Key and Client Secret first (developers.tiktok.com → create an app, turn on Login Kit).", "TikTok এখনো সেটআপ হয়নি — মালিককে প্রথমে TikTok অ্যাপের Client Key আর Client Secret দিতে হবে (developers.tiktok.com-এ গিয়ে অ্যাপ বানিয়ে Login Kit চালু করুন)।")}
+                </p>
+              )}
+              {kind === "youtube" && setupStatus && !setupStatus.youtubeConfigured && (
+                <p className="text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
+                  {t("channels.youtubeSetupNeeded", "YouTube is not set up yet — the owner must add the Google OAuth Client ID and Client Secret first (Google Cloud Console → OAuth client, YouTube Data API v3 on).", "YouTube এখনো সেটআপ হয়নি — মালিককে প্রথমে Google OAuth-এর Client ID আর Client Secret দিতে হবে (Google Cloud Console-এ OAuth ক্লায়েন্ট বানিয়ে YouTube Data API v3 চালু করুন)।")}
+                </p>
+              )}
+              {/* WhatsApp manual fallback: verified phone-number ID + token. */}
+              {kind === "whatsapp" && (
+                <form onSubmit={connectWhatsappManually} className="mt-4 border-t pt-3 space-y-2">
+                  <p className="text-sm font-medium">{t("channels.whatsappManualTitle", "Or connect manually (Cloud API)", "অথবা ম্যানুয়ালি যুক্ত করুন (Cloud API)")}</p>
+                  <p className="text-xs text-slate-500">{t("channels.whatsappManualHint", "If Facebook login does not list your number, paste the phone-number ID and a permanent access token from Meta Business Suite — the number is verified before it is stored. No test message is sent.", "Facebook লগইনে নম্বর না দেখালে, Meta Business Suite থেকে ফোন নম্বরের ID আর স্থায়ী অ্যাক্সেস টোকেন বসান — যুক্ত করার আগে নম্বরটি যাচাই করা হবে। কোনো টেস্ট মেসেজ পাঠানো হবে না।")}</p>
+                  <input required value={waManualPhoneId} onChange={(e) => setWaManualPhoneId(e.target.value)} placeholder={t("channels.whatsappManualPhoneId", "Phone-number ID", "ফোন নম্বরের ID")} className="border rounded-lg px-3 py-2 w-full text-sm" />
+                  <input required value={waManualToken} onChange={(e) => setWaManualToken(e.target.value)} placeholder={t("channels.whatsappManualToken", "Permanent access token", "স্থায়ী অ্যাক্সেস টোকেন")} className="border rounded-lg px-3 py-2 w-full text-sm" type="password" />
+                  <input value={waManualWabaId} onChange={(e) => setWaManualWabaId(e.target.value)} placeholder={t("channels.whatsappManualWabaId", "WhatsApp Business Account ID (optional)", "WhatsApp Business অ্যাকাউন্ট ID (যদি থাকে)")} className="border rounded-lg px-3 py-2 w-full text-sm" />
+                  <button disabled={waManualBusy} className="bg-brand text-white px-3 py-2 rounded-lg text-sm hover:bg-brand-dark disabled:opacity-50 w-full">
+                    {waManualBusy ? t("channels.whatsappManualConnecting", "Verifying…", "যাচাই হচ্ছে…") : t("channels.whatsappManualButton", "Verify & connect number", "যাচাই করে নম্বর যুক্ত করুন")}
+                  </button>
+                </form>
+              )}
+              {META_KINDS.includes(kind) && (
+                <>
+                  <p className="text-xs text-slate-500 mt-3">
+                    {t("channels.switchAccountHint", "Facebook always uses the account signed in on facebook.com. To use another account, tap below — Facebook will ask you to log in again — or log out / switch accounts on facebook.com first.", "Facebook সবসময় facebook.com-এ যে অ্যাকাউন্টে লগইন করা আছে সেটাই ব্যবহার করে। অন্য অ্যাকাউন্ট ব্যবহার করতে নিচে চাপ দাও — Facebook আবার লগইন চাইবে — অথবা আগে facebook.com-এ গিয়ে লগআউট / অ্যাকাউন্ট বদলে নাও।")}
+                  </p>
+                  <button
+                    onClick={() => loginWith(kind, true)}
+                    disabled={oauthBusy !== ""}
+                    className="mt-1 text-xs font-medium text-brand-dark underline hover:text-brand disabled:opacity-50"
+                  >
+                    {t("channels.switchAccount", "Use a different Facebook account", "অন্য Facebook অ্যাকাউন্ট ব্যবহার করো")}
+                  </button>
+                </>
+              )}
             </div>
           );
         })}
-        {SOON_CARDS.map((card) => (
-          <div key={card.key} className="card p-4 opacity-80">
-            <h3 className="font-bold">
-              {t(card.title, card.key === "tiktok" ? "Connect TikTok" : "Connect YouTube", card.key === "tiktok" ? "TikTok যুক্ত করুন" : "YouTube যুক্ত করুন")}
-            </h3>
-            <p className="text-sm text-slate-600 mt-1 mb-3">
-              {t(card.desc, card.key === "tiktok" ? "TikTok login is coming soon — your TikTok messages will arrive here once it is ready." : "YouTube login is coming soon.", card.key === "tiktok" ? "TikTok লগইন শীঘ্রই আসছে — চালু হলে তোমার TikTok মেসেজ এখানেই আসবে।" : "YouTube লগইন শীঘ্রই আসছে।")}
-            </p>
-            <button disabled className="bg-slate-300 text-slate-600 px-4 py-2 rounded-lg cursor-not-allowed">
-              {t("channels.comingSoon", "Coming soon", "শীঘ্রই আসছে")}
-            </button>
-          </div>
-        ))}
       </div>
 
       {picker && (

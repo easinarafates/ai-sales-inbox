@@ -4,11 +4,11 @@ import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { config } from '../config';
 import type { AuthRequest } from '../types';
 import {
-  GRAPH_BASE,
   createOAuthChannel,
   exchangeCodeForToken,
   exchangeForLongLived,
   fetchMeName,
+  graphBase,
   loginUrl,
   signSession,
   signStateToken,
@@ -72,7 +72,7 @@ interface WaSession {
 }
 
 async function fetchWabas(longLivedToken: string): Promise<{ id: string; name: string }[]> {
-  const url = new URL(`${GRAPH_BASE}/me/whatsapp_business_accounts`);
+  const url = new URL(`${graphBase()}/me/whatsapp_business_accounts`);
   url.searchParams.set('fields', 'id,name');
   const res = await fetchWithTimeout(url.toString(), {
     method: 'GET',
@@ -93,7 +93,7 @@ async function fetchWabas(longLivedToken: string): Promise<{ id: string; name: s
 /** One account's phone numbers (empty on a per-account failure). */
 async function fetchWabaNumbers(longLivedToken: string, wabaId: string): Promise<WaPhoneNumber[]> {
   try {
-    const url = new URL(`${GRAPH_BASE}/${encodeURIComponent(wabaId)}/phone_numbers`);
+    const url = new URL(`${graphBase()}/${encodeURIComponent(wabaId)}/phone_numbers`);
     url.searchParams.set('fields', 'id,display_phone_number,verified_name');
     const res = await fetchWithTimeout(url.toString(), {
       method: 'GET',
@@ -112,6 +112,40 @@ async function fetchWabaNumbers(longLivedToken: string, wabaId: string): Promise
       }));
   } catch {
     return [];
+  }
+}
+
+/**
+ * VERIFY a WhatsApp phone number by reading it back from Graph
+ * (GET /{phone-number-id}?fields=id,display_phone_number,verified_name).
+ * Used by the manual Cloud API connect — the number is only stored
+ * after Meta confirms it exists and the token can read it. Never throws
+ * (null on any failure: wrong id, wrong token, no permission).
+ */
+export async function fetchPhoneNumber(
+  token: string,
+  phoneNumberId: string,
+): Promise<WaPhoneNumber | null> {
+  try {
+    const url = new URL(`${graphBase()}/${encodeURIComponent(phoneNumberId)}`);
+    url.searchParams.set('fields', 'id,display_phone_number,verified_name');
+    const res = await fetchWithTimeout(url.toString(), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    const data = (await res.json().catch(() => null)) as {
+      id?: string;
+      display_phone_number?: string;
+      verified_name?: string;
+    } | null;
+    if (!res.ok || typeof data?.id !== 'string') return null;
+    return {
+      id: data.id,
+      displayNumber: data.display_phone_number ?? data.id,
+      verifiedName: data.verified_name ?? '',
+    };
+  } catch {
+    return null;
   }
 }
 
@@ -215,6 +249,12 @@ function verifyWaSession(token: string): WaSession | null {
  * 503 while no Meta app is configured (META_APP_ID unset).
  * ?reauthenticate=1 forces Facebook to ask for credentials again so the
  * user can log in with a DIFFERENT Facebook account (see loginUrl).
+ *
+ * The dialog URL carries config_id when WHATSAPP_CONFIG_ID is set —
+ * that is what turns this from a plain Facebook Login into Meta's
+ * Embedded Signup (create/use a WhatsApp Business account + pick a
+ * number). Without it, Meta only logs the user in and the callback
+ * finds no WABA (reason=no_waba) for anyone who has none yet.
  */
 whatsappOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response) => {
   if (!config.meta.appId) {
@@ -224,7 +264,7 @@ whatsappOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response)
     return;
   }
   const state = signStateToken(req.userId as string, getWorkspaceId(req), 'whatsapp');
-  res.json({ url: loginUrl(SCOPES, state, { reauthenticate: req.query.reauthenticate === '1' }) });
+  res.json({ url: loginUrl(SCOPES, state, { reauthenticate: req.query.reauthenticate === '1', configId: config.whatsapp.configId || undefined }) });
 });
 
 /**
@@ -267,6 +307,50 @@ whatsappOAuthRouter.post('/connect', requireAuth, async (req: AuthRequest, res: 
     return;
   }
   const result = await createWhatsappChannel(verified.workspaceId, waba, number, verified.userToken);
+  if (!result.ok) {
+    res.status(result.reason === 'limit' ? 402 : 409).json({ error: result.message });
+    return;
+  }
+  res.status(201).json({ channel: result.channel });
+});
+
+/**
+ * POST /api/channels/whatsapp/manual — manual Cloud API connect.
+ * Fallback when Embedded Signup is not set up (no WHATSAPP_CONFIG_ID)
+ * or the user already has a WhatsApp Business number + permanent access
+ * token from Meta Business Suite / the WhatsApp Manager.
+ *
+ * Body: { phoneNumberId, token, wabaId? } — the phone-number ID and a
+ * permanent (never-expiring) token. The number is VERIFIED first
+ * (GET /{phone-number-id} with the token): a wrong id, an expired
+ * token or a token without whatsapp_business_management answers 400
+ * with a Bengali message and nothing is stored. Only a verified number
+ * is stored — never a fake "connected" row. No test message is ever
+ * sent by this endpoint.
+ */
+whatsappOAuthRouter.post('/manual', requireAuth, async (req: AuthRequest, res: Response) => {
+  const { phoneNumberId, token, wabaId } = (req.body ?? {}) as {
+    phoneNumberId?: string;
+    token?: string;
+    wabaId?: string;
+  };
+  if (!phoneNumberId || typeof phoneNumberId !== 'string' || !token || typeof token !== 'string') {
+    res.status(400).json({ error: 'ফোন নম্বর ID আর টোকেন — দুটোই লাগবে। Meta Business Suite থেকে নম্বরের ID আর স্থায়ী (permanent) অ্যাক্সেস টোকেনটি বসান।' });
+    return;
+  }
+  const number = await fetchPhoneNumber(token.trim(), phoneNumberId.trim());
+  if (!number) {
+    res.status(400).json({
+      error: 'এই নম্বরটি যাচাই করা যায়নি — নম্বর ID ভুল হতে পারে, অথবা টোকেনটি ভুল/মেয়াদোত্তীর্ণ। Meta Business Suite-এ নম্বরটি আছে কি না আর টোকেনটি স্থায়ী (permanent) কি না দেখে আবার চেষ্টা করুন।',
+      reason: 'wa_verify_failed',
+    });
+    return;
+  }
+  const result = await createWhatsappChannel(getWorkspaceId(req), {
+    id: typeof wabaId === 'string' && wabaId ? wabaId : '',
+    name: '',
+    phoneNumbers: [number],
+  }, number, token.trim());
   if (!result.ok) {
     res.status(result.reason === 'limit' ? 402 : 409).json({ error: result.message });
     return;

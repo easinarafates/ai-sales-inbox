@@ -4,13 +4,13 @@ import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { config } from '../config';
 import type { AuthRequest } from '../types';
 import {
-  GRAPH_BASE,
   createOAuthChannel,
   exchangeCodeForToken,
   exchangeForLongLived,
   fetchMeId,
   fetchMeName,
   fetchPages,
+  graphBase,
   loginUrl,
   signSession,
   signStateToken,
@@ -51,7 +51,7 @@ import {
  */
 export const instagramOAuthRouter = Router();
 
-const SCOPES = ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_manage_messages'];
+const SCOPES = ['pages_show_list', 'pages_read_engagement', 'instagram_basic', 'instagram_manage_messages', 'instagram_manage_comments'];
 
 /** One Page enriched with its linked Instagram account (null = none linked). */
 export interface IgPickPage extends FbPickPage {
@@ -76,7 +76,7 @@ async function fetchPageInstagram(
   pageId: string,
 ): Promise<{ id: string; username: string; picture: string } | null> {
   try {
-    const url = new URL(`${GRAPH_BASE}/${encodeURIComponent(pageId)}`);
+    const url = new URL(`${graphBase()}/${encodeURIComponent(pageId)}`);
     url.searchParams.set('fields', 'instagram_business_account{id,username,profile_picture_url}');
     const res = await fetchWithTimeout(url.toString(), {
       method: 'GET',
@@ -88,6 +88,38 @@ async function fetchPageInstagram(
     const ig = data?.instagram_business_account;
     if (!res.ok || typeof ig?.id !== 'string' || typeof ig?.username !== 'string') return null;
     return { id: ig.id, username: ig.username, picture: ig.profile_picture_url ?? '' };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * VERIFY the linked Instagram account by reading its own profile
+ * (GET /{ig-user-id}?fields=id,username,profile_picture_url) with the
+ * Page token. The Page → instagram_business_account lookup alone only
+ * proves a link exists; this proves the token can actually read the
+ * account — a connect that cannot read the profile is not a working
+ * connect, so a failure here redirects with reason=ig_verify_failed
+ * instead of storing a dead channel. Never throws (null on failure).
+ */
+export async function fetchInstagramProfile(
+  pageToken: string,
+  igUserId: string,
+): Promise<{ id: string; username: string; picture: string } | null> {
+  try {
+    const url = new URL(`${graphBase()}/${encodeURIComponent(igUserId)}`);
+    url.searchParams.set('fields', 'id,username,profile_picture_url');
+    const res = await fetchWithTimeout(url.toString(), {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${pageToken}` },
+    });
+    const data = (await res.json().catch(() => null)) as {
+      id?: string;
+      username?: string;
+      profile_picture_url?: string;
+    } | null;
+    if (!res.ok || typeof data?.id !== 'string' || typeof data?.username !== 'string') return null;
+    return { id: data.id, username: data.username, picture: data.profile_picture_url ?? '' };
   } catch {
     return null;
   }
@@ -148,6 +180,15 @@ export async function completeInstagramOAuth(
     });
   }
   if (linked.length === 1) {
+    // Verify the profile is actually readable before storing the channel.
+    const verifiedProfile = await fetchInstagramProfile(linked[0].token, (linked[0].instagram as { id: string }).id);
+    if (!verifiedProfile) {
+      return webRedirect(res, 'instagram', {
+        instagram: 'error',
+        reason: 'ig_verify_failed',
+        ...(account ? { account } : {}),
+      });
+    }
     const result = await createInstagramChannel(verified.workspaceId, linked[0], longToken, connectedByUserId || null);
     if (!result.ok) {
       return webRedirect(res, 'instagram', {
