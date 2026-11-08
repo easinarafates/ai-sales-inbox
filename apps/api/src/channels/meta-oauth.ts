@@ -32,6 +32,19 @@ import { checkChannelLimit } from '../subscriptions/service';
 export const GRAPH_VERSION = 'v21.0';
 export const GRAPH_BASE = `https://graph.facebook.com/${GRAPH_VERSION}`;
 /**
+ * Per-call timeout for OAuth Graph calls (code exchange, /me, page/WABA
+ * lookups). A single hanging Graph call must fail fast with an honest
+ * error instead of letting Vercel kill the whole OAuth callback with a
+ * 504 (the default Hobby function limit is 10s and the old code gave
+ * every call up to 20s — the WhatsApp callback timed out live twice on
+ * 2026-11-09 because its sequential Graph calls ran past that ceiling).
+ * 15s per call: the callback does at most 3 calls and the picker lookup
+ * at most 2 rounds, so the worst case stays well under the 60s function
+ * limit (vercel.json maxDuration) while a genuinely slow Meta endpoint
+ * still gets a chance to answer instead of being cut off.
+ */
+export const OAUTH_GRAPH_TIMEOUT_MS = 15000;
+/**
  * Graph base for Meta calls. META_GRAPH_BASE_URL overrides it for
  * offline testing only (same rule as meta-send.ts's sendGraphBase);
  * production always uses graph.facebook.com.
@@ -168,8 +181,8 @@ export function verifySession(token: string, purpose: string): Record<string, un
 }
 
 /** Meta Graph call. Tokens are sent in a POST body / Bearer header, never in a URL. */
-export async function graphFetch(path: string, init: RequestInit): Promise<Record<string, unknown>> {
-  const res = await fetchWithTimeout(`${graphBase()}${path}`, init);
+export async function graphFetch(path: string, init: RequestInit, timeoutMs: number = OAUTH_GRAPH_TIMEOUT_MS): Promise<Record<string, unknown>> {
+  const res = await fetchWithTimeout(`${graphBase()}${path}`, init, timeoutMs);
   const data = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
   if (!res.ok) {
     throw new Error(`Meta Graph ${path} failed (${res.status})${data?.error?.message ? `: ${data.error.message}` : ''}`);
@@ -222,7 +235,7 @@ export async function fetchMeName(longLivedToken: string): Promise<string> {
     const res = await fetchWithTimeout(`${graphBase()}/me?fields=name`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${longLivedToken}` },
-    });
+    }, OAUTH_GRAPH_TIMEOUT_MS);
     const data = (await res.json().catch(() => null)) as { name?: string } | null;
     if (!res.ok || typeof data?.name !== 'string') return '';
     return data.name;
@@ -242,7 +255,7 @@ export async function fetchMeId(longLivedToken: string): Promise<string> {
     const res = await fetchWithTimeout(`${graphBase()}/me?fields=id`, {
       method: 'GET',
       headers: { Authorization: `Bearer ${longLivedToken}` },
-    });
+    }, OAUTH_GRAPH_TIMEOUT_MS);
     const data = (await res.json().catch(() => null)) as { id?: string } | null;
     if (!res.ok || typeof data?.id !== 'string') return '';
     return data.id;
@@ -257,7 +270,7 @@ export async function fetchPages(longLivedToken: string): Promise<FbPickPage[]> 
   const res = await fetchWithTimeout(url.toString(), {
     method: 'GET',
     headers: { Authorization: `Bearer ${longLivedToken}` },
-  });
+  }, OAUTH_GRAPH_TIMEOUT_MS);
   const data = (await res.json().catch(() => null)) as { data?: FbAccount[]; error?: { message?: string } } | null;
   if (!res.ok) {
     throw new Error(`Meta Graph /me/accounts failed (${res.status})${data?.error?.message ? `: ${data.error.message}` : ''}`);

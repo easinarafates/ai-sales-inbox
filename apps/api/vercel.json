@@ -4,7 +4,8 @@
   "rewrites": [{ "destination": "/api/index", "source": "/(.*)" }],
   "functions": {
     "api/index.ts": {
-      "includeFiles": "node_modules/{@sparticuz/chromium,puppeteer-core}/**"
+      "includeFiles": "node_modules/{@sparticuz/chromium,puppeteer-core}/**",
+      "maxDuration": 60
     }
   }
 }

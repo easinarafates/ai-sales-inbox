@@ -10,6 +10,7 @@ import {
   fetchMeName,
   graphBase,
   loginUrl,
+  OAUTH_GRAPH_TIMEOUT_MS,
   signSession,
   signStateToken,
   verifySession,
@@ -24,12 +25,23 @@ import {
  * Flow: Channels page → GET /login (Meta dialog, WhatsApp scopes) →
  * Meta calls the SHARED callback (/api/channels/facebook/callback — the
  * one redirect URI registered in the Meta app; the state JWT carries
- * channel='whatsapp') → code is exchanged for a long-lived user token
- * → /me/whatsapp_business_accounts lists the user's WhatsApp Business
- * accounts → each account's phone numbers are listed → exactly 1
- * number: the channel is created immediately; >1 numbers: the user
- * picks one on the Channels page (POST /connect); no account or no
- * number: redirect with reason=no_waba.
+ * channel='whatsapp') → the callback does ONLY the code exchange, the
+ * long-lived exchange and the account-name read, then redirects to the
+ * Channels page with a token-only picker session (whatsapp=pick) → the
+ * page calls GET /accounts, which lists the WhatsApp Business accounts
+ * + phone numbers live from Graph → exactly 1 number or several: the
+ * user picks one on the Channels page (POST /connect); no account or no
+ * number: the picker shows reason='no_waba'.
+ *
+ * The WABA lookup deliberately happens AFTER the redirect, not in the
+ * callback: the old callback fetched the accounts synchronously and its
+ * sequential Graph calls ran past Vercel's 10s default function limit —
+ * the live browser test on 2026-11-09 got a 504 FUNCTION_INVOCATION_TIMEOUT
+ * twice, and the flow never reached the number picker. The callback now
+ * answers in ~1-2s (3 fast Graph calls, each capped at
+ * OAUTH_GRAPH_TIMEOUT_MS) and the slow lookup runs as an XHR, where the
+ * page already shows a loading state. vercel.json also raises the
+ * function limit to 60s (maxDuration) as a safety net.
  *
  * The connected channel is ONE row: platform 'whatsapp',
  * external_id = WhatsApp phone-number ID, display_name = the phone
@@ -67,7 +79,10 @@ export interface WaAccount {
 
 interface WaSession {
   workspaceId: string;
-  wabas: WaAccount[];
+  /** Accounts + numbers, when the session was issued with them (old
+   * sessions, pre-2026-11-09, carried the list; new sessions are
+   * token-only and /accounts + /connect fetch live instead). */
+  wabas?: WaAccount[];
   userToken: string;
 }
 
@@ -77,7 +92,7 @@ async function fetchWabas(longLivedToken: string): Promise<{ id: string; name: s
   const res = await fetchWithTimeout(url.toString(), {
     method: 'GET',
     headers: { Authorization: `Bearer ${longLivedToken}` },
-  });
+  }, OAUTH_GRAPH_TIMEOUT_MS);
   const data = (await res.json().catch(() => null)) as {
     data?: { id?: string; name?: string }[];
     error?: { message?: string };
@@ -98,7 +113,7 @@ async function fetchWabaNumbers(longLivedToken: string, wabaId: string): Promise
     const res = await fetchWithTimeout(url.toString(), {
       method: 'GET',
       headers: { Authorization: `Bearer ${longLivedToken}` },
-    });
+    }, OAUTH_GRAPH_TIMEOUT_MS);
     const data = (await res.json().catch(() => null)) as {
       data?: { id?: string; display_phone_number?: string; verified_name?: string }[];
     } | null;
@@ -113,6 +128,19 @@ async function fetchWabaNumbers(longLivedToken: string, wabaId: string): Promise
   } catch {
     return [];
   }
+}
+
+/**
+ * All WABA accounts with their phone numbers, numbers fetched in
+ * parallel (independent calls — the old sequential loop multiplied the
+ * callback's Graph time by the account count).
+ */
+async function fetchWabasEnriched(longLivedToken: string): Promise<WaAccount[]> {
+  const wabas = await fetchWabas(longLivedToken);
+  const enriched = await Promise.all(
+    wabas.map(async (w) => ({ ...w, phoneNumbers: await fetchWabaNumbers(longLivedToken, w.id) })),
+  );
+  return enriched;
 }
 
 /**
@@ -132,7 +160,7 @@ export async function fetchPhoneNumber(
     const res = await fetchWithTimeout(url.toString(), {
       method: 'GET',
       headers: { Authorization: `Bearer ${token}` },
-    });
+    }, OAUTH_GRAPH_TIMEOUT_MS);
     const data = (await res.json().catch(() => null)) as {
       id?: string;
       display_phone_number?: string;
@@ -166,7 +194,20 @@ async function createWhatsappChannel(
   });
 }
 
-/** Complete the WhatsApp flow after the code exchange (shared callback). */
+/**
+ * Complete the WhatsApp flow after the code exchange (shared callback).
+ *
+ * FAST BY DESIGN: only the code exchange, the long-lived exchange and
+ * the account-name read happen here (~1-2s), then the user is redirected
+ * to the Channels page with a token-only picker session. The WABA +
+ * phone-number lookup runs in GET /accounts (an XHR, where the page
+ * shows a loading state) — never in this callback. The old version did
+ * the whole lookup synchronously and timed out on Vercel (504) twice
+ * in a live browser test (2026-11-09); the flow never reached the
+ * number picker. No WABA / no number is therefore NOT a callback error
+ * any more: the picker lists zero numbers and the page shows the
+ * no_waba message (reason='no_waba' is returned by /accounts).
+ */
 export async function completeWhatsappOAuth(
   verified: VerifiedState,
   code: string,
@@ -175,42 +216,8 @@ export async function completeWhatsappOAuth(
   const shortToken = await exchangeCodeForToken(code);
   const longToken = await exchangeForLongLived(shortToken);
   const account = await fetchMeName(longToken);
-  const wabas = await fetchWabas(longToken);
-  if (wabas.length === 0) {
-    return webRedirect(res, 'whatsapp', {
-      whatsapp: 'error',
-      reason: 'no_waba',
-      ...(account ? { account } : {}),
-    });
-  }
-  const enriched: WaAccount[] = [];
-  for (const w of wabas) {
-    enriched.push({ ...w, phoneNumbers: await fetchWabaNumbers(longToken, w.id) });
-  }
-  const totalNumbers = enriched.reduce((n, w) => n + w.phoneNumbers.length, 0);
-  if (totalNumbers === 0) {
-    return webRedirect(res, 'whatsapp', {
-      whatsapp: 'error',
-      reason: 'no_waba',
-      ...(account ? { account } : {}),
-    });
-  }
-  if (totalNumbers === 1) {
-    const waba = enriched.find((w) => w.phoneNumbers.length === 1) as WaAccount;
-    const number = waba.phoneNumbers[0];
-    const result = await createWhatsappChannel(verified.workspaceId, waba, number, longToken);
-    if (!result.ok) {
-      return webRedirect(res, 'whatsapp', {
-        whatsapp: 'error',
-        reason: result.reason,
-        ...(account ? { account } : {}),
-      });
-    }
-    return webRedirect(res, 'whatsapp', { whatsapp: 'connected', name: number.displayNumber });
-  }
   const session = signSession('whatsapp_accounts', {
     workspaceId: verified.workspaceId,
-    wabas: enriched,
     userToken: longToken,
   });
   return webRedirect(res, 'whatsapp', {
@@ -225,23 +232,41 @@ function verifyWaSession(token: string): WaSession | null {
   if (
     !p ||
     typeof p.workspaceId !== 'string' ||
-    typeof p.userToken !== 'string' ||
-    !Array.isArray(p.wabas)
+    typeof p.userToken !== 'string'
   ) {
     return null;
   }
-  const wabas = p.wabas as WaAccount[];
+  const wabas = p.wabas as WaAccount[] | undefined;
   if (
-    !wabas.every(
-      (w) =>
-        typeof w?.id === 'string' &&
-        Array.isArray(w.phoneNumbers) &&
-        w.phoneNumbers.every((n) => typeof n?.id === 'string' && typeof n?.displayNumber === 'string'),
-    )
+    wabas !== undefined &&
+    (!Array.isArray(wabas) ||
+      !wabas.every(
+        (w) =>
+          typeof w?.id === 'string' &&
+          Array.isArray(w.phoneNumbers) &&
+          w.phoneNumbers.every((n) => typeof n?.id === 'string' && typeof n?.displayNumber === 'string'),
+      ))
   ) {
     return null;
   }
   return { workspaceId: p.workspaceId as string, wabas, userToken: p.userToken as string };
+}
+
+/**
+ * The user's WABA accounts + numbers, fetched LIVE from Graph with the
+ * session's long-lived token. A token-only session (issued by the fast
+ * callback) has no embedded list, so this is the only source. If the
+ * live fetch fails, a session that still carries an embedded list falls
+ * back to it; otherwise the error propagates and the caller answers
+ * honestly (502) instead of inventing accounts.
+ */
+async function resolveWabas(session: WaSession): Promise<WaAccount[]> {
+  try {
+    return await fetchWabasEnriched(session.userToken);
+  } catch (err) {
+    if (session.wabas) return session.wabas;
+    throw err;
+  }
 }
 
 /**
@@ -269,22 +294,37 @@ whatsappOAuthRouter.get('/login', requireAuth, (req: AuthRequest, res: Response)
 
 /**
  * GET /api/channels/whatsapp/accounts?session=... — the picker list.
- * The long-lived user token is stripped: each account carries id/name
- * plus its phone numbers (id, display number, verified name) — never
- * a token.
+ * The accounts are fetched LIVE from Graph with the session's long-lived
+ * user token (the fast callback no longer does this lookup — see
+ * completeWhatsappOAuth). The long-lived user token is stripped: each
+ * account carries id/name plus its phone numbers (id, display number,
+ * verified name) — never a token. An empty list means no WABA / no
+ * number on this Facebook account: the Channels page shows the
+ * no_waba message (reason='no_waba' is returned alongside). A Graph
+ * failure answers 502 honestly instead of an empty list — an empty list
+ * must mean "none found", never "the lookup failed".
  */
-whatsappOAuthRouter.get('/accounts', requireAuth, (req: AuthRequest, res: Response) => {
+whatsappOAuthRouter.get('/accounts', requireAuth, async (req: AuthRequest, res: Response) => {
   const session = verifyWaSession(String(req.query.session ?? ''));
   if (!session || session.workspaceId !== getWorkspaceId(req)) {
     res.status(401).json({ error: 'Invalid or expired WhatsApp session — please log in again.' });
     return;
   }
+  let wabas: WaAccount[];
+  try {
+    wabas = await resolveWabas(session);
+  } catch (err) {
+    console.error('[whatsapp-oauth] accounts lookup failed:', (err as Error).message);
+    res.status(502).json({ error: 'WhatsApp অ্যাকাউন্টগুলো লোড করা যায়নি — আবার চেষ্টা করুন।' });
+    return;
+  }
   res.json({
-    wabas: session.wabas.map(({ id, name, phoneNumbers }) => ({
+    wabas: wabas.map(({ id, name, phoneNumbers }) => ({
       id,
       name,
       phoneNumbers: phoneNumbers.map((n) => ({ id: n.id, displayNumber: n.displayNumber, verifiedName: n.verifiedName })),
     })),
+    ...(wabas.length === 0 ? { reason: 'no_waba' } : {}),
   });
 });
 
@@ -300,7 +340,17 @@ whatsappOAuthRouter.post('/connect', requireAuth, async (req: AuthRequest, res: 
     res.status(401).json({ error: 'Invalid or expired WhatsApp session — please log in again.' });
     return;
   }
-  const waba = verified.wabas.find((w) => w.id === wabaId);
+  // Validate the pick against a LIVE WABA list (the session is token-only
+  // since the fast callback — it carries no list to trust).
+  let wabas: WaAccount[];
+  try {
+    wabas = await resolveWabas(verified);
+  } catch (err) {
+    console.error('[whatsapp-oauth] connect lookup failed:', (err as Error).message);
+    res.status(502).json({ error: 'WhatsApp অ্যাকাউন্টগুলো লোড করা যায়নি — আবার চেষ্টা করুন।' });
+    return;
+  }
+  const waba = wabas.find((w) => w.id === wabaId);
   const number = waba?.phoneNumbers.find((n) => n.id === phoneNumberId);
   if (!waba || !number) {
     res.status(400).json({ error: 'Unknown WhatsApp number — please log in again.' });

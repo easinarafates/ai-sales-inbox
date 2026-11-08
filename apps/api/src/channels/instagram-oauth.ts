@@ -12,6 +12,7 @@ import {
   fetchPages,
   graphBase,
   loginUrl,
+  OAUTH_GRAPH_TIMEOUT_MS,
   signSession,
   signStateToken,
   verifySession,
@@ -86,7 +87,7 @@ async function fetchPageInstagram(
     const res = await fetchWithTimeout(url.toString(), {
       method: 'GET',
       headers: { Authorization: `Bearer ${pageToken}` },
-    });
+    }, OAUTH_GRAPH_TIMEOUT_MS);
     const data = (await res.json().catch(() => null)) as {
       instagram_business_account?: { id?: string; username?: string; profile_picture_url?: string };
     } | null;
@@ -117,7 +118,7 @@ export async function fetchInstagramProfile(
     const res = await fetchWithTimeout(url.toString(), {
       method: 'GET',
       headers: { Authorization: `Bearer ${pageToken}` },
-    });
+    }, OAUTH_GRAPH_TIMEOUT_MS);
     const data = (await res.json().catch(() => null)) as {
       id?: string;
       username?: string;
@@ -172,10 +173,12 @@ export async function completeInstagramOAuth(
       ...(account ? { account } : {}),
     });
   }
-  const enriched: IgPickPage[] = [];
-  for (const p of pages) {
-    enriched.push({ ...p, instagram: await fetchPageInstagram(p.token, p.id) });
-  }
+  // Per-page Instagram lookups are independent — run them in parallel
+  // instead of sequentially (same timeout-class hardening as WhatsApp:
+  // a slow Graph call on one Page must not stall the whole callback).
+  const enriched: IgPickPage[] = await Promise.all(
+    pages.map(async (p) => ({ ...p, instagram: await fetchPageInstagram(p.token, p.id) })),
+  );
   const linked = enriched.filter((p) => p.instagram !== null);
   if (linked.length === 0) {
     return webRedirect(res, 'instagram', {
