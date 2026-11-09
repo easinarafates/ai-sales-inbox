@@ -75,6 +75,13 @@ export default function LoginPage() {
         <p className="text-center text-sm text-slate-500">
           <Link href="/" className="text-green-700 underline hover:text-green-800">← {t("landing.backHome", "Back to home", "হোমে ফিরুন")}</Link>
         </p>
+        <p className="text-center text-xs text-slate-400">
+          <Link href="/terms" className="underline hover:text-slate-500">{t("auth.termsLink", "Terms of Service", "ব্যবহারের শর্ত")}</Link>
+          {" · "}
+          <Link href="/privacy" className="underline hover:text-slate-500">{t("auth.privacyLink", "Privacy Policy", "প্রাইভেসি পলিসি")}</Link>
+          {" · "}
+          <Link href="/data-deletion" className="underline hover:text-slate-500">{t("landing.dataDeletion", "Data Deletion", "ডেটা মুছে ফেলা")}</Link>
+        </p>
       </form>
     </div>
   );

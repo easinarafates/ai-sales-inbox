@@ -72,6 +72,13 @@ export default function SignupPage() {
         <button disabled={loading} className="w-full rounded-lg bg-brand py-2.5 font-medium text-white shadow-sm transition hover:bg-brand-dark disabled:opacity-50">
           {loading ? t("auth.creatingAccount", "Creating account…", "অ্যাকাউন্ট তৈরি হচ্ছে…") : t("auth.signup", "Sign up", "সাইন আপ")}
         </button>
+        <p className="text-center text-xs text-slate-500">
+          {t("auth.agreeTerms", "By signing up, you agree to our", "সাইন আপ করলে আপনি আমাদের")}{" "}
+          <Link href="/terms" className="font-medium text-brand-dark underline hover:text-brand">{t("auth.termsLink", "Terms of Service", "ব্যবহারের শর্ত")}</Link>{" "}
+          {t("auth.and", "and", "এবং")}{" "}
+          <Link href="/privacy" className="font-medium text-brand-dark underline hover:text-brand">{t("auth.privacyLink", "Privacy Policy", "প্রাইভেসি পলিসি")}</Link>
+          {t("auth.agreeEnd", ".", " মেনে নিচ্ছেন।")}
+        </p>
         <p className="text-center text-sm text-slate-500">
           {t("auth.hasAccount", "Already have an account?", "ইতিমধ্যে অ্যাকাউন্ট আছে?")}{" "}
           <Link href="/login" className="font-medium text-brand-dark underline hover:text-brand">{t("auth.loginLink", "Log in", "লগইন করুন")}</Link>
