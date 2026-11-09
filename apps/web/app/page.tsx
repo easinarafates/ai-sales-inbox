@@ -342,6 +342,9 @@ export default function LandingPage() {
             <Link href="/privacy" className="hover:text-brand-dark">
               {t("landing.privacy", "Privacy Policy", "প্রাইভেসি পলিসি")}
             </Link>
+            <Link href="/data-deletion" className="hover:text-brand-dark">
+              {t("landing.dataDeletion", "Data Deletion", "ডেটা মুছে ফেলা")}
+            </Link>
           </nav>
         </div>
         <p className="border-t border-[#eeeeee] py-3 text-center text-xs text-slate-400">

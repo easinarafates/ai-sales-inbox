@@ -165,6 +165,10 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     pathname === "/signup" ||
     pathname === "/" ||
     pathname === "/privacy" ||
+    pathname === "/terms" ||
+    pathname === "/about" ||
+    pathname === "/contact" ||
+    pathname === "/data-deletion" ||
     pathname === "/forgot-password" ||
     pathname === "/reset-password" ||
     pathname.startsWith("/invoice");

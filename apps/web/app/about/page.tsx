@@ -4,39 +4,88 @@ import Link from "next/link";
 export const metadata: Metadata = {
   title: "About — AI Sales Inbox",
   description:
-    "About AI Sales Inbox — an AI sales assistant inbox for Bangladeshi Facebook and Instagram sellers.",
+    "About AI Sales Inbox — an AI sales assistant inbox for Bangladeshi Facebook, Instagram, WhatsApp, TikTok and YouTube sellers, operated by Year Media.",
 };
 
 export default function AboutPage() {
   return (
-    <main className="min-h-screen bg-[#FFF1EA] text-slate-800">
+    <main className="min-h-screen bg-white text-slate-800">
       <div className="max-w-3xl mx-auto px-5 py-10">
         <p className="text-sm font-semibold tracking-wide text-[#FF5B2E] uppercase">
           AI Sales Inbox
         </p>
         <h1 className="text-3xl font-bold mt-2">About AI Sales Inbox</h1>
         <p className="text-sm text-slate-500 mt-2">
-          Made for online sellers in Bangladesh.
+          Made for online sellers in Bangladesh · Operated by Year Media
         </p>
+
+        <div className="mt-6 rounded-2xl border border-orange-200 bg-[#FFF1EA] p-5">
+          <p className="font-semibold text-slate-800">সংক্ষেপে (বাংলায়)</p>
+          <p className="mt-1 leading-relaxed text-slate-700">
+            AI Sales Inbox বাংলাদেশি অনলাইন দোকানদারদের জন্য — ফেসবুক,
+            ইনস্টাগ্রাম, WhatsApp, TikTok আর YouTube-এর মেসেজ এক জায়গায়
+            আসে, AI আপনার প্রোডাক্টের আসল দাম আর স্টক দেখে কাস্টমারকে
+            বাংলায় উত্তর দেয়, অর্ডার নেয়, আর Steadfast / Pathao দিয়ে
+            কুরিয়ার বুক করে। নতুন অ্যাকাউন্টে ১৪ দিনের ফ্রি ট্রায়াল আর
+            ৳৫০ ফ্রি ক্রেডিট থাকে। যোগাযোগ: info.yearmedia@gmail.com
+          </p>
+        </div>
 
         <div className="mt-8 space-y-8 bg-white rounded-2xl border border-orange-100 shadow-sm p-6 sm:p-8">
           <section>
             <h2 className="text-xl font-bold">What it is</h2>
             <p className="mt-2 leading-relaxed">
               AI Sales Inbox is a sales inbox for Bangladeshi online shops
-              that sell on Facebook and Instagram. Instead of answering the
-              same &ldquo;price?&rdquo; message fifty times a day, the shop
-              connects its Facebook Page and lets an AI assistant answer
-              customers from the shop&rsquo;s own product list — with the real
-              price and stock, in Bengali or English — while the seller keeps
-              full control and can step in at any time.
+              that sell on Facebook, Instagram, WhatsApp, TikTok and YouTube.
+              Instead of answering the same &ldquo;price?&rdquo; message fifty
+              times a day, the shop connects its Pages and channels and lets
+              an AI assistant answer customers from the shop&rsquo;s own
+              product list — with the real price and stock, in Bengali or
+              English — while the seller keeps full control and can step in at
+              any time.
             </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-bold">Who it is for</h2>
+            <p className="mt-2 leading-relaxed">
+              Small and growing online shops in Bangladesh that take orders
+              through chat — clothing, cosmetics, food, electronics, and any
+              shop where customers ask first and buy in chat. If your
+              customers message you on Messenger, Instagram, WhatsApp, TikTok
+              or YouTube, this inbox brings all of it into one place.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-bold">How it works</h2>
+            <ol className="list-decimal pl-6 mt-2 space-y-1 leading-relaxed">
+              <li>
+                <strong>Connect your channels</strong> — your Facebook Page,
+                Instagram account, WhatsApp Business number, TikTok account
+                and YouTube channel, from the Channels page.
+              </li>
+              <li>
+                <strong>Add your products</strong> — names, prices, photos
+                and stock. The AI only answers from this list, so it never
+                invents a price.
+              </li>
+              <li>
+                <strong>Let the AI reply</strong> — it answers customers,
+                shows product cards, applies coupons and takes orders. You can
+                turn it off for any chat and answer yourself, and you confirm
+                every order before delivery.
+              </li>
+            </ol>
           </section>
 
           <section>
             <h2 className="text-xl font-bold">What it does</h2>
             <ul className="list-disc pl-6 mt-2 space-y-1 leading-relaxed">
-              <li>One inbox for Facebook Page messages and Instagram DMs.</li>
+              <li>
+                One inbox for Facebook Page messages, Instagram DMs, WhatsApp
+                messages, TikTok messages and YouTube comments.
+              </li>
               <li>
                 AI replies that use only the prices and stock you entered —
                 never invented prices.
@@ -45,68 +94,106 @@ export default function AboutPage() {
                 Orders, customers, coupons, and stock in one dashboard.
               </li>
               <li>
-                Scheduled Facebook posts (text, photo, and video) with an AI
-                caption helper.
+                Courier booking with Steadfast and Pathao (delivery ৳100
+                inside Dhaka, ৳130 outside Dhaka), with delivery tracking
+                and customer updates.
               </li>
               <li>
-                A wallet: new accounts get ৳50 free credit, and each AI reply
-                deducts its real cost — you can see the cost of every reply
-                on the Billing page.
+                Scheduled posts — Facebook, Instagram, YouTube and TikTok
+                videos — with an AI caption helper.
+              </li>
+              <li>
+                Comments on your Facebook, YouTube and TikTok posts, with
+                replies from the same page.
+              </li>
+              <li>
+                Plans and credit: every new account starts with a 14-day
+                free trial and ৳50 free credit. Plans include a set number
+                of AI replies per month (Small 500, Medium 2,000, Large
+                8,000), and you can see the cost of every reply on the
+                Billing page.
               </li>
               <li>
                 Teach the AI your own answers, save replies, and hand any chat
                 to a human with one tap.
               </li>
             </ul>
-          </section>
-
-          <section>
-            <h2 className="text-xl font-bold">What it does not do (yet)</h2>
             <p className="mt-2 leading-relaxed">
-              WhatsApp and TikTok are not connected yet. Wallet top-ups are
-              manual (bKash / Nagad / bank, checked by hand) — a live payment
-              gateway is not connected yet. Instagram and TikTok post
-              publishing are coming soon; today, scheduled posts publish to
-              Facebook.
+              Some channels need approval from Meta, Google or TikTok before
+              they can connect — the Channels page shows the status of each
+              channel, and the dashboard tells you honestly what is connected
+              and what is still waiting for approval.
             </p>
           </section>
 
           <section>
-            <h2 className="text-xl font-bold">Who it is for</h2>
+            <h2 className="text-xl font-bold">Pricing</h2>
+            <ul className="list-disc pl-6 mt-2 space-y-1 leading-relaxed">
+              <li>
+                <strong>Small — ৳499/month:</strong> 500 AI replies, 1
+                channel.
+              </li>
+              <li>
+                <strong>Medium — ৳999/month:</strong> 2,000 AI replies, up to
+                3 channels.
+              </li>
+              <li>
+                <strong>Large — ৳1,999/month:</strong> 8,000 AI replies,
+                unlimited channels.
+              </li>
+            </ul>
             <p className="mt-2 leading-relaxed">
-              Small and growing online shops in Bangladesh that take orders
-              through Facebook Messenger and Instagram — clothing, cosmetics,
-              food, electronics, and any shop where customers ask first and
-              buy in chat.
+              Every new account starts with a 14-day free trial and ৳50 free
+              credit. No card is needed to start. See the{" "}
+              <Link className="text-[#FF5B2E] underline" href="/terms">
+                Terms of Service
+              </Link>{" "}
+              for the full pricing terms.
+            </p>
+          </section>
+
+          <section>
+            <h2 className="text-xl font-bold">Who we are</h2>
+            <p className="mt-2 leading-relaxed">
+              AI Sales Inbox is operated by Year Media, a Bangladeshi team
+              building tools for online sellers. We run the service, answer
+              support questions, and keep improving it from what sellers tell
+              us. Email us at{" "}
+              <a
+                className="text-[#FF5B2E] underline"
+                href="mailto:info.yearmedia@gmail.com"
+              >
+                info.yearmedia@gmail.com
+              </a>
+              . Read the{" "}
+              <Link className="text-[#FF5B2E] underline" href="/terms">
+                Terms of Service
+              </Link>{" "}
+              and{" "}
+              <Link className="text-[#FF5B2E] underline" href="/privacy">
+                Privacy Policy
+              </Link>
+              , or{" "}
+              <Link className="text-[#FF5B2E] underline" href="/contact">
+                contact us
+              </Link>
+              .
             </p>
           </section>
 
           <section>
             <h2 className="text-xl font-bold">Get started</h2>
             <p className="mt-2 leading-relaxed">
-              <Link className="text-[#0f766e] underline" href="/signup">
+              <Link className="text-[#FF5B2E] underline" href="/signup">
                 Sign up free
               </Link>{" "}
-              — 14-day free trial and ৳50 free credit, no card needed. Read
-              the{" "}
-              <Link className="text-[#0f766e] underline" href="/terms">
-                Terms of Service
-              </Link>{" "}
-              and{" "}
-              <Link className="text-[#0f766e] underline" href="/privacy">
-                Privacy Policy
-              </Link>
-              , or{" "}
-              <Link className="text-[#0f766e] underline" href="/contact">
-                contact us
-              </Link>
-              .
+              — 14-day free trial and ৳50 free credit, no card needed.
             </p>
           </section>
         </div>
 
         <p className="text-center text-sm text-slate-500 mt-8">
-          <Link className="text-[#0f766e] underline" href="/login">
+          <Link className="text-[#FF5B2E] underline" href="/login">
             Back to AI Sales Inbox
           </Link>
         </p>
