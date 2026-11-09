@@ -1,6 +1,19 @@
-import { Pool, type QueryResultRow } from 'pg';
+import { Pool, types, type QueryResultRow } from 'pg';
 import { config } from '../config';
 import { createPglitePool, isPgliteMode } from './pglite';
+
+/**
+ * node-postgres returns BIGINT (int8, OID 20) columns as STRINGS by
+ * default. Money in this codebase is stored in paisa in bigint columns
+ * (orders.total_paisa, delivery_charge_paisa, products.price_paisa, ...),
+ * so a raw `+` on two of those fields concatenated strings instead of
+ * adding numbers — the Orders list showed ৳50,000,100 for a ৳600 order
+ * (2026-11-09). Paisa values are far below Number.MAX_SAFE_INTEGER, so
+ * parse int8 as a JS number. Every existing Number(...) call still works
+ * (Number of a number is a no-op). This only affects the real `pg` pool;
+ * the PGlite adapter has its own driver.
+ */
+types.setTypeParser(20, (val: string) => parseInt(val, 10));
 
 /**
  * Database pool.

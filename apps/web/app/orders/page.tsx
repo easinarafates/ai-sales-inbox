@@ -3,7 +3,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
-  asArray, getToken, ordersApi, orderTotalPaisa,
+  asArray, getToken, ordersApi, orderTotalPaisa, deliveryChargePaisa,
   type CancelRequest, type Order, type OrderCustomer,
 } from "@/lib/api";
 import { ORDER_STATUSES, orderSourceLabel, orderStatusLabel, statusBadge } from "@/lib/orderStatus";
@@ -212,7 +212,7 @@ export default function OrdersPage() {
                       <td className="p-3"><span className="font-medium">{o.orderNumber || o.order_number || o.id.slice(0, 8)}</span><span className="block text-xs text-slate-500">{t("orders.via", "via", "মাধ্যম")}: {orderSourceLabel(o.source, lang)}</span></td>
                       <td className="p-3"><span className="flex items-center gap-2"><CustomerAvatar name={name === "—" ? "?" : name} pictureUrl={o.customer?.picture_url} sizeClass="h-8 w-8" /><span><span className="block font-medium">{name}</span><span className="block text-xs text-slate-500">{phone || notProvided}</span></span></span></td>
                       <td className="p-3 text-slate-600 max-w-[220px]">{address || <span className="text-slate-400">{notProvided}</span>}</td>
-                      <td className="p-3">{fmtTaka(orderTotalPaisa(o) + (o.deliveryChargePaisa ?? o.delivery_charge_paisa ?? 0))}</td>
+                      <td className="p-3">{fmtTaka(orderTotalPaisa(o) + deliveryChargePaisa(o))}</td>
                       <td className="p-3">{statusBadge(o.status, lang)}</td>
                       <td className="p-3 text-slate-500">{fmtDate(o.createdAt || o.created_at)}</td>
                     </tr>

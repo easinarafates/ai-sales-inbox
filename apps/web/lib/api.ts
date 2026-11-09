@@ -324,7 +324,16 @@ export interface Order {
 }
 
 export function orderTotalPaisa(o: Order): number {
-  return o.totalPaisa ?? o.total_paisa ?? o.total ?? 0;
+  // Money arrives from the API as a number, but a bigint column can come
+  // back as a STRING (node-postgres returns int8 as string) — coerce, or
+  // `total + delivery` below concatenates strings and shows ৳50,000,100
+  // for a ৳600 order (bug, 2026-11-09). Number() of a number is a no-op.
+  return Number(o.totalPaisa ?? o.total_paisa ?? o.total ?? 0);
+}
+
+/** Delivery charge snapshot on the order, always a number (same string trap). */
+export function deliveryChargePaisa(o: Order): number {
+  return Number(o.deliveryChargePaisa ?? o.delivery_charge_paisa ?? 0);
 }
 
 export function orderItemsOf(o: Order): OrderItem[] {

@@ -2,7 +2,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
-  courierApi, ordersApi, orderItemsOf, orderTotalPaisa,
+  courierApi, ordersApi, orderItemsOf, orderTotalPaisa, deliveryChargePaisa,
   type CancelRequest, type CourierProviderOption, type Order, type Shipment,
 } from "@/lib/api";
 import {
@@ -66,8 +66,11 @@ export default function OrderDetailPanel({
   const zone = order.zone;
   const handledBy = order.handledBy || order.handled_by;
   const invoiceUrl = order.invoiceUrl;
-  const grandTotal = order.grandTotalPaisa ?? order.grandTotal ?? (orderTotalPaisa(order) + (order.deliveryChargePaisa ?? order.delivery_charge_paisa ?? 0));
-  const deliveryCharge = order.deliveryChargePaisa ?? order.delivery_charge_paisa ?? 0;
+  // grandTotalPaisa comes from the API as a number (detail endpoint);
+  // the fallback must add NUMBERS — the raw fields can be strings
+  // (bigint), and string + string concatenates (bug, 2026-11-09).
+  const grandTotal = Number(order.grandTotalPaisa ?? order.grandTotal ?? (orderTotalPaisa(order) + deliveryChargePaisa(order)));
+  const deliveryCharge = deliveryChargePaisa(order);
   const intl = custPhone ? intlPhone(custPhone) : null;
   const tracking = shipmentState?.trackingNumber || shipmentState?.tracking_number || shipmentState?.trackingCode || shipmentState?.tracking_code || "";
   const lineTotal = (it: { quantity?: number; qty?: number; pricePaisa?: number; price_paisa?: number; price?: number }) =>
