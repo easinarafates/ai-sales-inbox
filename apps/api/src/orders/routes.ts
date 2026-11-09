@@ -256,6 +256,43 @@ ordersRouter.get('/counts', async (req: AuthRequest, res: Response) => {
   res.json({ counts, total });
 });
 
+/**
+ * Money breakdown for the Orders Report tab (2026-11-09, user request:
+ * the tab showed counts only, never the taka). Each category is
+ * { count, valuePaisa } where valuePaisa is the TRUE grand total per
+ * order: total_paisa + delivery_charge_paisa. All sums are done in SQL
+ * on BIGINT and converted with Number() here — never string-concatenated
+ * (see the 2026-11-09 orders-total bug, where "60000"+"10000" became
+ * ৳60,000,100). loss = cancelled + damaged + returned (no payment
+ * comes from those orders). inProgress = every order not in an end
+ * state, so the rows reconcile: delivered + cancelled + damaged +
+ * returned + inProgress = total.
+ */
+const MONEY_END_STATES = ['delivered', 'cancelled', 'damaged', 'returned'] as const;
+type MoneyCategory = { count: number; valuePaisa: number };
+type MoneyBreakdown = {
+  total: MoneyCategory; delivered: MoneyCategory; cancelled: MoneyCategory;
+  damaged: MoneyCategory; returned: MoneyCategory; loss: MoneyCategory;
+  pending: MoneyCategory; inCourier: MoneyCategory; inProgress: MoneyCategory;
+};
+function buildMoneyBreakdown(rows: { status: string; n: string; grand: string }[]): MoneyBreakdown {
+  const byStatus = new Map<string, MoneyCategory>();
+  for (const r of rows) byStatus.set(r.status, { count: Number(r.n), valuePaisa: Number(r.grand) });
+  const cat = (s: string): MoneyCategory => byStatus.get(s) ?? { count: 0, valuePaisa: 0 };
+  const sum = (...cs: MoneyCategory[]): MoneyCategory =>
+    cs.reduce((a, c) => ({ count: a.count + c.count, valuePaisa: a.valuePaisa + c.valuePaisa }), { count: 0, valuePaisa: 0 });
+  const total = sum(...byStatus.values());
+  const delivered = cat('delivered');
+  const cancelled = cat('cancelled');
+  const damaged = cat('damaged');
+  const returned = cat('returned');
+  const loss = sum(cancelled, damaged, returned);
+  const pending = cat('pending');
+  const inCourier = cat('in_transit');
+  const inProgress = sum(...[...byStatus.entries()].filter(([s]) => !(MONEY_END_STATES as readonly string[]).includes(s)).map(([, v]) => v));
+  return { total, delivered, cancelled, damaged, returned, loss, pending, inCourier, inProgress };
+}
+
 /** GET /api/orders/report — today's report (Asia/Dhaka day) + courier view. */
 ordersRouter.get('/report', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -266,9 +303,10 @@ ordersRouter.get('/report', async (req: AuthRequest, res: Response) => {
   const dayEndUtc = new Date(dayStartUtc.getTime() + 24 * 60 * 60 * 1000);
   const day = dayStartUtc.toISOString();
   const dayEnd = dayEndUtc.toISOString();
-  const { rows: todayRows } = await query<{ status: string; n: string; value: string }>(
+  const { rows: todayRows } = await query<{ status: string; n: string; value: string; grand: string }>(
     workspaceId,
-    `SELECT status, COUNT(*)::text AS n, COALESCE(SUM(total_paisa), 0)::text AS value
+    `SELECT status, COUNT(*)::text AS n, COALESCE(SUM(total_paisa), 0)::text AS value,
+            COALESCE(SUM(COALESCE(total_paisa, 0) + COALESCE(delivery_charge_paisa, 0)), 0)::text AS grand
      FROM orders WHERE workspace_id = $1 AND created_at >= $2 AND created_at < $3 GROUP BY status`,
     [workspaceId, day, dayEnd],
   );
@@ -281,6 +319,19 @@ ordersRouter.get('/report', async (req: AuthRequest, res: Response) => {
     if (r.status === 'returned') today.returned = Number(r.n);
     if (r.status === 'damaged') today.damaged = Number(r.n);
   }
+  // Money breakdown (grand totals) for today + all time. The `today`
+  // shape above is kept byte-for-byte (an existing verifier pins
+  // today.valuePaisa to the item-only sum); the money lives in the new
+  // todayMoney / overall objects.
+  const todayMoney = buildMoneyBreakdown(todayRows);
+  const { rows: overallRows } = await query<{ status: string; n: string; grand: string }>(
+    workspaceId,
+    `SELECT status, COUNT(*)::text AS n,
+            COALESCE(SUM(COALESCE(total_paisa, 0) + COALESCE(delivery_charge_paisa, 0)), 0)::text AS grand
+     FROM orders WHERE workspace_id = $1 GROUP BY status`,
+    [workspaceId],
+  );
+  const overall = buildMoneyBreakdown(overallRows);
   const { rows: courierRows } = await query<{ status: string; n: string }>(
     workspaceId,
     `SELECT COALESCE(s.status, o.status)::text AS status, COUNT(*)::text AS n
@@ -299,6 +350,8 @@ ordersRouter.get('/report', async (req: AuthRequest, res: Response) => {
     // previous day (midnight Dhaka = 18:00 UTC the day before).
     date: dhakaNow.toISOString().slice(0, 10),
     today,
+    todayMoney,
+    overall,
     courier: {
       inTransitOrders: Number(inCourier?.n ?? 0),
       shipmentsByStatus: Object.fromEntries(courierRows.map((r) => [r.status, Number(r.n)])),

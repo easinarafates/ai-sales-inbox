@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   asArray, getToken, ordersApi, orderTotalPaisa, deliveryChargePaisa,
-  type CancelRequest, type Order, type OrderCustomer,
+  type CancelRequest, type MoneyBreakdown, type MoneyCategory, type Order, type OrderCustomer,
 } from "@/lib/api";
 import { ORDER_STATUSES, orderSourceLabel, orderStatusLabel, statusBadge } from "@/lib/orderStatus";
 import { useI18n } from "@/lib/i18n";
@@ -16,7 +16,48 @@ type View = "orders" | "customers" | "report" | "cancel-requests";
 interface ReportData {
   date: string;
   today: { orders: number; delivered: number; cancelled: number; returned: number; damaged: number; valuePaisa: number };
+  /** Money breakdown (grand total = items + delivery) for today. Optional: an older API may not send it yet. */
+  todayMoney?: MoneyBreakdown;
+  /** Money breakdown (grand total = items + delivery) for all time. */
+  overall?: MoneyBreakdown;
   courier: { inTransitOrders: number; shipmentsByStatus: Record<string, number> };
+}
+
+/** Money grid for the Report tab: every category as COUNT + TAKA.
+ * loss = cancelled + damaged + returned, shown in red with its parts
+ * spelled out so the owner can see exactly what adds up to the loss. */
+function MoneyBreakdownGrid({ breakdown }: { breakdown: MoneyBreakdown }) {
+  const { t, fmtTaka, fmtNum } = useI18n();
+  const rows: { label: string; cat: MoneyCategory; tone?: "loss" }[] = [
+    { label: t("orders.moneyTotal", "Total order value", "মোট ভ্যালু"), cat: breakdown.total },
+    { label: t("orders.moneyDelivered", "Delivered value", "ডেলিভারি হয়েছে"), cat: breakdown.delivered },
+    { label: t("orders.moneyCancelled", "Cancelled value", "ক্যান্সেল গেছে"), cat: breakdown.cancelled },
+    { label: t("orders.moneyDamaged", "Damaged value", "ড্যামেজ"), cat: breakdown.damaged },
+    { label: t("orders.moneyReturned", "Returned value", "রিটার্ন"), cat: breakdown.returned },
+    { label: t("orders.moneyLoss", "Total loss", "মোট লস"), cat: breakdown.loss, tone: "loss" },
+    { label: t("orders.moneyPending", "Pending value", "পেন্ডিং"), cat: breakdown.pending },
+    { label: t("orders.moneyInCourier", "In courier value", "কুরিয়ারে আছে"), cat: breakdown.inCourier },
+    { label: t("orders.moneyInProgress", "In progress value", "চলমান অর্ডার"), cat: breakdown.inProgress },
+  ];
+  return (
+    <div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mt-3">
+        {rows.map(({ label, cat, tone }) => (
+          <div key={label} className={tone === "loss" ? "bg-red-50 border border-red-200 rounded-lg p-3" : "bg-orange-50 rounded-lg p-3"}>
+            <p className="text-xs text-slate-500">{label}</p>
+            <p className="font-bold text-lg">{fmtTaka(cat.valuePaisa)}</p>
+            <p className="text-xs text-slate-500">{fmtNum(cat.count)} {t("orders.moneyOrders", "orders", "টি অর্ডার")}</p>
+          </div>
+        ))}
+      </div>
+      <p className="text-xs text-slate-500 mt-3">
+        {t("orders.moneyLossNote", "Loss = cancelled + damaged + returned.", "লস = ক্যান্সেল + ড্যামেজ + রিটার্ন।")}{" "}
+        {t("orders.moneyLossParts", "Cancelled", "ক্যান্সেল")} {fmtTaka(breakdown.cancelled.valuePaisa)} ·{" "}
+        {t("orders.moneyDamagedShort", "Damaged", "ড্যামেজ")} {fmtTaka(breakdown.damaged.valuePaisa)} ·{" "}
+        {t("orders.moneyReturnedShort", "Returned", "রিটার্ন")} {fmtTaka(breakdown.returned.valuePaisa)}
+      </p>
+    </div>
+  );
 }
 
 export default function OrdersPage() {
@@ -289,6 +330,18 @@ export default function OrdersPage() {
                 ))}
               </div>
             </div>
+            {report.todayMoney && (
+              <div className="card p-4">
+                <h2 className="font-bold">{t("orders.todayMoney", "Today's money", "আজকের টাকার হিসাব")} — {report.date}</h2>
+                <MoneyBreakdownGrid breakdown={report.todayMoney} />
+              </div>
+            )}
+            {report.overall && (
+              <div className="card p-4">
+                <h2 className="font-bold">{t("orders.overallMoney", "Overall money — all time", "সব মিলিয়ে টাকার হিসাব")}</h2>
+                <MoneyBreakdownGrid breakdown={report.overall} />
+              </div>
+            )}
             <div className="card p-4">
               <h2 className="font-bold">{t("orders.courierView", "Courier", "কুরিয়ার")}</h2>
               <p className="text-sm mt-2">{t("orders.inCourierNow", "Orders with the courier now:", "এখন কুরিয়ারে আছে:")} <b>{report.courier.inTransitOrders}</b></p>

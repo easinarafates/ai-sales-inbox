@@ -269,6 +269,29 @@ export type OrderStatus =
   | "damaged"
   | "in_store";
 
+/** One money row in the Orders Report tab: how many orders + their
+ * true grand total in paisa (items + delivery charge). */
+export interface MoneyCategory {
+  count: number;
+  valuePaisa: number;
+}
+
+/** Money breakdown for the Orders Report tab (API: GET /api/orders/report).
+ * loss = cancelled + damaged + returned. inProgress = every order not in
+ * an end state, so delivered + cancelled + damaged + returned + inProgress
+ * = total. */
+export interface MoneyBreakdown {
+  total: MoneyCategory;
+  delivered: MoneyCategory;
+  cancelled: MoneyCategory;
+  damaged: MoneyCategory;
+  returned: MoneyCategory;
+  loss: MoneyCategory;
+  pending: MoneyCategory;
+  inCourier: MoneyCategory;
+  inProgress: MoneyCategory;
+}
+
 export interface Order {
   id: string;
   orderNumber?: string;
@@ -643,6 +666,10 @@ export const ordersApi = {
   report: () => api.get<{
     date: string;
     today: { orders: number; delivered: number; cancelled: number; returned: number; damaged: number; valuePaisa: number };
+    /** Money breakdown (grand total = items + delivery) for today. */
+    todayMoney: MoneyBreakdown;
+    /** Money breakdown (grand total = items + delivery) for all time. */
+    overall: MoneyBreakdown;
     courier: { inTransitOrders: number; shipmentsByStatus: Record<string, number> };
   }>("/api/orders/report"),
   /** Customer list inside Orders — amounts are NOT in this response. */
