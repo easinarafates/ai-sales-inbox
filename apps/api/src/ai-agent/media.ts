@@ -217,9 +217,28 @@ export async function analyseCustomerImage(
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.buffer.toString('base64') } });
     }
   }
+  // Retry once on a transient failure (429 / 5xx / network blip): a
+  // single failed vision call must not make the tool report "image
+  // search not available" when vision IS configured — the customer
+  // would get a misleading message for a photo vision could have read.
+  // (No key returns null, not an error — no retry, falls back honestly.)
+  let result: Awaited<ReturnType<typeof callGeminiMultimodal>> = null;
+  let lastErr: Error | null = null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      result = await callGeminiMultimodal(parts, { json: true });
+      break;
+    } catch (err) {
+      lastErr = err as Error;
+      console.error(`[media] vision match attempt ${attempt + 1} failed:`, lastErr.message);
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 5000));
+    }
+  }
+  if (!result || !result.text.trim()) {
+    if (lastErr) console.error('[media] vision match failed after retry:', lastErr.message);
+    return null;
+  }
   try {
-    const result = await callGeminiMultimodal(parts, { json: true });
-    if (!result || !result.text.trim()) return null;
     const parsed = JSON.parse(result.text) as Partial<ImageMatchOutcome>;
     const matchedId =
       typeof parsed.matchedId === 'string' && catalog.some((p) => p.id === parsed.matchedId)
@@ -240,7 +259,7 @@ export async function analyseCustomerImage(
       usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
     };
   } catch (err) {
-    console.error('[media] vision match failed:', (err as Error).message);
+    console.error('[media] vision match response parse failed:', (err as Error).message);
     return null;
   }
 }

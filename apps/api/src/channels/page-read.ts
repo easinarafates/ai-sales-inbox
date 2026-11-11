@@ -87,6 +87,26 @@ export function bengaliToLatinDigits(s: string): string {
   return s.replace(/[০-৯]/g, (d) => String('০১২৩৪৫৬৭৮৯'.indexOf(d)));
 }
 
+/**
+ * Normalize a product name for dedup: lowercase, strip punctuation and
+ * extra spaces, drop common seller filler ("নতুন", "new", "মাত্র",
+ * "only"). This is a SECONDARY dedup guard — the PRIMARY guard is the
+ * source post id (reliable now that extraction returns post_index).
+ * Two extractions of the same product with different wording can still
+ * differ after normalization, so the post id does the heavy lifting;
+ * the normalized name catches the same product posted twice under the
+ * same name in different posts.
+ */
+export function normalizeProductNameForDedup(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[–—\-_.,;:!?()"'“”‘’\/\\]/g, ' ')
+    .replace(/^(নতুন|নিউ|new)\s+/i, '')
+    .replace(/\s+(মাত্র|শুধুমাত্র|only)$/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function parsePriceTaka(text: string): number | null {
   const m = text.match(/(?:৳|টাকা|Tk\.?|BDT)\s*([০-৯0-9][০-৯0-9,]*)/);
   if (!m) return null;
@@ -100,6 +120,14 @@ function cleanName(raw: string): string {
     .replace(/#\S+/g, '')
     .replace(/[\u{1F300}-\u{1FAFF}\u{2600}-\u{27BF}]/gu, '')
     .replace(/\s+/g, ' ')
+    .trim()
+    // A dash (—/–) usually separates the product name from an
+    // announcement clause ("শার্ট — আবার স্টকে এসেছে" → "শার্ট"), so
+    // keep only the part before the dash — otherwise the same product
+    // posted twice (once as a listing, once as a "back in stock"
+    // announcement) extracts two different names and the dedup misses
+    // it. (ASCII "-" is NOT split, so "T-shirt" stays whole.)
+    .split(/[—–]/)[0]
     .trim()
     // Filler words sellers put around the name ("নতুন শার্ট মাত্র" → "শার্ট").
     .replace(/^(নতুন|নিউ|new)\s+/i, '')
@@ -152,7 +180,8 @@ const GEMINI_EXTRACT_PROMPT = `তুমি একটি ফেসবুক প�
 - দাম (price_taka) শুধু তখনই দাও যখন পোস্টে দাম স্পষ্ট লেখা আছে (যেমন ৳৬০০ বা ৬০০ টাকা)। পোস্টে দাম না থাকলে price_taka হবে null — কখনো দাম বানিয়ে লিখো না।
 - পণ্য নয় এমন পোস্ট (শুভেচ্ছা, দোয়া, ঘোষণা, ছবি ছাড়া সাধারণ লেখা) বাদ দাও।
 - নাম সংক্ষিপ্ত রাখো (পণ্যের নামটুকুই), বিবরণ ১-২ লাইন।
-- শুধু JSON দাও, আর কিছু নয়: {"products": [{"name": "...", "price_taka": 600, "description": "..."}]}
+- প্রতিটা পণ্যের সাথে post_index দাও — পণ্যটি যে পোস্ট থেকে এসেছে তার [i] নম্বর (উপরে প্রতিটা পোস্টের আগে [0], [1], ... লেখা আছে)। এটা খুব জরুরি — ভুল post_index দিও না, আন্দাজে দিও না; যে পোস্টে পণ্যটির কথা লেখা আছে ঠিক সেই পোস্টের নম্বর দাও।
+- শুধু JSON দাও, আর কিছু নয়: {"products": [{"name": "...", "price_taka": 600, "description": "...", "post_index": 0}]}
 
 পোস্ট:
 `;
@@ -175,15 +204,27 @@ async function extractChunkWithGemini(posts: PagePost[], aiCall: AiCall): Promis
   try {
     const cleaned = result.text.replace(/```json|```/g, '').trim();
     const parsed = JSON.parse(cleaned) as {
-      products?: { name?: string; price_taka?: number | null; description?: string }[];
+      products?: { name?: string; price_taka?: number | null; description?: string; post_index?: number }[];
     };
     const byId = new Map(posts.map((p, i) => [i, p]));
     return (parsed.products ?? [])
       .filter((p) => typeof p?.name === 'string' && p.name.trim().length >= 2)
       .map((p, i) => {
-        // Match the product back to its post by order; fall back to the
-        // chunk's first post when Gemini reorders (source is indicative).
-        const post = byId.get(i) ?? posts[0];
+        // Map the product back to the EXACT post it came from via the
+        // post_index the model returned. The old order-based mapping
+        // (i-th product -> i-th post) broke whenever Gemini reordered
+        // or merged products — the source_post_id was wrong, so the
+        // dedup on re-read missed already-processed products and the
+        // same products came back as pending (user report, 2026-11-12).
+        // Fall back to the product's position only when the model gave
+        // no usable post_index (source is indicative then).
+        const idx =
+          typeof p.post_index === 'number' && Number.isInteger(p.post_index) && p.post_index >= 0 && p.post_index < posts.length
+            ? p.post_index
+            : i < posts.length
+              ? i
+              : 0;
+        const post = byId.get(idx) ?? posts[0];
         const priceTaka =
           typeof p.price_taka === 'number' && Number.isFinite(p.price_taka) && p.price_taka > 0
             ? Math.round(p.price_taka)
