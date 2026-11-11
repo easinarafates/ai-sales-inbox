@@ -290,14 +290,15 @@ async function main(): Promise<void> {
     };
   }
 
-  // --- Off-topic → Waiting + notification, no AI reply ---
+  // --- Off-topic → ONE graceful deterministic reply, then Waiting + notification
+  // (Feature 1, 2026-11-11 — no AI call, no charge) ---
   {
     const { conversationId } = await seedConversation('OffTopic Customer');
     const result = await processBatch(workspaceId, conversationId, [{ body: 'তুমি ছেলে নাকি মেয়ে?' }]);
     const state = await convState(conversationId);
     const note = await notificationFor(conversationId);
     out.offTopic = {
-      conversationId, result, state, outMessages: await outCount(conversationId), notification: note,
+      conversationId, result, state, outMessages: await outCount(conversationId), outBodies: await outMessages(conversationId), notification: note,
     };
   }
 

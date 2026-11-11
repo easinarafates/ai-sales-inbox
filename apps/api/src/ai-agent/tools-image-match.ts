@@ -9,7 +9,11 @@
  * Result: matchProductsByImage() — { available, matches, uncertain, message? }.
  * When no embedding provider is configured, available=false and the agent
  * must tell the customer (in Bengali) that image search is not on yet.
- * Matches come only from product_images/products — never invented.
+ * Matches come only from product_images/products — never invented — and
+ * only at cosine similarity ≥ 0.85 (image-match.ts): below that bar NO
+ * matches are returned, so the agent must NOT show look-alikes as
+ * "similar products" — it asks for the product name instead (no-fake
+ * rule, 2026-11-11).
  */
 import type { ToolDb, ToolArgs, ToolResult } from './tools';
 import { matchProductsByImage } from './image-match';

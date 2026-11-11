@@ -16,6 +16,7 @@ import {
   type WhatsappAccount,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { PlatformLogo } from "@/components/PlatformLogo";
 
 // Display labels for every platform value the API can return.
 const PLATFORM_KEYS: Record<string, string> = {
@@ -40,15 +41,9 @@ const PLATFORM_FALLBACK: Record<string, [string, string]> = {
   tiktok_dm: ["TikTok", "TikTok"],
 };
 
-// Manual form options: select value → API platform value.
-// Facebook is OAuth-only now (the old "facebook_page" option sent a
-// platform the API never accepted, so it always failed).
-const MANUAL_OPTIONS: { value: string; api: string }[] = [
-  { value: "instagram", api: "instagram" },
-  { value: "website", api: "webchat" },
-  { value: "whatsapp", api: "whatsapp" },
-  { value: "tiktok", api: "tiktok" },
-];
+// Manual add (ID + token) was removed (YEARBITO Task 10): every channel
+// now connects only through its own "Connect" button below. The API
+// create route stays for the WhatsApp manual fallback form.
 
 // One connect card per channel. Facebook, Instagram and WhatsApp connect
 // through the same Meta app (separate login endpoints, own scopes);
@@ -101,17 +96,23 @@ const OAUTH_CARDS: Record<OAuthKind, { title: string; desc: string; button: stri
   },
 };
 
+// Website is not an OAuth flow: it is the embeddable chat widget for the
+// shop's own website (see /website-chat). It gets its own card in the
+// same grid, with a button that opens the snippet page.
+const WEBSITE_CARD = {
+  title: "channels.websiteTitle",
+  desc: "channels.websiteDesc",
+  button: "channels.websiteButton",
+  color: "#0051F6",
+  platforms: ["webchat", "website"],
+};
+
 export default function ChannelsPage() {
   const router = useRouter();
   const { t, fmtDate } = useI18n();
   const [channels, setChannels] = useState<SalesChannel[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [platform, setPlatform] = useState("instagram");
-  const [externalId, setExternalId] = useState("");
-  const [displayName, setDisplayName] = useState("");
-  const [token, setToken] = useState("");
   const [notice, setNotice] = useState("");
   // Meta OAuth flows (Facebook / Instagram / WhatsApp) + TikTok / YouTube.
   const [oauthBusy, setOauthBusy] = useState<OAuthKind | "">("");
@@ -121,6 +122,11 @@ export default function ChannelsPage() {
   const [waManualToken, setWaManualToken] = useState("");
   const [waManualWabaId, setWaManualWabaId] = useState("");
   const [waManualBusy, setWaManualBusy] = useState(false);
+  // The manual form is long (3 inputs + button) and stretched the
+  // WhatsApp card far taller than its row-mates, leaving a big empty
+  // gap under the Facebook/Instagram cards — so it sits behind a
+  // toggle, collapsed by default. The form itself is unchanged.
+  const [waManualOpen, setWaManualOpen] = useState(false);
   const [picker, setPicker] = useState<{ kind: OAuthKind; session: string; account: string } | null>(null);
   const [pickItems, setPickItems] = useState<FacebookPage[] | InstagramPage[] | WhatsappAccount[] | null>(null);
   const [connectingId, setConnectingId] = useState("");
@@ -397,38 +403,15 @@ export default function ChannelsPage() {
     }
   };
 
-  const needsApproval = platform === "whatsapp" || platform === "tiktok";
-
-  const connect = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError("");
-    setNotice("");
-    setSaving(true);
-    try {
-      const apiPlatform = MANUAL_OPTIONS.find((o) => o.value === platform)?.api ?? platform;
-      const res = await salesChannelsApi.create({
-        platform: apiPlatform,
-        externalId: externalId.trim(),
-        displayName: displayName.trim() || undefined,
-        token: token.trim() || undefined,
-      });
-      const ch = (res as { channel?: SalesChannel }).channel ?? (res as SalesChannel);
-      if (channelNeedsApproval(ch)) {
-        setNotice(t("channels.pendingApproval", "This channel is waiting for approval — it will start once approved.", "এই চ্যানেলটি অনুমোদনের জন্য অপেক্ষমাণ — অনুমোদন পেলে চালু হবে।"));
-      } else {
-        setNotice(t("channels.added", "Channel added.", "চ্যানেল যুক্ত হয়েছে।"));
-      }
-      setExternalId(""); setDisplayName(""); setToken("");
-      await load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : t("channels.addFailed", "Could not add the channel.", "চ্যানেল যুক্ত করা যায়নি।"));
-    } finally {
-      setSaving(false);
-    }
-  };
-
   const connectedOf = (kind: OAuthKind) =>
     channels.filter((c) => OAUTH_CARDS[kind].platforms.includes(channelPlatform(c)));
+
+  // Website chat: the widget auto-creates a "webchat" channel row on the
+  // first visitor message, so a connected badge means visitors can
+  // already reach the inbox from the shop's website.
+  const websiteConnected = channels.filter((c) =>
+    WEBSITE_CARD.platforms.includes(channelPlatform(c)),
+  );
 
   const pickerTitle =
     picker?.kind === "instagram"
@@ -454,24 +437,32 @@ export default function ChannelsPage() {
   return (
     <div>
       <h1 className="page-title">{t("channels.title", "Channels", "চ্যানেল")}</h1>
-      <p className="page-subtitle">{t("channels.subtitle", "Connect your Facebook Page, Instagram, WhatsApp, TikTok and YouTube.", "ফেসবুক পেজ, ইনস্টাগ্রাম, WhatsApp, TikTok আর YouTube যুক্ত করুন।")}</p>
+      <p className="page-subtitle">{t("channels.subtitle", "Connect your Facebook Page, Instagram, WhatsApp, TikTok, YouTube and your own website.", "ফেসবুক পেজ, ইনস্টাগ্রাম, WhatsApp, TikTok, YouTube আর আপনার নিজের ওয়েবসাইট যুক্ত করুন।")}</p>
       {error && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-4">{error}</p>}
       {notice && <p className="bg-green-50 text-green-700 text-sm p-3 rounded-lg mb-4">{notice}</p>}
 
       <h2 className="font-bold mb-3">{t("channels.connectTitle", "Connect a channel", "চ্যানেল যুক্ত করুন")}</h2>
-      <p className="text-sm text-slate-600 mb-4">{t("channels.connectDesc", "Connect each place your customers message you — Facebook, Instagram, WhatsApp, TikTok or YouTube.", "তোমার কাস্টমাররা যেখান থেকে মেসেজ দেয়, সেটা যুক্ত করো — Facebook, Instagram, WhatsApp, TikTok বা YouTube।")}</p>
+      <p className="text-sm text-slate-600 mb-4">{t("channels.connectDesc", "Connect each place your customers message you — Facebook, Instagram, WhatsApp, TikTok, YouTube or your own website.", "তোমার কাস্টমাররা যেখান থেকে মেসেজ দেয়, সেটা যুক্ত করো — Facebook, Instagram, WhatsApp, TikTok, YouTube বা তোমার নিজের ওয়েবসাইট।")}</p>
 
+      {/* Uniform cards: each card is a flex column with the connect button
+          pinned to the bottom (order-4 + mt-auto); the conditional extras
+          (amber setup notes order-1, switch-account hint order-2, WhatsApp
+          manual toggle order-3) render above it so all six buttons line up
+          and no card ends up taller/shorter than its row-mates. */}
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4 mb-6">
         {OAUTH_KINDS.map((kind) => {
           const card = OAUTH_CARDS[kind];
           const connected = connectedOf(kind);
           return (
-            <div key={kind} className="card card-hover p-4">
-              <h3 className="font-bold">
-                {t(card.title, kind === "facebook" ? "Connect Facebook Page" : kind === "instagram" ? "Connect Instagram" : kind === "whatsapp" ? "Connect WhatsApp" : kind === "tiktok" ? "Connect TikTok" : "Connect YouTube", kind === "facebook" ? "Facebook পেজ যুক্ত করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : kind === "whatsapp" ? "WhatsApp যুক্ত করুন" : kind === "tiktok" ? "TikTok যুক্ত করুন" : "YouTube যুক্ত করুন")}
-              </h3>
-              <p className="text-sm text-slate-600 mt-1 mb-3">
-                {t(card.desc, kind === "facebook" ? "Log in with Facebook and pick the Page that should receive your shop's messages — no Page ID or token to type." : kind === "instagram" ? "Log in with Facebook and pick the Instagram account linked to your Page — Instagram messages will arrive in your inbox." : kind === "whatsapp" ? "Connect your WhatsApp Business number — customer WhatsApp messages will arrive in your inbox." : kind === "tiktok" ? "Log in with TikTok and link your TikTok account — your TikTok profile will be verified before it is stored." : "Sign in with Google and link your YouTube channel — the channel will be verified before it is stored.", kind === "facebook" ? "Facebook দিয়ে লগইন করে যে পেজে তোমার দোকানের মেসেজ আসবে সেটা বেছে নাও — পেজ ID বা টোকেন টাইপ করতে হবে না।" : kind === "instagram" ? "Facebook দিয়ে লগইন করে তোমার পেজের সাথে যুক্ত Instagram অ্যাকাউন্টটি বেছে নাও — Instagram-এর মেসেজ ইনবক্সে আসবে।" : kind === "whatsapp" ? "তোমার WhatsApp Business নম্বরটি যুক্ত করো — কাস্টমারের WhatsApp মেসেজ ইনবক্সে আসবে।" : kind === "tiktok" ? "TikTok দিয়ে লগইন করে তোমার TikTok অ্যাকাউন্টটি যুক্ত করো — যুক্ত করার আগে প্রোফাইলটি যাচাই করা হবে।" : "Google দিয়ে সাইন ইন করে তোমার YouTube চ্যানেলটি যুক্ত করো — যুক্ত করার আগে চ্যানেলটি যাচাই করা হবে।")}
+            <div key={kind} className="card card-hover p-4 flex flex-col h-full">
+              <div className="flex items-center gap-2 mb-1">
+                <PlatformLogo platform={kind} size={32} />
+                <h3 className="font-bold">
+                  {t(card.title, kind === "facebook" ? "Connect Facebook Page" : kind === "instagram" ? "Connect Instagram" : kind === "whatsapp" ? "Connect WhatsApp" : kind === "tiktok" ? "Connect TikTok" : "Connect YouTube", kind === "facebook" ? "Facebook পেজ যুক্ত করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : kind === "whatsapp" ? "WhatsApp যুক্ত করুন" : kind === "tiktok" ? "TikTok যুক্ত করুন" : "YouTube যুক্ত করুন")}
+                </h3>
+              </div>
+              <p className="text-sm text-slate-600 mt-1 mb-3 min-h-[2.5rem]">
+                {t(card.desc, kind === "facebook" ? "Connect the Facebook Page that should receive your shop's messages — no Page ID or token to type." : kind === "instagram" ? "Connect the Instagram account linked to your Page — Instagram messages will arrive in your inbox." : kind === "whatsapp" ? "Connect your WhatsApp Business number — customer WhatsApp messages will arrive in your inbox." : kind === "tiktok" ? "Connect your TikTok account — your TikTok profile will be verified before it is stored." : "Connect your YouTube channel — the channel will be verified before it is stored.", kind === "facebook" ? "তোমার দোকানের মেসেজ যে পেজে আসবে সেটা যুক্ত করো — পেজ ID বা টোকেন টাইপ করতে হবে না।" : kind === "instagram" ? "তোমার পেজের সাথে যুক্ত Instagram অ্যাকাউন্টটি যুক্ত করো — Instagram-এর মেসেজ ইনবক্সে আসবে।" : kind === "whatsapp" ? "তোমার WhatsApp Business নম্বরটি যুক্ত করো — কাস্টমারের WhatsApp মেসেজ ইনবক্সে আসবে।" : kind === "tiktok" ? "তোমার TikTok অ্যাকাউন্টটি যুক্ত করো — যুক্ত করার আগে প্রোফাইলটি যাচাই করা হবে।" : "তোমার YouTube চ্যানেলটি যুক্ত করো — যুক্ত করার আগে চ্যানেলটি যাচাই করা হবে।")}
               </p>
               {/* WhatsApp connects via Facebook Login (WABA OAuth) — that
                   stays as a small secondary note only; the card leads
@@ -490,52 +481,68 @@ export default function ChannelsPage() {
               <button
                 onClick={kind === "facebook" ? loginWithFacebook : () => loginWith(kind)}
                 disabled={oauthBusy !== ""}
-                className="rounded-lg px-4 py-2 text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
+                className="order-4 mt-auto self-start rounded-lg px-4 py-2 text-white shadow-sm transition hover:opacity-90 disabled:opacity-50"
                 style={{ backgroundColor: card.color }}
               >
                 {oauthBusy === kind
                   ? t(card.opening, "Opening…", "খুলছে…")
-                  : t(card.button, kind === "facebook" ? "Login with Facebook" : kind === "instagram" ? "Connect Instagram" : kind === "whatsapp" ? "Connect WhatsApp" : kind === "tiktok" ? "Connect TikTok" : "Connect YouTube", kind === "facebook" ? "Facebook দিয়ে লগইন করুন" : kind === "instagram" ? "Instagram যুক্ত করুন" : kind === "whatsapp" ? "WhatsApp যুক্ত করুন" : kind === "tiktok" ? "TikTok যুক্ত করুন" : "YouTube যুক্ত করুন")}
+                  : t(card.button, kind === "facebook" ? "Facebook Connect" : kind === "instagram" ? "Instagram Connect" : kind === "whatsapp" ? "WhatsApp Connect" : kind === "tiktok" ? "TikTok Connect" : "YouTube Connect", kind === "facebook" ? "Facebook Connect" : kind === "instagram" ? "Instagram Connect" : kind === "whatsapp" ? "WhatsApp Connect" : kind === "tiktok" ? "TikTok Connect" : "YouTube Connect")}
               </button>
               {/* TikTok / YouTube need the owner's app keys first — say so
                   on the card instead of letting the button fail silently. */}
               {kind === "whatsapp" && setupStatus && !setupStatus.whatsappConfigIdConfigured && (
-                <p className="text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
+                <p className="order-1 text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
                   {t("channels.whatsappSetupNeeded", "One-click connect needs Embedded Signup — the owner must create the WhatsApp Embedded Signup config in the Meta app dashboard and set WHATSAPP_CONFIG_ID first. Until then, the manual form below (phone-number ID + permanent token) works without it.", "এক ক্লিকে যুক্ত করতে Embedded Signup লাগবে — মালিককে প্রথমে Meta অ্যাপে WhatsApp → Embedded Signup থেকে Configuration ID বানিয়ে WHATSAPP_CONFIG_ID বসাতে হবে। ততক্ষণ নিচের ম্যানুয়াল ফর্মটি (ফোন নম্বরের ID + স্থায়ী টোকেন) কাজ করবে।")}
                 </p>
               )}
               {kind === "tiktok" && setupStatus && !setupStatus.tiktokConfigured && (
-                <p className="text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
+                <p className="order-1 text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
                   {t("channels.tiktokSetupNeeded", "TikTok is not set up yet — the owner must add the TikTok app's Client Key and Client Secret first (developers.tiktok.com → create an app, turn on Login Kit).", "TikTok এখনো সেটআপ হয়নি — মালিককে প্রথমে TikTok অ্যাপের Client Key আর Client Secret দিতে হবে (developers.tiktok.com-এ গিয়ে অ্যাপ বানিয়ে Login Kit চালু করুন)।")}
                 </p>
               )}
               {kind === "youtube" && setupStatus && !setupStatus.youtubeConfigured && (
-                <p className="text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
+                <p className="order-1 text-xs bg-amber-50 text-amber-800 p-2 rounded-lg mt-3">
                   {t("channels.youtubeSetupNeeded", "YouTube is not set up yet — the owner must add the Google OAuth Client ID and Client Secret first (Google Cloud Console → OAuth client, YouTube Data API v3 on).", "YouTube এখনো সেটআপ হয়নি — মালিককে প্রথমে Google OAuth-এর Client ID আর Client Secret দিতে হবে (Google Cloud Console-এ OAuth ক্লায়েন্ট বানিয়ে YouTube Data API v3 চালু করুন)।")}
                 </p>
               )}
-              {/* WhatsApp manual fallback: verified phone-number ID + token. */}
+              {/* WhatsApp manual fallback: verified phone-number ID + token.
+                  Collapsed by default (toggle) — the inline form made this
+                  card ~500px taller than the others and left a large empty
+                  gap under the Facebook/Instagram cards. Same form, same
+                  handler, just hidden until the user opens it. */}
               {kind === "whatsapp" && (
-                <form onSubmit={connectWhatsappManually} className="mt-4 border-t pt-3 space-y-2">
-                  <p className="text-sm font-medium">{t("channels.whatsappManualTitle", "Or connect manually (Cloud API)", "অথবা ম্যানুয়ালি যুক্ত করুন (Cloud API)")}</p>
-                  <p className="text-xs text-slate-500">{t("channels.whatsappManualHint", "If Facebook login does not list your number, paste the phone-number ID and a permanent access token from Meta Business Suite — the number is verified before it is stored. No test message is sent.", "Facebook লগইনে নম্বর না দেখালে, Meta Business Suite থেকে ফোন নম্বরের ID আর স্থায়ী অ্যাক্সেস টোকেন বসান — যুক্ত করার আগে নম্বরটি যাচাই করা হবে। কোনো টেস্ট মেসেজ পাঠানো হবে না।")}</p>
-                  <input required value={waManualPhoneId} onChange={(e) => setWaManualPhoneId(e.target.value)} placeholder={t("channels.whatsappManualPhoneId", "Phone-number ID", "ফোন নম্বরের ID")} className="border rounded-lg px-3 py-2 w-full text-sm" />
-                  <input required value={waManualToken} onChange={(e) => setWaManualToken(e.target.value)} placeholder={t("channels.whatsappManualToken", "Permanent access token", "স্থায়ী অ্যাক্সেস টোকেন")} className="border rounded-lg px-3 py-2 w-full text-sm" type="password" />
-                  <input value={waManualWabaId} onChange={(e) => setWaManualWabaId(e.target.value)} placeholder={t("channels.whatsappManualWabaId", "WhatsApp Business Account ID (optional)", "WhatsApp Business অ্যাকাউন্ট ID (যদি থাকে)")} className="border rounded-lg px-3 py-2 w-full text-sm" />
-                  <button disabled={waManualBusy} className="bg-brand text-white px-3 py-2 rounded-lg text-sm hover:bg-brand-dark disabled:opacity-50 w-full">
-                    {waManualBusy ? t("channels.whatsappManualConnecting", "Verifying…", "যাচাই হচ্ছে…") : t("channels.whatsappManualButton", "Verify & connect number", "যাচাই করে নম্বর যুক্ত করুন")}
+                <div className="order-3 mt-4 border-t pt-3">
+                  <button
+                    type="button"
+                    onClick={() => setWaManualOpen((v) => !v)}
+                    aria-expanded={waManualOpen}
+                    className="flex w-full items-center justify-between text-sm font-medium text-slate-700 hover:text-brand-dark"
+                  >
+                    <span>{t("channels.whatsappManualTitle", "Or connect manually (Cloud API)", "অথবা ম্যানুয়ালি যুক্ত করুন (Cloud API)")}</span>
+                    <span aria-hidden="true" className="text-base leading-none">{waManualOpen ? "▾" : "▸"}</span>
                   </button>
-                </form>
+                  {waManualOpen && (
+                    <form onSubmit={connectWhatsappManually} className="space-y-2 pt-2">
+                      <p className="text-xs text-slate-500">{t("channels.whatsappManualHint", "If Facebook login does not list your number, paste the phone-number ID and a permanent access token from Meta Business Suite — the number is verified before it is stored. No test message is sent.", "Facebook লগইনে নম্বর না দেখালে, Meta Business Suite থেকে ফোন নম্বরের ID আর স্থায়ী অ্যাক্সেস টোকেন বসান — যুক্ত করার আগে নম্বরটি যাচাই করা হবে। কোনো টেস্ট মেসেজ পাঠানো হবে না।")}</p>
+                      <input required value={waManualPhoneId} onChange={(e) => setWaManualPhoneId(e.target.value)} placeholder={t("channels.whatsappManualPhoneId", "Phone-number ID", "ফোন নম্বরের ID")} className="border rounded-lg px-3 py-2 w-full text-sm" />
+                      <input required value={waManualToken} onChange={(e) => setWaManualToken(e.target.value)} placeholder={t("channels.whatsappManualToken", "Permanent access token", "স্থায়ী অ্যাক্সেস টোকেন")} className="border rounded-lg px-3 py-2 w-full text-sm" type="password" />
+                      <input value={waManualWabaId} onChange={(e) => setWaManualWabaId(e.target.value)} placeholder={t("channels.whatsappManualWabaId", "WhatsApp Business Account ID (optional)", "WhatsApp Business অ্যাকাউন্ট ID (যদি থাকে)")} className="border rounded-lg px-3 py-2 w-full text-sm" />
+                      <button disabled={waManualBusy} className="bg-brand text-white px-3 py-2 rounded-lg text-sm hover:bg-brand-dark disabled:opacity-50 w-full">
+                        {waManualBusy ? t("channels.whatsappManualConnecting", "Verifying…", "যাচাই হচ্ছে…") : t("channels.whatsappManualButton", "Verify & connect number", "যাচাই করে নম্বর যুক্ত করুন")}
+                      </button>
+                    </form>
+                  )}
+                </div>
               )}
               {META_KINDS.includes(kind) && (
                 <>
-                  <p className="text-xs text-slate-500 mt-3">
+                  <p className="order-2 text-xs text-slate-500 mt-3">
                     {t("channels.switchAccountHint", "Facebook always uses the account signed in on facebook.com. To use another account, tap below — Facebook will ask you to log in again — or log out / switch accounts on facebook.com first.", "Facebook সবসময় facebook.com-এ যে অ্যাকাউন্টে লগইন করা আছে সেটাই ব্যবহার করে। অন্য অ্যাকাউন্ট ব্যবহার করতে নিচে চাপ দাও — Facebook আবার লগইন চাইবে — অথবা আগে facebook.com-এ গিয়ে লগআউট / অ্যাকাউন্ট বদলে নাও।")}
                   </p>
                   <button
                     onClick={() => loginWith(kind, true)}
                     disabled={oauthBusy !== ""}
-                    className="mt-1 text-xs font-medium text-brand-dark underline hover:text-brand disabled:opacity-50"
+                    className="order-2 mt-1 self-start text-xs font-medium text-brand-dark underline hover:text-brand disabled:opacity-50"
                   >
                     {t("channels.switchAccount", "Use a different Facebook account", "অন্য Facebook অ্যাকাউন্ট ব্যবহার করো")}
                   </button>
@@ -544,6 +551,34 @@ export default function ChannelsPage() {
             </div>
           );
         })}
+        {/* Website chat: not an OAuth flow — the button opens the
+            copy-paste snippet page (/website-chat). The "Connected"
+            badge appears once a webchat channel row exists (the widget
+            creates one on the first visitor message). */}
+        <div className="card card-hover p-4 flex flex-col h-full">
+          <div className="flex items-center gap-2 mb-1">
+            <PlatformLogo platform="website" size={32} />
+            <h3 className="font-bold">
+              {t(WEBSITE_CARD.title, "Connect Website", "ওয়েবসাইট যুক্ত করুন")}
+            </h3>
+          </div>
+          <p className="text-sm text-slate-600 mt-1 mb-3 min-h-[2.5rem]">
+            {t(WEBSITE_CARD.desc, "Add a chat box to your own website — visitor messages will arrive in your inbox.", "আপনার নিজের ওয়েবসাইটে একটি চ্যাট বাক্স বসান — ভিজিটরের মেসেজ আপনার ইনবক্সে আসবে।")}
+          </p>
+          {websiteConnected.length > 0 && (
+            <p className="text-sm mb-3">
+              <span className="bg-green-100 text-green-800 text-xs px-2 py-0.5 rounded">{t("channels.connected", "Connected", "যুক্ত আছে")}</span>{" "}
+              <span className="text-slate-600">{websiteConnected.map((c) => channelDisplayName(c)).join(", ")}</span>
+            </p>
+          )}
+          <button
+            onClick={() => router.push("/website-chat")}
+            className="mt-auto self-start rounded-lg px-4 py-2 text-white shadow-sm transition hover:opacity-90"
+            style={{ backgroundColor: WEBSITE_CARD.color }}
+          >
+            {t(WEBSITE_CARD.button, "Website Connect", "Website Connect")}
+          </button>
+        </div>
       </div>
 
       {picker && (
@@ -631,28 +666,8 @@ export default function ChannelsPage() {
         </div>
       )}
 
-      <form onSubmit={connect} className="card p-4 mb-6 grid grid-cols-1 md:grid-cols-2 gap-3">
-        <h2 className="font-bold md:col-span-2">{t("channels.addTitle", "Add a new channel", "নতুন চ্যানেল যুক্ত করুন")}</h2>
-        <select value={platform} onChange={(e) => setPlatform(e.target.value)} className="border rounded-lg px-3 py-2 bg-white">
-          {MANUAL_OPTIONS.map((opt) => (
-            <option key={opt.value} value={opt.value}>{platformLabel(opt.value)}</option>
-          ))}
-        </select>
-        <input required value={externalId} onChange={(e) => setExternalId(e.target.value)} placeholder={t("channels.externalIdPlaceholder", "Page / account ID *", "পেজ / অ্যাকাউন্ট ID *")} className="border rounded-lg px-3 py-2" />
-        <input value={displayName} onChange={(e) => setDisplayName(e.target.value)} placeholder={t("channels.displayNamePlaceholder", "Display name (e.g. Rongdhonu Fashion)", "দেখানোর নাম (যেমন: রঙধনু ফ্যাশন)")} className="border rounded-lg px-3 py-2" />
-        <input value={token} onChange={(e) => setToken(e.target.value)} placeholder={t("channels.tokenPlaceholder", "Token (if any)", "টোকেন (যদি থাকে)")} className="border rounded-lg px-3 py-2" />
-        {needsApproval && (
-          <p className="md:col-span-2 text-sm bg-amber-50 text-amber-800 p-3 rounded-lg">
-            {t("channels.approvalWarning", "⚠️ This platform needs approval — after adding, it will wait for approval.", "⚠️ এই প্ল্যাটফর্মের জন্য অনুমোদন লাগবে — যুক্ত করার পর অনুমোদনের অপেক্ষায় থাকবে।")}
-          </p>
-        )}
-        <button disabled={saving} className="bg-brand text-white py-2 rounded-lg md:col-span-2 hover:bg-brand-dark disabled:opacity-50">
-          {saving ? t("channels.adding", "Adding…", "যুক্ত হচ্ছে…") : t("channels.addButton", "Add channel", "চ্যানেল যুক্ত করুন")}
-        </button>
-      </form>
-
       {loading ? (<div className="space-y-2"><div className="skeleton h-12" /><div className="skeleton h-12" /><div className="skeleton h-12" /></div>) : channels.length === 0 ? (
-        <div className="empty-state">{t("channels.empty", "No channels added yet. Add one from the form above.", "কোনো চ্যানেল যুক্ত নেই। উপরের ফর্ম থেকে যুক্ত করুন।")}</div>
+        <div className="empty-state">{t("channels.empty", "No channels connected yet — tap Connect on a card above.", "কোনো চ্যানেল যুক্ত নেই — উপরের একটি কার্ডে Connect চাপুন।")}</div>
       ) : (
         <div className="card overflow-x-auto">
           <table className="w-full text-sm">

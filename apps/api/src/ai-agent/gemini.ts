@@ -5,6 +5,13 @@ export interface GeminiResult {
   text: string;
   inputTokens: number;
   outputTokens: number;
+  /**
+   * Input tokens served from a prompt cache (usageMetadata.
+   * cachedContentTokenCount), 0 when the call was uncached or the
+   * provider does not report it. Priced at the cached-input rate
+   * (pricing.ts) instead of the full input rate.
+   */
+  cachedInputTokens: number;
 }
 
 export interface GeminiPart {
@@ -52,6 +59,7 @@ export async function callGeminiMultimodal(
     text,
     inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
     outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+    cachedInputTokens: data.usageMetadata?.cachedContentTokenCount ?? 0,
   };
 }
 
@@ -136,7 +144,7 @@ export async function uploadGeminiFile(
 
 interface GeminiResponse {
   candidates?: { content?: { parts?: { text?: string }[] } }[];
-  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; cachedContentTokenCount?: number };
 }
 
 /**
@@ -167,5 +175,59 @@ export async function callGemini(prompt: string, model?: string): Promise<Gemini
     text,
     inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
     outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+    cachedInputTokens: data.usageMetadata?.cachedContentTokenCount ?? 0,
+  };
+}
+
+/**
+ * Options for a split (systemInstruction + contents) Gemini call — the
+ * shape the sales agent uses so a stable shop-context prefix can be
+ * served from an explicit prompt cache (see ai-agent/gemini-cache.ts).
+ * With no cachedContent the call is identical in behaviour to the flat
+ * callGemini prompt, only transported as instruction + turns.
+ */
+export interface GeminiSplitCallOpts {
+  /** Workspace system prompt, sent as systemInstruction. */
+  systemInstruction: string;
+  /** Stable shop context (knowledge + delivery charges + products). */
+  stableText: string;
+  /** Per-message variable text (customer, history, new messages). */
+  variableText: string;
+  /** Explicit cache to attach (cachedContents/<id>), or null = uncached. */
+  cachedContent?: string | null;
+}
+
+export async function callGeminiWithCache(
+  opts: GeminiSplitCallOpts,
+  model?: string,
+): Promise<GeminiResult | null> {
+  if (!config.geminiApiKey) return null;
+  const url =
+    `https://generativelanguage.googleapis.com/v1beta/models/${model ?? config.aiModel}:generateContent` +
+    `?key=${encodeURIComponent(config.geminiApiKey)}`;
+  const res = await fetchWithTimeout(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      ...(opts.cachedContent ? { cachedContent: opts.cachedContent } : {}),
+      systemInstruction: { parts: [{ text: opts.systemInstruction }] },
+      contents: [
+        { role: 'user', parts: [{ text: opts.stableText }] },
+        { role: 'user', parts: [{ text: opts.variableText }] },
+      ],
+      generationConfig: { temperature: 0.3, responseMimeType: 'application/json' },
+    }),
+  });
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Gemini API error ${res.status}: ${detail.slice(0, 300)}`);
+  }
+  const data = (await res.json()) as GeminiResponse;
+  const text = data.candidates?.[0]?.content?.parts?.map((p) => p.text ?? '').join('') ?? '';
+  return {
+    text,
+    inputTokens: data.usageMetadata?.promptTokenCount ?? 0,
+    outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
+    cachedInputTokens: data.usageMetadata?.cachedContentTokenCount ?? 0,
   };
 }

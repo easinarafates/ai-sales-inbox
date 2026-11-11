@@ -134,23 +134,27 @@ async function main(): Promise<void> {
   out.guardConversationId = guard.conversationId;
   out.guardCustomerId = guard.customerId;
 
-  // --- (1) Off-topic Bengali message → waiting/off_topic, no AI reply ---
+  // --- (1) Off-topic Bengali message → ONE graceful deterministic reply,
+  // then waiting/off_topic (Feature 1, 2026-11-11 — no AI call, no charge) ---
   const o1 = await seedConversation('Curious Customer', [{ platform: 'webchat', senderId: 'wc-d-off-1' }]);
   const r1 = await processBatch(workspaceId, o1.conversationId, [{ body: 'তুমি ছেলে নাকি মেয়ে?' }]);
   out.offTopicBn = {
     result: { replied: r1.replied, reason: r1.reason },
     state: await convState(o1.conversationId),
     outMessages: await outCount(o1.conversationId),
+    outBodies: await outBodies(o1.conversationId),
     conversationId: o1.conversationId,
   };
 
-  // --- (2) Off-topic English message → waiting/off_topic, no AI reply ---
+  // --- (2) Off-topic English message → ONE graceful deterministic reply,
+  // then waiting/off_topic (Feature 1, 2026-11-11) ---
   const o2 = await seedConversation('Curious Customer EN', [{ platform: 'webchat', senderId: 'wc-d-off-2' }]);
   const r2 = await processBatch(workspaceId, o2.conversationId, [{ body: 'What is your name?' }]);
   out.offTopicEn = {
     result: { replied: r2.replied, reason: r2.reason },
     state: await convState(o2.conversationId),
     outMessages: await outCount(o2.conversationId),
+    outBodies: await outBodies(o2.conversationId),
     conversationId: o2.conversationId,
   };
 

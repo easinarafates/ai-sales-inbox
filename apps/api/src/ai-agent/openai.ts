@@ -50,5 +50,7 @@ export async function callOpenAI(prompt: string, model?: string): Promise<Gemini
     text,
     inputTokens: data.usage?.prompt_tokens ?? 0,
     outputTokens: data.usage?.completion_tokens ?? 0,
+    // OpenAI prompt caching is not wired here — nothing is ever cached.
+    cachedInputTokens: 0,
   };
 }

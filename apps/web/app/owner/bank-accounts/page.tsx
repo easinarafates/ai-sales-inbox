@@ -102,6 +102,7 @@ export default function OwnerBankAccountsPage() {
                 <option value="bank">{t("ownerBankTypeBank", "Bank", "ব্যাংক")}</option>
                 <option value="bkash">bKash</option>
                 <option value="nagad">Nagad</option>
+                <option value="rocket">Rocket</option>
               </select>
               <input value={bankName} onChange={(e) => setBankName(e.target.value)} placeholder={t("ownerBankNamePh", "Bank name (e.g. Dutch-Bangla Bank)", "ব্যাংকের নাম (যেমন ডাচ-বাংলা ব্যাংক)")} className="border rounded-lg px-3 py-2 text-sm" />
               <input value={accountHolder} onChange={(e) => setAccountHolder(e.target.value)} placeholder={t("ownerBankHolderPh", "Account holder name", "অ্যাকাউন্টধারীর নাম")} className="border rounded-lg px-3 py-2 text-sm" />
@@ -115,7 +116,7 @@ export default function OwnerBankAccountsPage() {
             <button
               onClick={add}
               disabled={saving || !bankName.trim() || !accountHolder.trim() || !accountNumber.trim()}
-              className="mt-3 bg-[#FF5B2E] hover:bg-[#E8491F] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50"
+              className="mt-3 bg-[#0051F6] hover:bg-[#003EC9] text-white text-sm rounded-lg px-4 py-2 disabled:opacity-50"
             >
               {saving ? t("saving", "Saving…", "সেভ হচ্ছে…") : t("ownerBankAddBtn", "Add account", "অ্যাকাউন্ট যোগ করুন")}
             </button>

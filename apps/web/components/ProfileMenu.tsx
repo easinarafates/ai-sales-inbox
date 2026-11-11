@@ -1,21 +1,19 @@
 "use client";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
   authApi,
   clearToken,
-  formatDate,
+  formatDateShort,
   formatTaka,
   getToken,
-  profileApi,
   type SubscriptionInfo,
   type User,
   type Workspace,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
-
-const MAX_PHOTO_BYTES = 25 * 1024 * 1024; // 25 MB — same limit as product photos.
+import Icon from "@/components/Icon";
 
 function initials(user: User): string {
   const fromName = (user.name ?? "").trim();
@@ -27,11 +25,11 @@ function initials(user: User): string {
  * Top-right Profile menu in the header.
  *
  * Shows the shop (workspace) name, the user's email and current plan /
- * trial, and the user's profile photo — pick a new one (Blob upload,
- * same pattern as product photos) or remove it. The photo shows in the
- * header avatar as soon as it is set; with no photo the header shows
- * the user's initials. Log out clears the token; when logged out the
- * menu offers a Log in link instead.
+ * trial, and the user's profile photo. The photo itself is display-only
+ * here — changing it happens on the /profile page (Change only, no
+ * Remove). Links to the Profile page and the Business Information
+ * section (both on /profile). Log out asks "are you sure?" first;
+ * when logged out the menu offers a Log in link instead.
  */
 export default function ProfileMenu() {
   const { t } = useI18n();
@@ -40,9 +38,7 @@ export default function ProfileMenu() {
   const [user, setUser] = useState<User | null>(null);
   const [workspace, setWorkspace] = useState<Workspace | null>(null);
   const [subscription, setSubscription] = useState<SubscriptionInfo | null>(null);
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState("");
-  const fileRef = useRef<HTMLInputElement | null>(null);
+  const [confirmLogout, setConfirmLogout] = useState(false);
 
   const load = useCallback(async () => {
     if (!getToken()) {
@@ -83,42 +79,6 @@ export default function ProfileMenu() {
     router.push("/login");
   };
 
-  const onPickPhoto = async (file: File | undefined) => {
-    if (!file) return;
-    setError("");
-    if (!file.type.startsWith("image/")) {
-      setError(t("profile.photoUploadFailed", "Could not upload the photo.", "ছবি আপলোড করা যায়নি।"));
-      return;
-    }
-    if (file.size > MAX_PHOTO_BYTES) {
-      setError(t("profile.photoTooLarge", "Each photo must be 25 MB or smaller.", "ছবি ২৫ MB-এর বেশি হতে পারবে না।"));
-      return;
-    }
-    setUploading(true);
-    try {
-      const updated = await profileApi.uploadPhoto(file);
-      setUser(updated);
-    } catch {
-      setError(t("profile.photoUploadFailed", "Could not upload the photo.", "ছবি আপলোড করা যায়নি।"));
-    } finally {
-      setUploading(false);
-      if (fileRef.current) fileRef.current.value = "";
-    }
-  };
-
-  const onRemovePhoto = async () => {
-    setError("");
-    setUploading(true);
-    try {
-      const updated = await profileApi.removePhoto();
-      setUser(updated);
-    } catch {
-      setError(t("profile.photoRemoveFailed", "Could not remove the photo.", "ছবি সরানো যায়নি।"));
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const loggedIn = !!user;
   const avatarUrl = user?.avatarUrl ?? null;
 
@@ -126,7 +86,7 @@ export default function ProfileMenu() {
   const trialLine =
     subscription?.status === "trial"
       ? subscription.periodEnd
-        ? `${t("profile.trial", "Trial", "ট্রায়াল")} · ${t("profile.trialEnds", "Trial ends", "ট্রায়াল শেষ")} ${formatDate(subscription.periodEnd)}`
+        ? `${t("profile.trialEnds", "Trial ends", "ট্রায়াল শেষ")} ${formatDateShort(subscription.periodEnd)}`
         : t("profile.trial", "Trial", "ট্রায়াল")
       : subscription?.status ?? null;
 
@@ -178,64 +138,66 @@ export default function ProfileMenu() {
                   </span>
                 </div>
 
-                <div className="space-y-1 border-b border-orange-100 py-3 text-sm text-slate-700">
+                {/* Plan / Trial / Balance — each row has a small tinted
+                    icon tile and the plan name shows as a pill, so the
+                    account summary reads like a professional card. */}
+                <div className="space-y-2 border-b border-orange-100 py-3 text-sm">
                   {planLine && (
-                    <p className="flex justify-between gap-2">
+                    <p className="flex items-center gap-2.5">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#EBF1FE] text-brand">
+                        <Icon name="tag" className="h-4 w-4" />
+                      </span>
                       <span className="text-slate-500">{t("profile.plan", "Plan", "প্ল্যান")}</span>
-                      <span className="font-medium">{planLine}</span>
+                      <span className="ml-auto rounded-full bg-[#EBF1FE] px-2.5 py-0.5 text-xs font-semibold text-brand">
+                        {planLine}
+                      </span>
                     </p>
                   )}
                   {trialLine && (
-                    <p className="flex justify-between gap-2">
-                      <span className="text-slate-500">{t("profile.trial", "Trial", "ট্রায়াল")}</span>
-                      <span className="font-medium">{trialLine}</span>
+                    <p className="flex items-center gap-2.5">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#F3EAFE] text-accent-dark">
+                        <Icon name="clock" className="h-4 w-4" />
+                      </span>
+                      <span className="shrink-0 text-slate-500">{t("profile.trial", "Trial", "ট্রায়াল")}</span>
+                      <span className="ml-auto text-right font-medium text-slate-700">{trialLine}</span>
                     </p>
                   )}
                   {typeof workspace?.balance_paisa === "number" && (
-                    <p className="flex justify-between gap-2">
+                    <p className="flex items-center gap-2.5">
+                      <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-green-100 text-green-600">
+                        <Icon name="wallet" className="h-4 w-4" />
+                      </span>
                       <span className="text-slate-500">{t("profile.balance", "Balance", "ব্যালেন্স")}</span>
-                      <span className="font-medium">{formatTaka(workspace.balance_paisa)}</span>
+                      <span className="ml-auto font-medium text-slate-700">{formatTaka(workspace.balance_paisa)}</span>
                     </p>
                   )}
                 </div>
 
-                <div className="space-y-2 py-3">
-                  <input
-                    ref={fileRef}
-                    type="file"
-                    accept="image/*"
-                    className="hidden"
-                    aria-label={t("profile.changePhoto", "Change photo", "ছবি বদলান")}
-                    onChange={(e) => void onPickPhoto(e.target.files?.[0])}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => fileRef.current?.click()}
-                    disabled={uploading}
-                    className="w-full rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white transition hover:bg-brand-dark disabled:opacity-50"
+                <div className="space-y-1 border-b border-orange-100 py-2">
+                  <Link
+                    href="/profile"
+                    onClick={() => setOpen(false)}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-orange-50"
                   >
-                    {uploading
-                      ? t("profile.uploading", "Uploading…", "আপলোড হচ্ছে…")
-                      : t("profile.changePhoto", "Change photo", "ছবি বদলান")}
-                  </button>
-                  {avatarUrl && (
-                    <button
-                      type="button"
-                      onClick={() => void onRemovePhoto()}
-                      disabled={uploading}
-                      className="w-full rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-orange-50 disabled:opacity-50"
-                    >
-                      {t("profile.removePhoto", "Remove photo", "ছবি সরান")}
-                    </button>
-                  )}
-                  {error && <p className="text-xs text-red-600">{error}</p>}
+                    <Icon name="user" className="h-4 w-4 shrink-0 text-slate-400" />
+                    {t("profile.viewProfile", "Profile", "প্রোফাইল")}
+                  </Link>
+                  <Link
+                    href="/profile#business"
+                    onClick={() => setOpen(false)}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-orange-50"
+                  >
+                    <Icon name="briefcase" className="h-4 w-4 shrink-0 text-slate-400" />
+                    {t("profile.businessInfo", "Business Information", "বিজনেস ইনফরমেশন")}
+                  </Link>
                 </div>
 
                 <button
                   type="button"
-                  onClick={logout}
-                  className="w-full rounded-lg bg-orange-50 px-4 py-2 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-orange-100"
+                  onClick={() => setConfirmLogout(true)}
+                  className="flex w-full items-center gap-2 rounded-lg bg-orange-50 px-4 py-2 text-left text-sm font-medium text-slate-700 transition-colors hover:bg-orange-100"
                 >
+                  <Icon name="logout" className="h-4 w-4 shrink-0 text-slate-400" />
                   {t("profile.logout", "Log out", "লগআউট")}
                 </button>
               </>
@@ -254,6 +216,33 @@ export default function ProfileMenu() {
               </div>
             )}
           </div>
+
+          {/* Log out confirmation — asks "are you sure?" first (2026-11-11, user request). */}
+          {confirmLogout && (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-label={t("profile.logoutConfirmTitle", "Log out?", "লগআউট করবেন?")}>
+              <div className="absolute inset-0 bg-black/50" onClick={() => setConfirmLogout(false)} aria-hidden="true" />
+              <div className="relative w-full max-w-xs rounded-xl border border-[#eeeeee] bg-white p-5 shadow-xl">
+                <h3 className="text-base font-bold text-slate-900">{t("profile.logoutConfirmTitle", "Log out?", "লগআউট করবেন?")}</h3>
+                <p className="mt-1 text-sm text-slate-600">{t("profile.logoutConfirmBody", "Are you sure you want to log out?", "আপনি কি নিশ্চিত লগআউট করতে চান?")}</p>
+                <div className="mt-4 flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirmLogout(false)}
+                    className="flex-1 rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-orange-50"
+                  >
+                    {t("profile.cancel", "Cancel", "বাতিল")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={logout}
+                    className="flex-1 rounded-lg bg-red-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-red-700"
+                  >
+                    {t("profile.logoutConfirmYes", "Yes, log out", "হ্যাঁ, লগআউট করুন")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </>
       )}
     </div>

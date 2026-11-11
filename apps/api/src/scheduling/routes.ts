@@ -7,6 +7,12 @@ import { handleUpload, type HandleUploadBody } from '@vercel/blob/client';
 import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
+import {
+  assertScheduleSlotFree,
+  effectiveDailyPostLimit,
+} from '../subscriptions/schedule';
+import { isWorkspaceRestricted } from '../subscriptions/service';
+import { callGemini } from '../ai-agent/gemini';
 import { callGroq } from '../ai-agent/groq';
 import { analyzePostMedia } from './media-caption';
 import { publishScheduledPost, processDueScheduledPostsForWorkspace, type ScheduledPostRow } from './publisher';
@@ -85,12 +91,15 @@ schedulingRouter.post('/scheduled-posts/upload-token', async (req: AuthRequest, 
 });
 
 /**
- * Scheduling rules (Worker C — approved demo parity):
- * - MAX_POSTS_PER_DAY = 15 scheduled posts per workspace per calendar
- *   day (Asia/Dhaka). Only posts that OCCUPY a slot count: status
- *   'scheduled' or 'publishing'. Drafts (even with a scheduled_at) do
- *   NOT occupy a slot, and published / cancelled / failed posts free
- *   their slot — so publishing a post lets a new one take its place.
+ * Scheduling rules (Worker C — approved demo parity + YEARBITO Phase 2):
+ * - FREE_POSTS_PER_DAY = 1 scheduled post per workspace per calendar
+ *   day (Asia/Dhaka) without any subscription. MAX_POSTS_PER_DAY = 15
+ *   with an active Post Schedule subscription or an active old plan
+ *   (trial included — grandfathered until its period ends).
+ *   Only posts that OCCUPY a slot count: status 'scheduled' or
+ *   'publishing'. Drafts (even with a scheduled_at) do NOT occupy a
+ *   slot, and published / cancelled / failed posts free their slot —
+ *   so publishing a post lets a new one take its place.
  * - WINDOW_DAYS = 7: scheduled_at must be within the next 7 days from
  *   now (and not in the past, apart from a 5-minute clock-skew grace).
  */
@@ -153,37 +162,6 @@ function dhakaDateOf(iso: string): string {
   }).format(new Date(iso));
 }
 
-/** [start, end) ISO bounds (with +06:00) of a Dhaka calendar day. */
-function dhakaDayBounds(date: string): [string, string] {
-  const [y, m, d] = date.split('-').map(Number);
-  const next = new Date(Date.UTC(y, m - 1, d + 1));
-  const pad = (n: number): string => String(n).padStart(2, '0');
-  const nextDate = `${next.getUTCFullYear()}-${pad(next.getUTCMonth() + 1)}-${pad(next.getUTCDate())}`;
-  return [`${date}T00:00:00+06:00`, `${nextDate}T00:00:00+06:00`];
-}
-
-/**
- * How many posts occupy a slot on a Dhaka calendar day. Only
- * 'scheduled' / 'publishing' count — published posts free their slot.
- */
-async function occupyingCount(
-  workspaceId: string,
-  date: string,
-  excludePostId?: string | null,
-): Promise<number> {
-  const [start, end] = dhakaDayBounds(date);
-  const { rows } = await query<{ n: string }>(
-    workspaceId,
-    `SELECT count(*) AS n FROM scheduled_posts
-     WHERE workspace_id = $1
-       AND status IN ('scheduled', 'publishing')
-       AND scheduled_at >= $2 AND scheduled_at < $3
-       AND ($4::text IS NULL OR id <> $4::uuid)`,
-    [workspaceId, start, end, excludePostId ?? null],
-  );
-  return Number(rows[0]?.n ?? 0);
-}
-
 /** Per-day occupying counts { 'YYYY-MM-DD': n } for the whole workspace. */
 async function dayCounts(workspaceId: string): Promise<Record<string, number>> {
   const { rows } = await query<{ scheduled_at: string }>(
@@ -214,17 +192,19 @@ function windowError(scheduledAt: string): string | null {
   return null;
 }
 
+/**
+ * Slot check — YEARBITO Phase 2: the day's limit is 1 free post/day
+ * without a subscription, 15 with an active Post Schedule subscription
+ * or an active old plan (trial included). See
+ * subscriptions/schedule.ts (assertScheduleSlotFree) for the rule and
+ * the honest Bengali error message.
+ */
 async function assertSlotFree(
   workspaceId: string,
   scheduledAt: string,
   excludePostId?: string | null,
 ): Promise<string | null> {
-  const date = dhakaDateOf(scheduledAt);
-  const count = await occupyingCount(workspaceId, date, excludePostId);
-  if (count >= MAX_POSTS_PER_DAY) {
-    return `এই দিনে (${date}) ইতিমধ্যে ${MAX_POSTS_PER_DAY}টি পোস্ট শিডিউল করা আছে — আর পোস্ট যোগ করা যাবে না (max ${MAX_POSTS_PER_DAY} scheduled posts per day)`;
-  }
-  return null;
+  return assertScheduleSlotFree(workspaceId, scheduledAt, excludePostId);
 }
 
 async function loadPost(workspaceId: string, postId: string): Promise<ScheduledPostRow | null> {
@@ -318,7 +298,7 @@ schedulingRouter.get('/scheduled-posts', async (req: AuthRequest, res: Response)
   );
   const counts = await dayCounts(workspaceId);
   const errors = await lastErrors(workspaceId, rows.map((r) => r.id));
-  res.json({ posts: withLastErrors(rows, errors), counts, maxPerDay: MAX_POSTS_PER_DAY, windowDays: WINDOW_DAYS });
+  res.json({ posts: withLastErrors(rows, errors), counts, maxPerDay: await effectiveDailyPostLimit(workspaceId), windowDays: WINDOW_DAYS });
 });
 
 /**
@@ -364,7 +344,7 @@ schedulingRouter.get('/scheduled-posts/calendar', async (req: AuthRequest, res: 
   for (const [date, n] of Object.entries(allCounts)) {
     if (date.startsWith(month)) counts[date] = n;
   }
-  res.json({ month, days, counts, maxPerDay: MAX_POSTS_PER_DAY, windowDays: WINDOW_DAYS });
+  res.json({ month, days, counts, maxPerDay: await effectiveDailyPostLimit(workspaceId), windowDays: WINDOW_DAYS });
 });
 
 /**
@@ -692,6 +672,141 @@ schedulingRouter.post('/scheduled-posts/auto-caption', async (req: AuthRequest, 
   });
 });
 
+/**
+ * POST /api/scheduled-posts/enhance-caption { caption, productIds?, lang?, mediaUrls? | mediaUrl? }
+ * "Enhance Caption" (YEARBITO Task 12): the user writes a caption
+ * first, Gemini Lite (the ONLY model — callGemini defaults to
+ * config.aiModel = gemini-3.5-flash-lite) polishes it. It NEVER
+ * generates a caption from nothing: an empty/missing caption is a
+ * 400. Real product name/price/stock from the DB is given as context,
+ * and the prompt keeps every price, number and name exactly as the
+ * user wrote it — prices and stock are NEVER invented. When media is
+ * attached, Gemini vision describes it first and the polish may use
+ * that description; a vision failure only adds a note, never a fake
+ * analysis. Without a Gemini key the user's own caption is returned
+ * unchanged with aiGenerated: false.
+ */
+schedulingRouter.post('/scheduled-posts/enhance-caption', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { caption, productIds, lang, mediaUrls, mediaUrl } = (req.body ?? {}) as {
+    caption?: string;
+    productIds?: string[];
+    lang?: string;
+    mediaUrls?: string[];
+    mediaUrl?: string;
+  };
+  const original = typeof caption === 'string' ? caption.trim() : '';
+  if (!original) {
+    res.status(400).json({ error: 'আগে ক্যাপশন লিখুন — AI সেটাই আরও সুন্দর করে দেবে (write a caption first)' });
+    return;
+  }
+  const english = lang === 'en';
+  const mediaList = [
+    ...(Array.isArray(mediaUrls) ? mediaUrls : []),
+    ...(typeof mediaUrl === 'string' ? [mediaUrl] : []),
+  ].filter((u) => typeof u === 'string' && u.trim());
+  let products: { id: string; name: string; price_paisa: number; stock: number }[] = [];
+  if (Array.isArray(productIds) && productIds.length > 0) {
+    const { rows } = await query(
+      workspaceId,
+      `SELECT id, name, price_paisa, stock FROM products
+       WHERE workspace_id = $1 AND id = ANY($2)`,
+      [workspaceId, productIds],
+    );
+    products = rows as typeof products;
+  }
+  const taka = (paisa: number): number => Number(paisa) / 100;
+  const productContext =
+    products.length > 0
+      ? english
+        ? `Real product info (use ONLY these values — never invent a price, discount or stock): ${products
+            .map((p) => `${p.name}, price ৳${taka(Number(p.price_paisa))}, stock ${p.stock}`)
+            .join('; ')}`
+        : `আসল প্রোডাক্টের তথ্য (শুধু এই তথ্যই ব্যবহার করো — দাম, ছাড় বা স্টক বানিয়ে লিখো না): ${products
+            .map((p) => `${p.name}, দাম ৳${taka(Number(p.price_paisa))}, স্টক ${p.stock}টি`)
+            .join('; ')}`
+      : english
+        ? 'No specific product is linked — do not invent any price, discount or stock.'
+        : 'কোনো নির্দিষ্ট প্রোডাক্ট যুক্ত নেই — দাম, ছাড় বা স্টক বানিয়ে লিখো না।';
+
+  // Media context: describe the attached media with Gemini vision so
+  // the polish can mention what is actually in it. Any failure is
+  // only a note — the text polish still runs.
+  let mediaAnalysis: { analysis: string; mediaType: 'image' | 'video' } | null = null;
+  let visionNote: string | null = null;
+  if (mediaList.length > 0) {
+    try {
+      const analyzed = await analyzePostMedia({
+        mediaUrl: mediaList[0],
+        lang: english ? 'en' : 'bn',
+        productContext: products.length
+          ? products.map((p) => `${p.name}, ৳${taka(Number(p.price_paisa))}, stock ${p.stock}`).join('; ')
+          : undefined,
+      });
+      mediaAnalysis = { analysis: analyzed.analysis, mediaType: analyzed.mediaType };
+    } catch (err) {
+      visionNote = (err as Error).message;
+      console.error('[scheduling] enhance-caption vision failed, polishing text only:', visionNote);
+    }
+  }
+
+  const mediaLine = mediaAnalysis
+    ? english
+      ? `What is actually visible in the attached media: ${mediaAnalysis.analysis}`
+      : `সংযুক্ত ছবি/ভিডিওতে আসলে যা দেখা যাচ্ছে: ${mediaAnalysis.analysis}`
+    : '';
+  const prompt = english
+    ? `Improve this Facebook/Instagram post caption. Keep its meaning and keep every price, number, product name and hashtag exactly as written — never invent a price, discount, stock or product. Fix grammar, make it more attractive, keep it 2-3 lines, and keep it in English. If it has no hashtags, add 3-5 relevant ones at the end. Reply in JSON only: {"caption": "..."}.\n${productContext}\n${mediaLine}\nCaption to improve:\n${original}`
+    : `এই ফেসবুক/ইনস্টাগ্রাম পোস্টের ক্যাপশনটি আরও সুন্দর করে সাজিয়ে লেখো। অর্থ একই রাখবে, আর দাম, সংখ্যা, প্রোডাক্টের নাম ও হ্যাশট্যাগ যা লেখা আছে ঠিক তাই রাখবে — দাম, ছাড়, স্টক বা প্রোডাক্ট বানিয়ে লিখো না। বানান ঠিক করো, আরও আকর্ষণীয় করো, ২-৩ লাইনের মধ্যে রাখো, বাংলায় লেখো। হ্যাশট্যাগ না থাকলে শেষে ৩-৫টি প্রাসঙ্গিক হ্যাশট্যাগ যোগ করো। শুধু JSON-এ উত্তর দাও: {"caption": "..."}।\n${productContext}\n${mediaLine}\nসাজাতে হবে এমন ক্যাপশন:\n${original}`;
+  try {
+    const result = await callGemini(prompt);
+    if (!result) {
+      res.json({
+        caption: original,
+        aiGenerated: false,
+        ...(mediaAnalysis ? { mediaAnalysis } : {}),
+        note: english
+          ? 'AI is not available right now (no Gemini key), so your caption is unchanged.'
+          : 'AI এখন পাওয়া যাচ্ছে না (Gemini চাবি বসানো নেই), তাই আপনার ক্যাপশনটি যেমন ছিল তেমনই আছে।',
+      });
+      return;
+    }
+    let enhanced = result.text.trim();
+    try {
+      const parsed = JSON.parse(enhanced.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '')) as { caption?: string };
+      if (parsed.caption) enhanced = parsed.caption.trim();
+    } catch {
+      // Plain-text reply from the model — use it as-is.
+    }
+    if (!enhanced) {
+      res.json({
+        caption: original,
+        aiGenerated: false,
+        ...(mediaAnalysis ? { mediaAnalysis } : {}),
+        note: english
+          ? 'AI did not return an improved caption, so your caption is unchanged.'
+          : 'AI ভালো ক্যাপশন দিতে পারেনি, তাই আপনার ক্যাপশনটি যেমন ছিল তেমনই আছে।',
+      });
+      return;
+    }
+    res.json({
+      caption: enhanced,
+      aiGenerated: true,
+      ...(mediaAnalysis ? { mediaAnalysis } : {}),
+      ...(visionNote
+        ? {
+            note: english
+              ? `The attached media could not be analyzed (${visionNote}), so only the text was improved.`
+              : `সংযুক্ত ছবি/ভিডিও বিশ্লেষণ করা যায়নি (${visionNote}), তাই শুধু লেখাটাই সাজানো হয়েছে।`,
+          }
+        : {}),
+    });
+  } catch (err) {
+    console.error('[scheduling] enhance-caption failed:', (err as Error).message);
+    res.status(500).json({ error: (err as Error).message });
+  }
+});
+
 /** GET /api/scheduled-posts/:id */
 schedulingRouter.get('/scheduled-posts/:id', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -708,6 +823,13 @@ schedulingRouter.get('/scheduled-posts/:id', async (req: AuthRequest, res: Respo
 /** POST /api/scheduled-posts — draft unless scheduledAt is given, then scheduled. */
 schedulingRouter.post('/scheduled-posts', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
+  // Restricted account (Owner Panel, migration 45): read-only — no new
+  // scheduled posts. Drafts are refused too: a draft is one click from
+  // publishing, so "no posting" means no post creation at all.
+  if (await isWorkspaceRestricted(workspaceId)) {
+    res.status(403).json({ error: 'এই অ্যাকাউন্টটি সীমিত (restricted) করা হয়েছে — নতুন পোস্ট শিডিউল করা যাবে না। প্ল্যাটফর্মের মালিকের সাথে যোগাযোগ করুন।' });
+    return;
+  }
   const { caption, mediaUrls, mediaType, platforms, scheduledAt, productIds } = (req.body ?? {}) as PostBody;
   const media = Array.isArray(mediaUrls) ? mediaUrls.filter((u) => typeof u === 'string') : [];
   const plats = Array.isArray(platforms)
@@ -926,6 +1048,12 @@ schedulingRouter.delete('/scheduled-posts/:id', async (req: AuthRequest, res: Re
 /** POST /api/scheduled-posts/:id/schedule {scheduledAt} */
 schedulingRouter.post('/scheduled-posts/:id/schedule', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
+  // Restricted account (Owner Panel, migration 45): a draft may not be
+  // scheduled while the account is restricted.
+  if (await isWorkspaceRestricted(workspaceId)) {
+    res.status(403).json({ error: 'এই অ্যাকাউন্টটি সীমিত (restricted) করা হয়েছে — পোস্ট শিডিউল করা যাবে না। প্ল্যাটফর্মের মালিকের সাথে যোগাযোগ করুন।' });
+    return;
+  }
   const { scheduledAt } = (req.body ?? {}) as { scheduledAt?: string };
   if (!isValidDate(scheduledAt)) {
     res.status(400).json({ error: 'scheduledAt সঠিক তারিখ নয়' });
@@ -969,6 +1097,11 @@ schedulingRouter.post('/scheduled-posts/:id/schedule', async (req: AuthRequest, 
 /** POST /api/scheduled-posts/:id/publish-now — publishing frees the day's slot. */
 schedulingRouter.post('/scheduled-posts/:id/publish-now', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
+  // Restricted account (Owner Panel, migration 45): no publishing either.
+  if (await isWorkspaceRestricted(workspaceId)) {
+    res.status(403).json({ error: 'এই অ্যাকাউন্টটি সীমিত (restricted) করা হয়েছে — পোস্ট প্রকাশ করা যাবে না। প্ল্যাটফর্মের মালিকের সাথে যোগাযোগ করুন।' });
+    return;
+  }
   const post = await loadPost(workspaceId, req.params.id);
   if (!post) {
     res.status(404).json({ error: 'Scheduled post not found' });

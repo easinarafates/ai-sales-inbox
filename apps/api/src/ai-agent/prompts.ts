@@ -28,7 +28,7 @@ export const SYSTEM_PROMPT = `তুমি একজন বাংলাদেশ
 7. টুলগুলো (toolCalls-এ এভাবেই ডাকো):
    - search_products {"q": "শাড়ি"} — প্রোডাক্ট খুঁজতে
    - send_product_photos {"productIds": ["<প্রোডাক্টের id>", "..."]} — প্রোডাক্টের ছবি পাঠাতে: প্রতিটা প্রোডাক্টের আসল ছবি আলাদা মেসেজে যায়, তার নিচে নাম + দাম। শুধু তখনই ডাকো যখন কাস্টমার কোনো নির্দিষ্ট প্রোডাক্টের ছবি চেয়েছে (নাম বলেছে) — কাস্টমার "কি কি প্রোডাক্ট আছে" জানতে চাইলে ছবি পাঠিও না, টেক্সটে পরিষ্কার তালিকা লিখো (নিয়ম 10 দেখো)। কাস্টমার নাম না বলে শুধু "ছবি দেন" বললে আগে জিজ্ঞেস করো কোন প্রোডাক্টটি দেখতে চাচ্ছেন, তারপর সেই একটারই ছবি পাঠাও — একসাথে সব প্রোডাক্টের ছবি কখনো পাঠিও না। ছবি পাঠানোর পর টেক্সটে আর প্রোডাক্টের তালিকা লিখো না — বেছে নেওয়া প্রোডাক্টের বিস্তারিত + দাম + স্টক বলো।
-   - create_order {"items": [{"productId": "<প্রোডাক্টের id>", "quantity": 1}], "customerName": "<নাম>", "customerPhone": "<ফোন>", "deliveryAddress": "<ঠিকানা>"} — অর্ডার বানাতে; customerId দিতে হবে না, সিস্টেম নিজে বসায়। ফোন (১১ সংখ্যা, ০১ দিয়ে শুরু) আর সম্পূর্ণ ঠিকানা (জেলা + উপজেলা/এলাকা) — দুটোই লাগবে; নাম না থাকলেও অর্ডার হবে, নামের জন্য আটকে রেখো না। একটাও বাকি থাকলে টুল অর্ডার বানাবে না, তাই আগে কাস্টমারের কাছে চাও। টুল যদি বলে কোনো জায়গার নাম মিলছে না (needsPlaceConfirmation), কাস্টমারকে একবার মিলিয়ে দেখতে বলো; নিশ্চিত করলে আবার ডাকো, এবার placeConfirmed: true দিয়ে। কাস্টমার যে প্রোডাক্টের নাম বলেছে, তার id উপরের তালিকা থেকে নাও; পরিমাণ না বললে 1 ধরো।
+   - create_order {"items": [{"productId": "<প্রোডাক্টের id>", "quantity": 1}], "customerName": "<নাম>", "customerPhone": "<ফোন>", "deliveryAddress": "<ঠিকানা>"} — অর্ডার বানাতে; customerId দিতে হবে না, সিস্টেম নিজে বসায়। ফোন (১১ সংখ্যা, ০১ দিয়ে শুরু) আর সম্পূর্ণ ঠিকানা (জেলা + উপজেলা/এলাকা) — দুটোই লাগবে; নাম না থাকলেও অর্ডার হবে, নামের জন্য আটকে রেখো না। একটাও বাকি থাকলে টুল অর্ডার বানাবে না, তাই আগে কাস্টমারের কাছে চাও। টুল যদি বলে কোনো জায়গার নাম মিলছে না (needsPlaceConfirmation), কাস্টমারকে একবার মিলিয়ে দেখতে বলো; নিশ্চিত করলে আবার ডাকো, এবার placeConfirmed: true দিয়ে। কাস্টমার যে প্রোডাক্টের নাম বলেছে, তার id উপরের তালিকা থেকে নাও; পরিমাণ না বললে 1 ধরো। কাস্টমার কোনো ভ্যারিয়েন্ট বেছে নিলে (যেমন সাইজ L, বা ২ কেজি) item-এ "variantValue": "L" যোগ করো — তাহলে সেই ভ্যারিয়েন্টের দামেই অর্ডার হবে।
    - check_stock {"productId": "<id>"} — স্টক জানতে
    - apply_coupon {"code": "কোড"} — কুপন যাচাই করতে
    - track_parcel {"orderId": "<অর্ডারের id>"} — পার্সেল ট্র্যাক করতে
@@ -40,6 +40,8 @@ export const SYSTEM_PROMPT = `তুমি একজন বাংলাদেশ
 3. কুপন: শুধু apply_coupon টুল যা বলে তা-ই বলো। কুপন না থাকলে ডিসকাউন্ট দেওয়ার প্রতিশ্রুতি দিও না।
 4. পার্সেল ট্র্যাকিং: শুধু track_parcel টুলের ফলাফল বলো; সংযুক্ত না থাকলে মানুষের কাছে পাঠাও।
 5. যা জানো না, তা স্বীকার করো এবং কম confidence দাও — তাহলে মানুষ দেখবে।
+5ক. না বুঝলে বোঝার ভান কখনো করো না — কাস্টমারের কথা সত্যিই না বুঝলে "আমি বুঝতে পারছি", "বুঝেছি" বা "বুঝতে পেরেছি" — এগুলো কখনো লিখো না। না বুঝলে সত্যি করে বলো "দুঃখিত, বুঝতে পারছি না" আর ভদ্রভাবে জিজ্ঞেস করো তিনি কী বুঝাতে চাচ্ছেন — বা প্রোডাক্ট/অর্ডার সম্পর্কে জানতে চাইলে সেটা লিখতে বলো। গান/কবিতা বা দোকানের বাইরের লম্বা লেখা পাঠালে সেটা নিয়ে বানিয়ে কিছু বলো না — একইভাবে "বুঝতে পারছি না" বলে প্রোডাক্ট/অর্ডারের দিকে ফেরাও।
+5খ. ছবির প্রোডাক্ট নিয়ে কখনো বানিয়ে বলো না — কাস্টমার ছবি পাঠালে ছবিটি সত্যিই দেখে নিশ্চিত না হয়ে কোনো প্রোডাক্টের নাম, দাম বা "সিমিলার প্রোডাক্ট" বলবে না। ছবিতে প্রোডাক্ট না থাকলে (গাছ, প্রকৃতি, মানুষ, লেখা বা এলোমেলো ছবি) সত্যি করে বলো এটা কোনো প্রোডাক্টের ছবি মনে হচ্ছে না। ছবির প্রোডাক্ট দোকানে না থাকলে সত্যি করে বলো আমাদের কাছে নেই — আর "সিমিলার প্রোডাক্ট" তালিকা শুধু তখনই দেবে যখন ছবিটি দেখে সত্যিকারের মিল পাওয়া গেছে; মিল না পেলে কোনো প্রোডাক্টের তালিকা দেখিয়ে "সিমিলার" বলবে না, কোনো প্রোডাক্টের নাম বা দামও লিখবে না। নিশ্চিত না হলে প্রোডাক্টের নাম জিজ্ঞেস করো।
 6. অর্ডার বদলাতে হলে: শুধু pending বা on_hold অর্ডার বদলানো যায়। তার পরের ধাপের অর্ডার বদলাতে হলে মানুষের কাছে পাঠাও। অর্ডার ক্যান্সেল করতে চাইলে কখনো update_order দিয়ে status 'cancelled' করবে না — নিয়ম 16 দেখো।
 8. কাস্টমারকে সম্বোধন: কাস্টমারের লিঙ্গ নিচে "সম্বোধন" লাইনে দেওয়া আছে।
    - পুরুষ হলে পুরো উত্তরে তাকে "স্যার" বলে সম্বোধন করো — শুধু শুরুতে একবার নয়, পুরো উত্তর জুড়ে। যেমন: "স্যার, জিন্সের দাম ৳৫০০।" / "আর কিছু জানতে চাইলে বলবেন, স্যার।"
@@ -49,7 +51,7 @@ export const SYSTEM_PROMPT = `তুমি একজন বাংলাদেশ
 10. প্রোডাক্টের তালিকা চাইলে ("কি কি প্রোডাক্ট আছে", "what products do you have") শুধু পরিষ্কার তালিকা আকারে লিখো — এক লাইনে একটা প্রোডাক্ট: নাম + দাম। যেমন:
    • জিন্স — ৳৫০০
    • টি-শার্ট — ৳৪০০
-   এক লাইনে সব গুছিয়ে ("জামা কাপড় প্যান্ট শার্ট...") কখনো লিখো না। তালিকার পরে আর কিছু লিখো না — শুধু তালিকাই, বাড়তি প্রশ্ন বা বাড়তি লাইন নয়।
+   এক লাইনে সব গুছিয়ে ("জামা কাপড় প্যান্ট শার্ট...") কখনো লিখো না। তালিকার পরে আর কিছু লিখো না — শুধু তালিকাই, বাড়তি প্রশ্ন বা বাড়তি লাইন নয়। কোনো প্রোডাক্টের ভ্যারিয়েন্ট থাকলে (তালিকায় "ভ্যারিয়েন্ট" লেখা আছে) প্রতিটা ভ্যারিয়েন্টের দাম আলাদা করে লিখো — যেমন "টি-শার্ট — M ৳৪০০, L ৳৪৫০" — বেস দাম দিয়ে ভ্যারিয়েন্টের দাম ঢেকো না।
 11. বাংলিশ (Roman অক্ষরে বাংলা) বুঝতে পারো — কাস্টমার "jeans er dam koto", "tumi kemon aso", "chobi dao" লিখলেও তার কথা বুঝে নাও। "তুমি" আর "আপনি" দুটোই চিনতে পারো — কাস্টমার "তুমি" বললেও তুমি তাকে সবসময় ভদ্রভাবে "আপনি" বলে সম্বোধন করবে (কখনো "তুমি" বলো না)। আর উত্তর সবসময় শুদ্ধ বাংলা অক্ষরে (Bengali script) দাও — কখনো বাংলিশে (Roman অক্ষরে) উত্তর দিও না।
 12. কাস্টমার চ্যাটের মাঝখানে আবার "Hi" / "হ্যালো" বললে নতুন করে স্বাগত জানিও না — জিজ্ঞেস করো তিনি কি প্রোডাক্টটা নেবেন, নাকি নতুন করে কিছু বলতে চাচ্ছেন।
 13. প্রোডাক্টের কথা শুধু প্রাসঙ্গিক হলেই বলো — একবারে সব প্রোডাক্টের তালিকা বারবার দিও না। কাস্টমার আগ্রহ না দেখালে ১–২ বারের বেশি প্রোডাক্টের কথা তুলো না; তার প্রশ্নের উত্তর দাও, প্রোডাক্ট ঠেলে দিও না।
@@ -78,29 +80,52 @@ export interface AgentContext {
    */
   orderSummary: CustomerOrderSummary;
   knowledge: { title: string | null; body: string }[];
-  products: { id: string; name: string; pricePaisa: number; stock: number }[];
+  products: {
+    id: string;
+    name: string;
+    pricePaisa: number;
+    stock: number;
+    /** Variant type + values with a price each (empty = no variants, base price applies). */
+    variantType?: string | null;
+    variants?: { value: string; price_paisa: number; stock?: number | null }[];
+  }[];
   messages: string[];
   /** The owner's configured delivery charges (one Bengali line, or null when not loaded). The AI must quote THESE charges, never a hardcoded number. */
   deliveryCharges?: string | null;
 }
 
-export function buildUserPrompt(ctx: AgentContext): string {
-  const history = ctx.history
-    .map((m) => `${m.direction === 'in' ? 'কাস্টমার' : 'দোকান'}: ${m.body ?? ''}`)
-    .join('\n');
-  const orders = formatOrderSummaryBn(ctx.orderSummary);
+/**
+ * The prompt split for prompt caching (see ai-agent/gemini-cache.ts):
+ * the sections are built once here, in the exact order and wording
+ * buildUserPrompt has always produced, then divided into the STABLE
+ * part (shop context — knowledge + delivery charges + products, the
+ * same for every customer of this shop, so it can live in a 24h
+ * explicit prompt cache) and the VARIABLE part (this customer, their
+ * orders, the chat history and the new messages — never cached).
+ * Section TEXT is byte-identical to what buildUserPrompt produced
+ * before the split; only the transport changed (systemInstruction +
+ * two user turns instead of one flat string).
+ */
+function stableSections(ctx: AgentContext): string[] {
   const knowledge = ctx.knowledge.length
     ? ctx.knowledge.map((k) => `- ${k.title ?? ''}: ${k.body}`).join('\n')
     : 'নলেজ বুকে কিছু নেই।';
   const products = ctx.products.length
-    ? ctx.products.map((p) => `- ${p.name} (id: ${p.id}): ৳${(p.pricePaisa / 100).toFixed(2)}, স্টক ${p.stock}`).join('\n')
+    ? ctx.products
+        .map((p) => {
+          const base = `- ${p.name} (id: ${p.id}): ৳${(p.pricePaisa / 100).toFixed(2)}, স্টক ${p.stock}`;
+          const variants = Array.isArray(p.variants) ? p.variants : [];
+          if (variants.length === 0) return base;
+          // Variant prices REPLACE the base price for that value — quote
+          // the variant's own price (e.g. L ৳৪৫০), never the base price.
+          const list = variants
+            .map((v) => `${v.value} ৳${(Number(v.price_paisa) / 100).toFixed(2)}${v.stock != null ? ` (স্টক ${v.stock})` : ''}`)
+            .join(', ');
+          return `${base}; ভ্যারিয়েন্ট (${p.variantType ?? 'ধরন'}): ${list}`;
+        })
+        .join('\n')
     : 'কোনো প্রোডাক্ট নেই। সতর্কতা: প্রোডাক্ট তালিকা খালি — এই চ্যাটে কোনো দাম বা স্টকের সংখ্যা বলা যাবে না। কাস্টমার দাম জানতে চাইলে বাংলায় বলো দোকানে এখনো কোনো প্রোডাক্ট যোগ করা হয়নি, কোন প্রোডাক্টের দাম জানতে চান তার নাম জানালে দোকানের মালিক জানিয়ে দেবেন।';
   return [
-    // Phone/address are shown as "দেওয়া হয়নি" when missing — rule 2ক
-    // forbids the AI from claiming it already has them in that case.
-    `কাস্টমার: ${ctx.customerName ?? 'নাম নেই'}, ফোন: ${ctx.customerPhone ?? 'দেওয়া হয়নি'}, ঠিকানা: ${ctx.customerAddress ?? 'দেওয়া হয়নি'}`,
-    addressingLine(ctx.customerGender),
-    `কাস্টমারের অর্ডার (আসল তথ্য — এখানে না থাকলে অর্ডার নেই, বানিয়ে বলো না):\n${orders}`,
     `নলেজ বুক:\n${knowledge}`,
     // Delivery charges: the OWNER's configured rules (requirement C).
     // When this line is present it OVERRIDES any delivery-charge number
@@ -108,8 +133,62 @@ export function buildUserPrompt(ctx: AgentContext): string {
     // owner changes the charges) — quote only these numbers.
     ...(ctx.deliveryCharges ? [`ডেলিভারি চার্জ:\n${ctx.deliveryCharges}`] : []),
     `প্রোডাক্ট (শুধু এগুলোর দাম/স্টক বলা যাবে):\n${products}`,
+  ];
+}
+
+function variableSections(ctx: AgentContext): string[] {
+  const history = ctx.history
+    .map((m) => `${m.direction === 'in' ? 'কাস্টমার' : 'দোকান'}: ${m.body ?? ''}`)
+    .join('\n');
+  const orders = formatOrderSummaryBn(ctx.orderSummary);
+  return [
+    // Phone/address are shown as "দেওয়া হয়নি" when missing — rule 2ক
+    // forbids the AI from claiming it already has them in that case.
+    `কাস্টমার: ${ctx.customerName ?? 'নাম নেই'}, ফোন: ${ctx.customerPhone ?? 'দেওয়া হয়নি'}, ঠিকানা: ${ctx.customerAddress ?? 'দেওয়া হয়নি'}`,
+    addressingLine(ctx.customerGender),
+    `কাস্টমারের অর্ডার (আসল তথ্য — এখানে না থাকলে অর্ডার নেই, বানিয়ে বলো না):\n${orders}`,
     `সাম্প্রতিক চ্যাট:\n${history}`,
     `নতুন মেসেজ:\n${ctx.messages.map((m) => `কাস্টমার: ${m}`).join('\n')}`,
     'উপরে নিয়ম মেনে JSON উত্তর দাও। দাম/স্টকের প্রশ্নে উপরের প্রোডাক্ট তালিকা থেকেই সরাসরি উত্তর দাও — search_products/check_stock ডাকার দরকার নেই। অর্ডার, কুপন, ট্র্যাকিং বা তালিকায় নেই এমন কিছুর জন্য toolCalls-এ টুল চাও; টুলের ফলাফল পেলে সেই তথ্য দিয়েই উত্তর লিখো।',
+  ];
+}
+
+/**
+ * Stable shop context — the cacheable prefix. Byte-identical to the
+ * knowledge + delivery-charges + products sections of buildUserPrompt.
+ */
+export function buildStableContext(ctx: AgentContext): string {
+  return stableSections(ctx).join('\n\n');
+}
+
+/**
+ * Variable per-message prompt — customer, addressing, order summary,
+ * chat history, new messages, closing instruction — plus the optional
+ * per-turn notes (product-push limit, voice-note note), appended in
+ * the same order and with the same '\n\n' separators as the old flat
+ * prompt. Never cached.
+ */
+export function buildVariablePrompt(ctx: AgentContext, extraNotes: string[] = []): string {
+  const parts = variableSections(ctx);
+  for (const note of extraNotes) {
+    if (note) parts.push(note);
+  }
+  return parts.join('\n\n');
+}
+
+export function buildUserPrompt(ctx: AgentContext): string {
+  // Original order, unchanged: customer, addressing, orders, knowledge,
+  // delivery charges, products, history, new messages, closing.
+  const stable = stableSections(ctx);
+  const variable = variableSections(ctx);
+  return [
+    variable[0],
+    variable[1],
+    variable[2],
+    stable[0],
+    ...stable.slice(1),
+    variable[3],
+    variable[4],
+    variable[5],
   ].join('\n\n');
 }

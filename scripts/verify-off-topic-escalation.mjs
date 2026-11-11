@@ -18,8 +18,11 @@
  *   to EscalationReason (migration 25's escalation_reason is plain
  *   TEXT with no CHECK constraint, so no new migration was needed).
  * - agent.ts: off-topic check right after the anger check, BEFORE any
- *   AI call — escalates to waiting/off_topic with NO reply, NO AI call,
- *   no charge, plus an unanswered record (owner sees it in Teach AI).
+ *   AI call — sends ONE deterministic graceful reply ("দুঃখিত, বুঝতে
+ *   পারিনি…", gender-aware, no AI call, no charge), then escalates to
+ *   waiting/off_topic, plus an unanswered record (owner sees it in
+ *   Teach AI). Behaviour changed 2026-11-11 (Feature 1): it used to
+ *   send NO reply at all.
  * - Inbox UI: waiting badge shows 'off_topic' as "বিষয়ের বাইরে" /
  *   "Off-topic question"; tab/filter unchanged (they already list
  *   Waiting). Reopen guard already covers every waiting chat, so an
@@ -29,7 +32,8 @@
  * - Static: escalation module, agent hook + its position before the AI
  *   call, web badge.
  * - Boot 1 (local API on PGlite, webchat webhook end-to-end): an
- *   off-topic Bengali message → waiting/off_topic with NO AI reply; a
+ *   off-topic Bengali message → waiting/off_topic with exactly ONE
+ *   graceful deterministic reply (never "আমি বুঝতে পারছি"); a
  *   greeting → a reply is saved and the chat is NOT off_topic; a normal
  *   price question → open + real reply (৳500).
  * - Driver (processBatch directly, same PGlite dir, API stopped):
@@ -46,6 +50,7 @@
  * Prints PASS/FAIL per step and exits non-zero if anything fails.
  */
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 import http from 'node:http';
 import path from 'node:path';
 import fs from 'node:fs';
@@ -56,6 +61,8 @@ const results = [];
 let token = '';
 /** Dummy webchat secret for the local boots (must match the boot env). */
 const WEBCHAT_SECRET = 'offtopic-test-secret';
+/** Dummy Meta app secret for the local boots (must match the boot env). */
+const META_APP_SECRET = 'dummy-meta-secret';
 
 function check(name, ok, detail = '') {
   results.push({ name, ok, detail });
@@ -192,7 +199,7 @@ async function main() {
   check('agent: off-topic check present with escalated_off_topic reason', agentSrc.includes('detectOffTopic(batchedText)') && agentSrc.includes("reason: 'escalated_off_topic'"));
   check('agent: off-topic escalates as off_topic', agentSrc.includes("escalateConversation(workspaceId, conversationId, 'off_topic')"));
   const offTopicIdx = agentSrc.indexOf('detectOffTopic(batchedText)');
-  check('agent: off-topic check runs BEFORE any AI call', offTopicIdx > 0 && offTopicIdx < agentSrc.indexOf('ai = await callAiForWorkspace(') && offTopicIdx < agentSrc.indexOf('checkAiReplyAllowance(workspaceId)'));
+  check('agent: off-topic check runs BEFORE any AI call', offTopicIdx > 0 && offTopicIdx < agentSrc.indexOf('callAiForWorkspaceSplit(') && offTopicIdx < agentSrc.indexOf('checkAiReplyAllowance(workspaceId)'));
   check('agent: off-topic check runs right after the anger check', agentSrc.indexOf('detectOffTopic(batchedText)') > agentSrc.indexOf("escalated_angry_customer"));
 
   const webSrc = fs.readFileSync(path.join(ROOT, 'apps/web/app/inbox/page.tsx'), 'utf8');
@@ -246,7 +253,9 @@ async function main() {
     check('boot 1: reason is off_topic', offFound?.escalation_reason === 'off_topic', `reason=${offFound?.escalation_reason ?? '?'}`);
     const offThread = await api(`/api/inbox/${offTopicConvId}`);
     const offOut = (offThread.data?.messages ?? []).filter((m) => m.direction === 'out');
-    check('boot 1: NO AI reply was sent to the off-topic question', offOut.length === 0, `out=${offOut.length}`);
+    // Feature 1 (2026-11-11): exactly ONE deterministic graceful reply —
+    // never an AI reply, never "আমি বুঝতে পারছি".
+    check('boot 1: exactly ONE graceful reply to the off-topic question', offOut.length === 1 && (offOut[0]?.body ?? '').includes('বুঝতে পারিনি') && !(offOut[0]?.body ?? '').includes('আমি বুঝতে পারছি'), `out=${offOut.length} body=${JSON.stringify((offOut[0]?.body ?? '').slice(0, 120))}`);
 
     // Greeting over the same path — must NOT be off-topic; a reply is saved.
     const mHi = await api('/api/webhooks/webchat', {
@@ -300,9 +309,9 @@ async function main() {
   if (driverResult) {
     check('driver: off-topic unit matrix all correct', driverResult.offTopicUnitAllOk === true, JSON.stringify((driverResult.offTopicUnit ?? []).filter((c) => !c.ok)));
     const ob = driverResult.offTopicBn ?? {};
-    check('driver: off-topic BN → waiting/off_topic, no reply', ob.result?.replied === false && ob.result?.reason === 'escalated_off_topic' && ob.state?.status === 'waiting' && ob.state?.mode === 'human' && ob.state?.escalation_reason === 'off_topic' && ob.outMessages === 0, JSON.stringify({ r: ob.result, s: ob.state, out: ob.outMessages }));
+    check('driver: off-topic BN → waiting/off_topic, ONE graceful reply', ob.result?.replied === true && ob.result?.reason === 'escalated_off_topic' && ob.state?.status === 'waiting' && ob.state?.mode === 'human' && ob.state?.escalation_reason === 'off_topic' && ob.outMessages === 1 && (ob.outBodies ?? []).some((b) => b.includes('বুঝতে পারিনি') && !b.includes('আমি বুঝতে পারছি')), JSON.stringify({ r: ob.result, s: ob.state, out: ob.outMessages, b: ob.outBodies }));
     const oe = driverResult.offTopicEn ?? {};
-    check('driver: off-topic EN → waiting/off_topic, no reply', oe.result?.replied === false && oe.result?.reason === 'escalated_off_topic' && oe.state?.status === 'waiting' && oe.state?.mode === 'human' && oe.state?.escalation_reason === 'off_topic' && oe.outMessages === 0, JSON.stringify({ r: oe.result, s: oe.state, out: oe.outMessages }));
+    check('driver: off-topic EN → waiting/off_topic, ONE graceful reply', oe.result?.replied === true && oe.result?.reason === 'escalated_off_topic' && oe.state?.status === 'waiting' && oe.state?.mode === 'human' && oe.state?.escalation_reason === 'off_topic' && oe.outMessages === 1 && (oe.outBodies ?? []).some((b) => b.includes('বুঝতে পারিনি') && !b.includes('আমি বুঝতে পারছি')), JSON.stringify({ r: oe.result, s: oe.state, out: oe.outMessages, b: oe.outBodies }));
     const gr = driverResult.greeting ?? {};
     check('driver: greeting gets a reply and is NOT off_topic', gr.result?.replied === true && gr.state?.escalation_reason !== 'off_topic' && (gr.outBodies ?? []).length > 0, JSON.stringify({ r: gr.result, s: gr.state }));
     const nm = driverResult.normal ?? {};
@@ -312,7 +321,9 @@ async function main() {
     const ag = driverResult.angryStill ?? {};
     check('driver: angry still escalates as angry_customer', ag.result?.replied === false && ag.state?.status === 'waiting' && ag.state?.escalation_reason === 'angry_customer' && ag.outMessages === 0, JSON.stringify({ r: ag.result, s: ag.state }));
     const dbl = driverResult.doubleOffTopic ?? {};
-    check('driver: second off-topic message does not re-escalate', dbl.result?.reason === 'human_mode' && dbl.state?.status === 'waiting' && dbl.state?.escalation_reason === 'off_topic' && dbl.outMessages === 0, JSON.stringify({ r: dbl.result, s: dbl.state }));
+    // Feature 1: the FIRST off-topic message already sent the one graceful
+    // reply, so the total stays 1 — the second message adds NO new reply.
+    check('driver: second off-topic message does not re-escalate', dbl.result?.reason === 'human_mode' && dbl.state?.status === 'waiting' && dbl.state?.escalation_reason === 'off_topic' && dbl.outMessages === 1, JSON.stringify({ r: dbl.result, s: dbl.state }));
     check('driver: guard conversation seeded waiting (off_topic)', !!driverResult.guardConversationId, `id=${String(driverResult.guardConversationId ?? '').slice(0, 8)}`);
   }
 
@@ -330,20 +341,25 @@ async function main() {
       check('boot 2: waiting rows carry escalation_reason (incl. off_topic)', wList.length > 0 && wList.every((c) => !!c.escalation_reason) && wList.some((c) => c.escalation_reason === 'off_topic'), JSON.stringify(wList.map((c) => c.escalation_reason)));
       const guardId = driverResult?.guardConversationId ?? '';
       // A new Meta message to the waiting guard conversation must NOT reopen it.
+      // The Meta POST is signed like Meta signs it (HMAC-SHA256 of the
+      // raw body with META_APP_SECRET, X-Hub-Signature-256) — the
+      // 2026-11-11 security fix rejects unsigned webhook POSTs with 403.
+      const hookBody = JSON.stringify({
+        object: 'page',
+        entry: [{
+          id: 'TESTPAGE1', time: Math.floor(Date.now() / 1000),
+          messaging: [{
+            sender: { id: 'PSID-OFF-1' }, recipient: { id: 'TESTPAGE1' },
+            timestamp: Date.now(),
+            message: { mid: `off-guard-${stamp}`, text: 'তোমার নাম কি?' },
+          }],
+        }],
+      });
+      const hookSig = `sha256=${crypto.createHmac('sha256', META_APP_SECRET).update(hookBody).digest('hex')}`;
       const hook = await fetch(`http://localhost:${port}/api/webhooks/meta`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          object: 'page',
-          entry: [{
-            id: 'TESTPAGE1', time: Math.floor(Date.now() / 1000),
-            messaging: [{
-              sender: { id: 'PSID-OFF-1' }, recipient: { id: 'TESTPAGE1' },
-              timestamp: Date.now(),
-              message: { mid: `off-guard-${stamp}`, text: 'তোমার নাম কি?' },
-            }],
-          }],
-        }),
+        headers: { 'Content-Type': 'application/json', 'X-Hub-Signature-256': hookSig },
+        body: hookBody,
       });
       check('boot 2: Meta webhook accepted for the waiting chat', hook.status === 200, `status=${hook.status}`);
       await sleep(4000);

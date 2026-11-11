@@ -8,6 +8,7 @@ import { query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
 import { checkProductLimit } from '../subscriptions/service';
+import { invalidateWorkspacePromptCache } from '../ai-agent/gemini-cache';
 
 export const productsRouter = Router();
 productsRouter.use(requireAuth);
@@ -49,6 +50,14 @@ interface ProductImageRow {
   id: string;
   url: string;
   created_at: string;
+  /** True for one of the (max 2) MAIN photos — shown in the list and sent to customers by default. */
+  is_main: boolean;
+}
+
+interface ProductVariant {
+  value: string;
+  price_paisa: number;
+  stock?: number | null;
 }
 
 interface ProductRow {
@@ -58,24 +67,75 @@ interface ProductRow {
   size: string | null;
   stock: number;
   description: string | null;
+  /** Variant TYPE the owner picked first (size / kg / weight / colour / …); null = no variants. */
+  variant_type: string | null;
+  /** Variant values with a price (and optional stock) each; [] = no variants, base price applies. */
+  variants: ProductVariant[];
   images?: ProductImageRow[];
 }
 
-/** Attach each product's photos (one query for the whole list). */
+/**
+ * Validate the variants array from a create/update body.
+ * Returns { variants } or { error }. A variant needs a non-empty value
+ * and a non-negative price (paisa); stock is optional, non-negative.
+ * At most 20 values per product.
+ */
+function validateVariants(raw: unknown): { variants?: ProductVariant[]; error?: string } {
+  if (!Array.isArray(raw)) return { error: 'variants must be an array' };
+  if (raw.length > 20) return { error: 'একটি প্রোডাক্টে সর্বোচ্চ ২০টি ভ্যারিয়েন্ট দেওয়া যায়' };
+  const seen = new Set<string>();
+  const variants: ProductVariant[] = [];
+  for (const item of raw) {
+    const v = item as { value?: unknown; pricePaisa?: unknown; price_paisa?: unknown; stock?: unknown };
+    const value = typeof v?.value === 'string' ? v.value.trim() : '';
+    if (!value) return { error: 'প্রতিটি ভ্যারিয়েন্টের নাম/মান দিতে হবে' };
+    if (seen.has(value)) return { error: `ভ্যারিয়েন্ট "${value}" দুইবার দেওয়া হয়েছে` };
+    seen.add(value);
+    const priceRaw = v?.pricePaisa ?? v?.price_paisa;
+    if (typeof priceRaw !== 'number' || !Number.isFinite(priceRaw) || priceRaw < 0) {
+      return { error: `ভ্যারিয়েন্ট "${value}"-এর দাম দিতে হবে (০ বা তার বেশি)` };
+    }
+    const variant: ProductVariant = { value, price_paisa: Math.floor(priceRaw) };
+    if (v?.stock !== undefined && v?.stock !== null) {
+      if (typeof v.stock !== 'number' || !Number.isInteger(v.stock) || v.stock < 0) {
+        return { error: `ভ্যারিয়েন্ট "${value}"-এর স্টক ০ বা তার বেশি পূর্ণসংখ্যা হতে হবে` };
+      }
+      variant.stock = v.stock;
+    }
+    variants.push(variant);
+  }
+  return { variants };
+}
+
+/** A product has at most 2 MAIN photos. */
+const MAX_MAIN_IMAGES = 2;
+
+async function countMainImages(workspaceId: string, productId: string, excludeImageId?: string): Promise<number> {
+  const { rows } = await query<{ n: string }>(
+    workspaceId,
+    excludeImageId
+      ? 'SELECT count(*) AS n FROM product_images WHERE workspace_id = $1 AND product_id = $2 AND is_main = TRUE AND id <> $3'
+      : 'SELECT count(*) AS n FROM product_images WHERE workspace_id = $1 AND product_id = $2 AND is_main = TRUE',
+    excludeImageId ? [workspaceId, productId, excludeImageId] : [workspaceId, productId],
+  );
+  return Number(rows[0]?.n ?? 0);
+}
+
+/** Attach each product's photos (one query for the whole list). Main photos first. */
 async function attachImages(workspaceId: string, products: ProductRow[]): Promise<void> {
   if (products.length === 0) return;
   const ids = products.map((p) => p.id);
-  const { rows } = await query<{ product_id: string; id: string; url: string; created_at: string }>(
+  const { rows } = await query<{ product_id: string; id: string; url: string; created_at: string; is_main: boolean }>(
     workspaceId,
-    `SELECT product_id, id, url, created_at FROM product_images
+    `SELECT product_id, id, url, created_at, is_main FROM product_images
      WHERE workspace_id = $1 AND product_id = ANY($2::uuid[])
-     ORDER BY created_at ASC`,
+     ORDER BY is_main DESC, created_at ASC`,
     [workspaceId, ids],
   );
   const byProduct = new Map<string, ProductImageRow[]>();
   for (const r of rows) {
     const list = byProduct.get(r.product_id) ?? [];
-    list.push({ id: r.id, url: r.url, created_at: r.created_at });
+    list.push({ id: r.id, url: r.url, created_at: r.created_at, is_main: !!r.is_main });
     byProduct.set(r.product_id, list);
   }
   for (const p of products) p.images = byProduct.get(p.id) ?? [];
@@ -125,7 +185,7 @@ productsRouter.get('/', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
   const { rows } = await query<ProductRow>(
     workspaceId,
-    'SELECT id, name, price_paisa, size, stock, description FROM products WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200',
+    'SELECT id, name, price_paisa, size, stock, description, variant_type, variants FROM products WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 200',
     [workspaceId],
   );
   await attachImages(workspaceId, rows);
@@ -134,15 +194,37 @@ productsRouter.get('/', async (req: AuthRequest, res: Response) => {
 
 productsRouter.post('/', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
-  const { name, pricePaisa, size, stock, description } = (req.body ?? {}) as {
+  const { name, pricePaisa, size, stock, description, variantType, variants: rawVariants } = (req.body ?? {}) as {
     name?: string;
     pricePaisa?: number;
     size?: string;
     stock?: number;
     description?: string;
+    variantType?: string;
+    variants?: unknown;
   };
   if (!name || typeof pricePaisa !== 'number' || pricePaisa < 0) {
     res.status(400).json({ error: 'name and a non-negative pricePaisa are required' });
+    return;
+  }
+  // Variants: type first, then values with a price each. A variant type
+  // with no values is rejected — the owner adds at least one value.
+  let variants: ProductVariant[] = [];
+  const cleanType = typeof variantType === 'string' ? variantType.trim() : '';
+  if (rawVariants !== undefined) {
+    const checked = validateVariants(rawVariants);
+    if (checked.error) {
+      res.status(400).json({ error: checked.error });
+      return;
+    }
+    variants = checked.variants ?? [];
+  }
+  if (cleanType && variants.length === 0) {
+    res.status(400).json({ error: 'ভ্যারিয়েন্টের ধরন দিলে অন্তত একটি মান + দাম দিতে হবে' });
+    return;
+  }
+  if (!cleanType && variants.length > 0) {
+    res.status(400).json({ error: 'ভ্যারিয়েন্টের মান দিলে আগে ধরন (যেমন: সাইজ) দিতে হবে' });
     return;
   }
   // Subscription limit: this plan allows only so many products.
@@ -153,12 +235,15 @@ productsRouter.post('/', async (req: AuthRequest, res: Response) => {
   }
   const { rows } = await query<ProductRow>(
     workspaceId,
-    `INSERT INTO products (workspace_id, name, price_paisa, size, stock, description)
-     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, name, price_paisa, size, stock, description`,
-    [workspaceId, name, pricePaisa, size ?? null, stock ?? 0, description ?? null],
+    `INSERT INTO products (workspace_id, name, price_paisa, size, stock, description, variant_type, variants)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING id, name, price_paisa, size, stock, description, variant_type, variants`,
+    [workspaceId, name, pricePaisa, size ?? null, stock ?? 0, description ?? null, cleanType || null, JSON.stringify(variants)],
   );
   const product = rows[0];
   product.images = [];
+  // The product list is part of the AI's cached prompt prefix — a new
+  // product must be visible in the very next reply.
+  await invalidateWorkspacePromptCache(workspaceId);
   res.status(201).json({ product });
 });
 
@@ -173,7 +258,7 @@ productsRouter.get('/search', async (req: AuthRequest, res: Response) => {
   const like = `%${q}%`;
   const { rows } = await query<ProductRow>(
     workspaceId,
-    `SELECT id, name, price_paisa, size, stock, description FROM products
+    `SELECT id, name, price_paisa, size, stock, description, variant_type, variants FROM products
      WHERE workspace_id = $1 AND (name ILIKE $2 OR description ILIKE $2)
      ORDER BY name ASC LIMIT 50`,
     [workspaceId, like],
@@ -198,7 +283,7 @@ productsRouter.post('/search-voice', async (req: AuthRequest, res: Response) => 
   const like = `%${transcript.trim()}%`;
   const { rows } = await query<ProductRow>(
     workspaceId,
-    `SELECT id, name, price_paisa, size, stock, description FROM products
+    `SELECT id, name, price_paisa, size, stock, description, variant_type, variants FROM products
      WHERE workspace_id = $1 AND (name ILIKE $2 OR description ILIKE $2)
      ORDER BY name ASC LIMIT 50`,
     [workspaceId, like],
@@ -214,7 +299,7 @@ productsRouter.get('/low-stock', async (req: AuthRequest, res: Response) => {
   const threshold = Number.isFinite(raw) && raw >= 0 ? Math.floor(raw) : 5;
   const { rows } = await query<ProductRow>(
     workspaceId,
-    `SELECT id, name, price_paisa, size, stock, description FROM products
+    `SELECT id, name, price_paisa, size, stock, description, variant_type, variants FROM products
      WHERE workspace_id = $1 AND stock <= $2 ORDER BY stock ASC, name ASC LIMIT 200`,
     [workspaceId, threshold],
   );
@@ -237,7 +322,7 @@ productsRouter.post('/:id/adjust-stock', async (req: AuthRequest, res: Response)
     workspaceId,
     `UPDATE products SET stock = GREATEST(0, stock + $2), updated_at = now()
      WHERE workspace_id = $1 AND id = $3
-     RETURNING id, name, price_paisa, size, stock, description`,
+     RETURNING id, name, price_paisa, size, stock, description, variant_type, variants`,
     [workspaceId, delta, req.params.id],
   );
   if (rows.length === 0) {
@@ -251,6 +336,8 @@ productsRouter.post('/:id/adjust-stock', async (req: AuthRequest, res: Response)
     [workspaceId, req.params.id, delta, reason ?? null],
   );
   await attachImages(workspaceId, rows);
+  // Stock is part of the AI's cached prompt prefix.
+  await invalidateWorkspacePromptCache(workspaceId);
   res.json({ product: rows[0] });
 });
 
@@ -258,7 +345,7 @@ productsRouter.get('/:id', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
   const product = await queryOne<ProductRow>(
     workspaceId,
-    'SELECT id, name, price_paisa, size, stock, description FROM products WHERE workspace_id = $1 AND id = $2',
+    'SELECT id, name, price_paisa, size, stock, description, variant_type, variants FROM products WHERE workspace_id = $1 AND id = $2',
     [workspaceId, req.params.id],
   );
   if (!product) {
@@ -270,17 +357,21 @@ productsRouter.get('/:id', async (req: AuthRequest, res: Response) => {
 });
 
 /**
- * PATCH /api/products/:id — update name / price / size / stock / description.
+ * PATCH /api/products/:id — update name / price / size / stock / description / variants.
  * Only the fields sent are changed; price must stay non-negative.
+ * variants replaces the whole variant list (send [] or null to clear);
+ * variantType null clears the type (and the values with it).
  */
 productsRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
-  const { name, pricePaisa, size, stock, description } = (req.body ?? {}) as {
+  const { name, pricePaisa, size, stock, description, variantType, variants: rawVariants } = (req.body ?? {}) as {
     name?: string;
     pricePaisa?: number;
     size?: string | null;
     stock?: number;
     description?: string | null;
+    variantType?: string | null;
+    variants?: unknown;
   };
   const sets: string[] = [];
   const params: unknown[] = [workspaceId, req.params.id];
@@ -311,6 +402,44 @@ productsRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     push('stock', stock);
   }
   if (description !== undefined) push('description', description ?? null);
+  if (variantType !== undefined || rawVariants !== undefined) {
+    // Read the current row so a type-only or values-only PATCH stays consistent.
+    const current = await queryOne<{ variant_type: string | null; variants: ProductVariant[] }>(
+      workspaceId,
+      'SELECT variant_type, variants FROM products WHERE workspace_id = $1 AND id = $2',
+      [workspaceId, req.params.id],
+    );
+    if (!current) {
+      res.status(404).json({ error: 'Product not found' });
+      return;
+    }
+    let nextType: string | null = variantType === undefined ? current.variant_type : (typeof variantType === 'string' ? variantType.trim() || null : null);
+    let nextVariants: ProductVariant[] = current.variants ?? [];
+    if (rawVariants !== undefined) {
+      if (rawVariants === null) {
+        nextVariants = [];
+      } else {
+        const checked = validateVariants(rawVariants);
+        if (checked.error) {
+          res.status(400).json({ error: checked.error });
+          return;
+        }
+        nextVariants = checked.variants ?? [];
+      }
+    }
+    if (nextType && nextVariants.length === 0) {
+      res.status(400).json({ error: 'ভ্যারিয়েন্টের ধরন দিলে অন্তত একটি মান + দাম দিতে হবে' });
+      return;
+    }
+    if (!nextType && nextVariants.length > 0) {
+      res.status(400).json({ error: 'ভ্যারিয়েন্টের মান দিলে আগে ধরন (যেমন: সাইজ) দিতে হবে' });
+      return;
+    }
+    if (nextType === null) nextVariants = [];
+    push('variant_type', nextType);
+    params.push(JSON.stringify(nextVariants));
+    sets.push(`variants = $${params.length}::jsonb`);
+  }
   if (sets.length === 0) {
     res.status(400).json({ error: 'nothing to update' });
     return;
@@ -319,7 +448,7 @@ productsRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
     workspaceId,
     `UPDATE products SET ${sets.join(', ')}, updated_at = now()
      WHERE workspace_id = $1 AND id = $2
-     RETURNING id, name, price_paisa, size, stock, description`,
+     RETURNING id, name, price_paisa, size, stock, description, variant_type, variants`,
     params,
   );
   if (rows.length === 0) {
@@ -328,6 +457,8 @@ productsRouter.patch('/:id', async (req: AuthRequest, res: Response) => {
   }
   const product = rows[0];
   await attachImages(workspaceId, [product]);
+  // Name/price/stock/variants are part of the AI's cached prompt prefix.
+  await invalidateWorkspacePromptCache(workspaceId);
   res.json({ product });
 });
 
@@ -351,6 +482,8 @@ productsRouter.delete('/:id', async (req: AuthRequest, res: Response) => {
     workspaceId,
     req.params.id,
   ]);
+  // The deleted product must disappear from the AI's cached prompt prefix.
+  await invalidateWorkspacePromptCache(workspaceId);
   res.json({ deleted: true });
 });
 
@@ -363,10 +496,40 @@ productsRouter.get('/:id/images', async (req: AuthRequest, res: Response) => {
   }
   const { rows } = await query<ProductImageRow>(
     workspaceId,
-    'SELECT id, url, created_at FROM product_images WHERE workspace_id = $1 AND product_id = $2 ORDER BY created_at ASC',
+    'SELECT id, url, created_at, is_main FROM product_images WHERE workspace_id = $1 AND product_id = $2 ORDER BY is_main DESC, created_at ASC',
     [workspaceId, req.params.id],
   );
   res.json({ images: rows });
+});
+
+/**
+ * PATCH /api/products/:id/images/:imageId {isMain} — mark/unmark a photo
+ * as a MAIN photo. At most 2 main photos per product; marking a third
+ * one fails honestly so the owner picks which two stay main.
+ */
+productsRouter.patch('/:id/images/:imageId', async (req: AuthRequest, res: Response) => {
+  const workspaceId = getWorkspaceId(req);
+  const { isMain } = (req.body ?? {}) as { isMain?: boolean };
+  if (typeof isMain !== 'boolean') {
+    res.status(400).json({ error: 'isMain (true/false) is required' });
+    return;
+  }
+  if (isMain && (await countMainImages(workspaceId, req.params.id, req.params.imageId)) >= MAX_MAIN_IMAGES) {
+    res.status(400).json({ error: `একটি প্রোডাক্টে সর্বোচ্চ ${MAX_MAIN_IMAGES}টি মূল ছবি রাখা যায় — আগে একটি মূল ছবি সরান` });
+    return;
+  }
+  const { rows } = await query<ProductImageRow>(
+    workspaceId,
+    `UPDATE product_images SET is_main = $3
+     WHERE workspace_id = $1 AND product_id = $2 AND id = $4
+     RETURNING id, url, created_at, is_main`,
+    [workspaceId, req.params.id, isMain, req.params.imageId],
+  );
+  if (rows.length === 0) {
+    res.status(404).json({ error: 'Photo not found' });
+    return;
+  }
+  res.json({ image: rows[0] });
 });
 
 /**
@@ -378,6 +541,9 @@ productsRouter.get('/:id/images', async (req: AuthRequest, res: Response) => {
  *   raw base64); stored in Blob on Vercel, on disk locally.
  * Images only (jpeg/png/gif/webp), at most 25 MB each, at most 10 photos
  * per product. The product must belong to the caller's workspace.
+ * { isMain?: boolean } — mark this photo as a MAIN photo (max 2 per
+ * product). The FIRST photo of a product becomes main automatically
+ * when isMain is not sent.
  */
 productsRouter.post('/:id/images', async (req: AuthRequest, res: Response) => {
   const workspaceId = getWorkspaceId(req);
@@ -396,12 +562,21 @@ productsRouter.post('/:id/images', async (req: AuthRequest, res: Response) => {
     return;
   }
 
-  const { url, fileBase64, fileName, mimeType } = (req.body ?? {}) as {
+  const { url, fileBase64, fileName, mimeType, isMain } = (req.body ?? {}) as {
     url?: string;
     fileBase64?: string;
     fileName?: string;
     mimeType?: string;
+    isMain?: boolean;
   };
+  // Main-photo decision BEFORE the upload work: a third main photo is
+  // refused honestly; the first photo is main unless told otherwise.
+  const existingCount = Number(existing[0]?.n ?? 0);
+  const wantMain = typeof isMain === 'boolean' ? isMain : existingCount === 0;
+  if (wantMain && (await countMainImages(workspaceId, productId)) >= MAX_MAIN_IMAGES) {
+    res.status(400).json({ error: `একটি প্রোডাক্টে সর্বোচ্চ ${MAX_MAIN_IMAGES}টি মূল ছবি রাখা যায় — আগে একটি মূল ছবি সরান` });
+    return;
+  }
 
   let finalUrl: string | null = null;
 
@@ -484,9 +659,9 @@ productsRouter.post('/:id/images', async (req: AuthRequest, res: Response) => {
 
   const { rows } = await query<ProductImageRow>(
     workspaceId,
-    `INSERT INTO product_images (workspace_id, product_id, url)
-     VALUES ($1, $2, $3) RETURNING id, url, created_at`,
-    [workspaceId, productId, finalUrl],
+    `INSERT INTO product_images (workspace_id, product_id, url, is_main)
+     VALUES ($1, $2, $3, $4) RETURNING id, url, created_at, is_main`,
+    [workspaceId, productId, finalUrl, wantMain],
   );
   res.status(201).json({ image: rows[0] });
 });

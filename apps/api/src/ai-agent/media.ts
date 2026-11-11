@@ -17,6 +17,16 @@
  *   ONLY from the catalog rows — a product, price or stock level is
  *   never invented. Returns null when vision is unavailable (no key,
  *   download failed, API error) so the caller falls back honestly.
+ * - NO-FAKE RULE (2026-11-11, user report — the AI told a customer
+ *   "সিমিলার প্রোডাক্ট দেখাচ্ছি" for a TREE photo without reading it):
+ *   analyseCustomerImage NEVER returns a "similar products" list.
+ *   similarIds is always [] — a look-alike list with no verified visual
+ *   match is exactly the fake this fix removes. The outcome instead
+ *   carries isProduct (does the photo show a sellable product at all?)
+ *   and a self-reported confidence, and the caller only trusts a match
+ *   at or above VISION_MATCH_CONFIDENCE_THRESHOLD (0.85). Below it —
+ *   or when isProduct is false — the caller says so honestly and asks
+ *   for the product name. When in doubt, no match.
  * - transcribeCustomerAudio(audioUrl): Gemini audio input → transcript
  *   (Bengali / Banglish speech to text). The transcript then flows
  *   through the normal text pipeline (anger / off-topic / gibberish /
@@ -102,22 +112,44 @@ export async function uploadMediaToBlob(
 export interface MatchCatalogProduct {
   id: string;
   name: string;
-  pricePaisa: number;
+  /** Price in paisa, or null when unknown (e.g. an old Page-Read product whose post stated no price). */
+  pricePaisa: number | null;
   stock: number;
   description: string | null;
   imageUrl: string | null;
+  /** True for a Page-Read old product (confirmed from the Page's old posts) — never claim stock for one. */
+  isOldProduct?: boolean;
 }
 
 export interface ImageMatchOutcome {
   /** Catalog id of the product the photo shows, or null (not our product). */
   matchedId: string | null;
-  /** 0–1 confidence in the match. */
+  /** 0–1 confidence in the match (self-reported by the vision model — NOT a calibrated score, hence the strict 0.85 bar in the caller). */
   confidence: number;
+  /** False when the photo shows NO sellable product at all (tree, scenery, person alone, text screenshot, animal). */
+  isProduct: boolean;
   /** What the photo shows, in Bengali (for the reply / logs). */
   description: string;
-  /** Catalog ids of the closest products (max 3) when there is no match. */
+  /**
+   * ALWAYS [] — kept only so older callers reading the field do not
+   * break. A "similar products" list may only be shown after a REAL
+   * visual match, and this function does not produce one: returning
+   * look-alikes for an unmatched photo is the fake-match bug
+   * (2026-11-11). The caller must never present catalog products as
+   * "similar" on the basis of this field.
+   */
   similarIds: string[];
+  /** Token usage of the ONE vision call (null when no call was made — exact-URL shortcut). The caller records it in the ledger. */
+  usage: { inputTokens: number; outputTokens: number } | null;
 }
+
+/**
+ * A vision match is trusted ONLY at this confidence or above.
+ * Gemini's confidence is self-reported, not calibrated, so the bar is
+ * deliberately strict: 0.85. Below it the photo is treated as
+ * unmatched — the AI says so honestly instead of showing a look-alike.
+ */
+export const VISION_MATCH_CONFIDENCE_THRESHOLD = 0.85;
 
 /**
  * Match a customer photo against the catalog with Gemini vision.
@@ -125,6 +157,9 @@ export interface ImageMatchOutcome {
  * the model returns JSON naming the matching catalog id (or null).
  * A match is only trusted when the model names an id that IS in the
  * catalog — an unknown id is treated as "no match", never invented.
+ * ONE Gemini call per image; its token usage is returned so the caller
+ * can record the real cost in the ledger. NO similar-products list is
+ * ever produced here (see ImageMatchOutcome.similarIds).
  */
 export async function analyseCustomerImage(
   imageUrl: string,
@@ -144,15 +179,18 @@ export async function analyseCustomerImage(
     return {
       matchedId: exact.id,
       confidence: 1,
+      isProduct: true,
       description: `ছবিটি দোকানের "${exact.name}" প্রোডাক্টের নিজের ছবি।`,
       similarIds: [],
+      usage: null, // no vision call was made — the ledger records 0 tokens, honestly
     };
   }
   const catalogText = catalog
-    .map(
-      (p, i) =>
-        `${i + 1}. id=${p.id} name="${p.name}" price=৳${p.pricePaisa / 100} stock=${p.stock}${p.description ? ` desc="${p.description}"` : ''}`,
-    )
+    .map((p, i) => {
+      const price = p.pricePaisa === null ? 'দাম জানা নেই' : `দাম ৳${p.pricePaisa / 100}`;
+      const old = p.isOldProduct ? ' [পুরোনো পণ্য — আগের পণ্য, স্টক নিশ্চিত নয়]' : '';
+      return `${i + 1}. id=${p.id} name="${p.name}" ${price} stock=${p.stock}${old}${p.description ? ` desc="${p.description}"` : ''}`;
+    })
     .join('\n');
   // Interleave a TEXT label before each image part — the model then knows
   // exactly which catalog product each photo belongs to (a bare positional
@@ -162,10 +200,10 @@ export async function analyseCustomerImage(
   const parts: GeminiPart[] = [
     {
       text:
-        'তুমি একটি দোকানের প্রোডাক্ট মেলানোর কাজ করছো। নিচে প্রথমে কাস্টমারের ছবি, তারপর দোকানের প্রোডাক্টের ছবি — প্রতিটার আগে কোন প্রোডাক্ট সেটা লেখা আছে। প্রোডাক্টটি কোনো মানুষের পরনে থাকতে পারে — মানুষটিকে নয়, পোশাকটি/জিনিসটি মেলাও। ছবিতে একাধিক প্রোডাক্ট দেখা গেলে, যেটা ছবির মূল বিষয় (সবচেয়ে বড় / মাঝখানে / ছবিটা যার জন্য তোলা) সেটাকে matchedId দাও, বাকিগুলো similarIds-এ দাও।\n' +
+        'তুমি একটি দোকানের প্রোডাক্ট মেলানোর কাজ করছো। নিচে প্রথমে কাস্টমারের ছবি, তারপর দোকানের প্রোডাক্টের ছবি — প্রতিটার আগে কোন প্রোডাক্ট সেটা লেখা আছে। প্রোডাক্টটি কোনো মানুষের পরনে থাকতে পারে — মানুষটিকে নয়, পোশাকটি/জিনিসটি মেলাও। ছবিতে একাধিক প্রোডাক্ট দেখা গেলে, যেটা ছবির মূল বিষয় (সবচেয়ে বড় / মাঝখানে / ছবিটা যার জন্য তোলা) সেটাকে matchedId দাও।\n' +
         `দোকানের প্রোডাক্ট তালিকা:\n${catalogText}\n\n` +
-        'কাস্টমারের ছবিতে কোন প্রোডাক্টটি দেখা যাচ্ছে? শুধু JSON-এ উত্তর দাও: {"matchedId": "<তালিকার id অথবা null>", "confidence": 0.0-1.0, "description": "<ছবিতে কী দেখা যাচ্ছে, বাংলায়>", "similarIds": ["<মিলে এমন প্রোডাক্টের id, সর্বোচ্চ 3টি>"]}\n' +
-        'নিয়ম: matchedId শুধু তখনই দাও যখন নিশ্চিত যে ছবির জিনিসটি তালিকার ওই প্রোডাক্টটিই (একই জিনিস, শুধু একই ধরন নয়)। ছবিতে তালিকার বাইরের জিনিস থাকলে matchedId=null দাও, আর সবচেয়ে কাছের প্রোডাক্টগুলো similarIds-এ দাও। ছবিতে কোনো প্রোডাক্টই না থাকলে (মানুষ, প্রকৃতি, এলোমেলো ছবি) matchedId=null, similarIds=[] দাও। তালিকায় নেই এমন কোনো id বানিয়ে দিও না।',
+        'কাস্টমারের ছবিতে কোন প্রোডাক্টটি দেখা যাচ্ছে? শুধু JSON-এ উত্তর দাও: {"matchedId": "<তালিকার id অথবা null>", "confidence": 0.0-1.0, "isProduct": true|false, "description": "<ছবিতে কী দেখা যাচ্ছে, বাংলায়>"}\n' +
+        'নিয়ম: matchedId শুধু তখনই দাও যখন নিশ্চিত যে ছবির জিনিসটি তালিকার ওই প্রোডাক্টটিই (একই জিনিস, শুধু একই ধরন নয়)। নিশ্চিত না হলে matchedId=null দাও — আন্দাজে মিলিও না, কাছাকাছি কোনো প্রোডাক্টের নামও দিও না। ছবিতে তালিকার বাইরের কোনো প্রোডাক্ট থাকলে matchedId=null দাও, কিন্তু isProduct=true রাখো (সেটা দোকানের প্রোডাক্ট নয়, তবু প্রোডাক্টই)। isProduct-এর মানে: ছবিতে কি কেনাবেচার মতো কোনো জিনিস (পোশাক, জুতা, ব্যাগ, বাইসাইকেল, মোবাইল, আসবাব, খাবার ইত্যাদি) দেখা যাচ্ছে — দোকানের তালিকায় থাকুক বা না থাকুক। উদাহরণ: বাইসাইকেলের ছবি হলে isProduct=true, matchedId=null। ছবিতে কোনো কেনাবেচার জিনিসই না থাকলে (গাছ, প্রকৃতি, দৃশ্য, একা মানুষ, লেখার স্ক্রিনশট, পশুপাখি, এলোমেলো ছবি) isProduct=false, matchedId=null দাও। তালিকায় নেই এমন কোনো id বানিয়ে দিও না। confidence সৎভাবে দাও: নিশ্চিত না হলে কম দাও।',
     },
     { text: 'কাস্টমারের ছবি:' },
     { inlineData: { mimeType: customer.mimeType, data: customer.buffer.toString('base64') } },
@@ -174,7 +212,8 @@ export async function analyseCustomerImage(
   for (const p of imageProducts.slice(0, 6)) {
     const img = await downloadMedia(p.imageUrl as string);
     if (img && img.mimeType.startsWith('image/')) {
-      parts.push({ text: `প্রোডাক্ট (id=${p.id}): ${p.name} — দাম ৳${p.pricePaisa / 100}` });
+      const price = p.pricePaisa === null ? 'দাম জানা নেই' : `দাম ৳${p.pricePaisa / 100}`;
+      parts.push({ text: `প্রোডাক্ট (id=${p.id}): ${p.name} — ${price}` });
       parts.push({ inlineData: { mimeType: img.mimeType, data: img.buffer.toString('base64') } });
     }
   }
@@ -186,14 +225,19 @@ export async function analyseCustomerImage(
       typeof parsed.matchedId === 'string' && catalog.some((p) => p.id === parsed.matchedId)
         ? parsed.matchedId
         : null;
-    const similarIds = Array.isArray(parsed.similarIds)
-      ? (parsed.similarIds as unknown[]).filter((id): id is string => typeof id === 'string' && catalog.some((p) => p.id === id)).slice(0, 3)
-      : [];
+    // isProduct defaults to true when a product was matched; when nothing
+    // matched and the model did not say, assume it IS a product photo so
+    // the caller gives the honest "not in our shop" reply (the safe
+    // direction) rather than wrongly claiming "not a product".
+    const isProduct =
+      typeof parsed.isProduct === 'boolean' ? parsed.isProduct : matchedId !== null;
     return {
       matchedId,
       confidence: typeof parsed.confidence === 'number' ? parsed.confidence : 0,
+      isProduct,
       description: typeof parsed.description === 'string' ? parsed.description : '',
-      similarIds,
+      similarIds: [],
+      usage: { inputTokens: result.inputTokens, outputTokens: result.outputTokens },
     };
   } catch (err) {
     console.error('[media] vision match failed:', (err as Error).message);

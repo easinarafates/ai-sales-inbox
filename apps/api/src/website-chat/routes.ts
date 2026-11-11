@@ -3,15 +3,27 @@ import { Router, type Request, type Response } from 'express';
 import { pool, query, queryOne } from '../db/pool';
 import type { AuthRequest } from '../types';
 import { getWorkspaceId, requireAuth } from '../auth/auth';
+import { enqueueMessage } from '../queue/client';
+import { checkFixedWindow, clientIp } from '../utils/rate-limit';
 
 /**
  * Website chat widget (Worker B).
  * - GET /api/website-chat/settings (auth): the workspace's public key + copy-paste snippet.
  * - GET /api/website-chat/widget.js?key=... (public): embeddable JS that renders
- *   a chat box on any site and posts to the public message endpoint.
+ *   a chat box on any site and posts to the public message endpoint. It
+ *   polls GET /api/website-chat/messages for the AI's replies.
  * - POST /api/website-chat/message (public): {workspaceKey, text, visitorName?}
- *   creates a conversation visible in the inbox. The public key identifies
- *   the workspace only — it is NOT an auth token and cannot read anything.
+ *   creates a conversation visible in the inbox AND enqueues it for the
+ *   SAME AI pipeline Messenger/Instagram use (queue/client.enqueueMessage
+ *   -> ai-agent/processBatch -> deliverOutgoingMessage, which for a
+ *   'webchat' channel counts saving the reply as delivery). Before this
+ *   fix the message was only inserted — no enqueue, so no AI reply ever
+ *   fired — and the widget never fetched replies, so even a reply in the
+ *   DB could never reach the visitor.
+ * - GET /api/website-chat/messages?key=...&conversationId=... (public):
+ *   the visitor's poll endpoint — messages of that one conversation only,
+ *   scoped by the workspace key. The key identifies the workspace only —
+ *   it is NOT an auth token and cannot read anything else.
  */
 export const websiteChatRouter = Router();
 
@@ -80,9 +92,14 @@ websiteChatRouter.get('/website-chat/widget.js', async (req: Request, res: Respo
   var panel = document.getElementById('ai-inbox-panel');
   var log = document.getElementById('ai-inbox-log');
   var input = document.getElementById('ai-inbox-text');
+  var convId = null;
+  try { convId = window.localStorage.getItem('ai-inbox-conv') || null; } catch (e) { convId = null; }
+  var shown = {};
+  var polling = false;
   open.addEventListener('click', function () {
     panel.style.display = panel.style.display === 'none' ? 'block' : 'none';
     open.style.display = panel.style.display === 'none' ? 'inline-block' : 'none';
+    if (panel.style.display !== 'none') poll();
   });
   function addLine(who, text) {
     var p = document.createElement('p');
@@ -91,6 +108,25 @@ websiteChatRouter.get('/website-chat/widget.js', async (req: Request, res: Respo
     log.appendChild(p);
     log.scrollTop = log.scrollHeight;
   }
+  // Visitor delivery path: the AI reply is saved on the server (for a
+  // webchat channel, saving IS the delivery) and the widget polls for
+  // it here — without this poll the reply would sit in the DB and the
+  // visitor would never see it.
+  function poll() {
+    if (!convId) return;
+    fetch(API + '/api/website-chat/messages?key=' + encodeURIComponent(KEY) + '&conversationId=' + encodeURIComponent(convId))
+      .then(function (r) { return r.json(); })
+      .then(function (d) {
+        var msgs = (d && d.messages) || [];
+        msgs.forEach(function (m) {
+          if (m.direction !== 'out' || shown[m.id]) return;
+          shown[m.id] = true;
+          addLine('\\u09a6\\u09cb\\u0995\\u09be\\u09a8', m.body);
+        });
+      })
+      .catch(function () { /* next poll retries */ });
+  }
+  if (convId) { polling = true; setInterval(poll, 3000); }
   document.getElementById('ai-inbox-send').addEventListener('click', function () {
     var text = input.value.trim();
     if (!text) return;
@@ -104,13 +140,77 @@ websiteChatRouter.get('/website-chat/widget.js', async (req: Request, res: Respo
       .then(function (r) { return r.json(); })
       .then(function (d) {
         if (d && d.error) addLine('\\u09a6\\u09cb\\u0995', d.error);
-        else addLine('\\u09a6\\u09cb\\u0995', '\\u09a7\\u09a8\\u09cd\\u09af\\u09ac\\u09be\\u09a6! \\u0986\\u09ae\\u09be\\u09b0 \\u099f\\u09bf\\u09ae \\u0989\\u09a4\\u09cd\\u09a4\\u09b0 \\u09a6\\u09c7\\u09ac\\u09c7\\u0964');
+        else {
+          addLine('\\u09a6\\u09cb\\u0995', '\\u09a7\\u09a8\\u09cd\\u09af\\u09ac\\u09be\\u09a6! \\u0986\\u09ae\\u09be\\u09b0 \\u099f\\u09bf\\u09ae \\u0989\\u09a4\\u09cd\\u09a4\\u09b0 \\u09a6\\u09c7\\u09ac\\u09c7\\u0964');
+          if (d && d.conversationId) {
+            convId = d.conversationId;
+            try { window.localStorage.setItem('ai-inbox-conv', convId); } catch (e) { /* private mode */ }
+            if (!polling) { polling = true; setInterval(poll, 3000); }
+            poll();
+          }
+        }
       })
       .catch(function () { addLine('\\u09a6\\u09cb\\u0995', '\\u09aa\\u09be\\u09a0\\u09be\\u09a8\\u09cb \\u09af\\u09be\\u09df\\u099b\\u09c7; \\u0986\\u09ac\\u09be\\u09b0 \\u099a\\u09c7\\u09b7\\u09cd\\u099f\\u09be \\u0995\\u09b0\\u09c1\\u09a8\\u0964'); });
   });
 })();`;
   res.setHeader('Content-Type', 'application/javascript; charset=utf-8');
   res.send(js);
+});
+
+/** GET /api/website-chat/messages?key=...&conversationId=... — public visitor poll.
+ * Returns ONLY the messages of the one conversation named, and only when
+ * that conversation belongs to the workspace the key identifies. A wrong
+ * key or a conversation from another workspace gets 404 — the key can
+ * never enumerate or read other visitors' chats. `since` (ISO timestamp,
+ * optional) returns only newer messages, so polling stays cheap. */
+websiteChatRouter.get('/website-chat/messages', async (req: Request, res: Response) => {
+  const key = typeof req.query.key === 'string' ? req.query.key : '';
+  const conversationId = typeof req.query.conversationId === 'string' ? req.query.conversationId : '';
+  const since = typeof req.query.since === 'string' ? req.query.since : '';
+  if (!key || !conversationId) {
+    res.status(400).json({ error: 'key and conversationId are required' });
+    return;
+  }
+  if (!checkFixedWindow(`webchat-poll:${clientIp(req)}:${key}`, 120, 60 * 1000)) {
+    res.status(429).json({ error: 'Too many requests — please wait a moment.' });
+    return;
+  }
+  const keyRes = await pool.query<{ workspace_id: string }>(
+    'SELECT workspace_id FROM website_chat_keys WHERE public_key = $1',
+    [key],
+  );
+  const keyRow = keyRes.rows[0] ?? null;
+  if (!keyRow) {
+    res.status(404).json({ error: 'Unknown workspace key' });
+    return;
+  }
+  const workspaceId = keyRow.workspace_id;
+  const conv = await queryOne<{ id: string }>(
+    workspaceId,
+    'SELECT id FROM conversations WHERE workspace_id = $1 AND id = $2',
+    [workspaceId, conversationId],
+  );
+  if (!conv) {
+    res.status(404).json({ error: 'Conversation not found' });
+    return;
+  }
+  const params: unknown[] = [workspaceId, conversationId];
+  let sinceClause = '';
+  if (since) {
+    const sinceDate = new Date(since);
+    if (!Number.isNaN(sinceDate.getTime())) {
+      params.push(sinceDate.toISOString());
+      sinceClause = ' AND created_at > $3';
+    }
+  }
+  const { rows } = await query<{ id: string; direction: string; type: string; body: string; created_at: string }>(
+    workspaceId,
+    `SELECT id, direction, type, body, created_at FROM messages
+     WHERE workspace_id = $1 AND conversation_id = $2${sinceClause}
+     ORDER BY created_at ASC, id ASC LIMIT 100`,
+    params,
+  );
+  res.json({ conversationId: conv.id, messages: rows });
 });
 
 /** POST /api/website-chat/message — public; creates an inbox conversation. */
@@ -126,6 +226,31 @@ websiteChatRouter.post('/website-chat/message', async (req: Request, res: Respon
   }
   if (!text || !text.trim()) {
     res.status(400).json({ error: 'text is required' });
+    return;
+  }
+  // M3 (security fix 2026-11-11): this box is public (no login), so it
+  // needs limits — before this fix anyone could send unlimited messages
+  // of any length and impersonate any visitor by name. Cap the text,
+  // cap the name, and rate-limit per visitor key + per IP.
+  // PLUS a per-widget-key bucket (60/min, any IP): the IP keys alone
+  // cannot stop a spammer who rotates source IPs (live-verified
+  // 2026-11-11: 21 requests from rotating IPs never hit one IP bucket).
+  // 60/min per widget is far above any real shop's chat volume.
+  if (text.trim().length > 2000) {
+    res.status(400).json({ error: 'Message is too long (max 2000 characters)' });
+    return;
+  }
+  if (typeof visitorName === 'string' && visitorName.trim().length > 100) {
+    res.status(400).json({ error: 'Name is too long (max 100 characters)' });
+    return;
+  }
+  const ip = clientIp(req);
+  if (
+    !checkFixedWindow(`webchat:${ip}:${workspaceKey}`, 20, 60 * 1000) ||
+    !checkFixedWindow(`webchat-ip:${ip}`, 60, 60 * 1000) ||
+    !checkFixedWindow(`webchat-key:${workspaceKey}`, 60, 60 * 1000)
+  ) {
+    res.status(429).json({ error: 'Too many messages — please wait a minute and try again.' });
     return;
   }
   // Public key lookup is unscoped by nature (no JWT yet — the key is what
@@ -200,6 +325,18 @@ websiteChatRouter.post('/website-chat/message', async (req: Request, res: Respon
     workspaceId,
     'UPDATE conversations SET updated_at = now() WHERE workspace_id = $1 AND id = $2',
     [workspaceId, conversation.id],
+  );
+  // THE FIX (2026-11-11): enqueue into the SAME AI pipeline Messenger /
+  // Instagram / the webchat webhook use — enqueueMessage -> processBatch
+  // (workspace ai_enabled + conversation mode='ai' are honoured there,
+  // the cached-prompt Gemini call runs there, the reply is charged to
+  // the ledger there, and deliverOutgoingMessage saves it for a
+  // 'webchat' channel, which IS the delivery the widget polls for).
+  // Before this, the message was only inserted and no reply ever fired.
+  // Awaited like the webhooks do; a queue failure is logged, never a
+  // 500 — the message itself is already saved in the inbox.
+  await enqueueMessage(workspaceId, conversation.id, text.trim()).catch((err) =>
+    console.error('[website-chat] enqueue failed:', (err as Error).message),
   );
   res.status(201).json({ conversationId: conversation.id, message: msgRows[0] });
 });

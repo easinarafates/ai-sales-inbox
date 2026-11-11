@@ -1,0 +1,11 @@
+-- 40-user-phone.sql — profile phone number (2026-11-11).
+--
+-- The Profile page lets the user change their phone number (the number
+-- is editable; the email is the login identity and stays locked).
+-- The users table had no phone column, so PATCH /api/profile could not
+-- store one.
+--
+-- Idempotent: safe to re-run (same pattern as migrations 35–39).
+-- The embedded copy in apps/api/src/db/migrate-prod.ts MUST match this
+-- file exactly.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT;

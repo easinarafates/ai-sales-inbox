@@ -53,6 +53,15 @@ export default function TopupSection() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
 
+  // Prefill the amount when coming from the Plans page (?topup=100|200|500|1000).
+  useEffect(() => {
+    try {
+      const q = new URLSearchParams(window.location.search).get("topup");
+      if (q && ["100", "200", "500", "1000"].includes(q)) setAmountTaka(q);
+    } catch { /* ignore */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const methodLabel = (m: string) => {
     const fb = METHOD_FALLBACK[m] || [m, m];
     return t(METHOD_KEYS[m] || "", fb[0], fb[1]);

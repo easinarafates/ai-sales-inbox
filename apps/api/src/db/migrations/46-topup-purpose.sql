@@ -1,0 +1,15 @@
+-- 46-topup-purpose.sql — checkout purpose on manual top-up requests (2026-11-11).
+--
+-- The checkout page lets a shop pay for a specific product by hand
+-- (bKash / Nagad / Rocket / bank + TrxID): the request carries a purpose
+-- so approval DELIVERS the product instead of only crediting the wallet.
+-- purpose is a JSON string:
+--   {"kind":"schedule","slug":"schedule-monthly-bdt"}
+--   {"kind":"package","replies":500}
+--   {"kind":"payg"}
+--   null = plain wallet top-up (the old TopupSection flow).
+--
+-- Idempotent: safe to re-run (same pattern as migrations 35–40).
+-- The embedded copy in apps/api/src/db/migrate-prod.ts MUST match this
+-- file exactly.
+ALTER TABLE topup_requests ADD COLUMN IF NOT EXISTS purpose TEXT;

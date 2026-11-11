@@ -69,8 +69,15 @@ export default function SubscriptionSummary() {
         {t("billing.viewPlan", "View / change plan", "প্ল্যান দেখুন / বদলান")}
       </Link>
       <p className="text-xs text-slate-400 w-full">
-        {t("billing.walletBalanceLine", "Wallet balance:", "ওয়ালেট ব্যালেন্স:")} {fmtTaka(current.balancePaisa ?? 0)}{t("billing.overageNote", " — once the limit is over, extra replies cost 10 paisa each.", " — সীমা শেষ হলে অতিরিক্ত রিপ্লাই ১০ পয়সা করে কাটে।")}
+        {t("billing.walletBalanceLine", "Wallet balance:", "ওয়ালেট ব্যালেন্স:")} {fmtTaka(current.balancePaisa ?? 0)}
+        {" • "}{t("billing.replyPackageLine", "Reply package left:", "রিপ্লাই প্যাকেজ বাকি:")} {fmtNum(current.replyCredits ?? 0)}
+        {t("billing.newModelNote", " — package replies are used first.", " — প্যাকেজের রিপ্লাই আগে খরচ হয়।")}
       </p>
+      {eff === "trial" && (
+        <p className="text-xs text-slate-400 w-full">
+          {t("billing.paygAfterTrial", "Pay-as-you-go starts after the trial ends.", "ট্রায়াল শেষ হলে pay-as-you-go শুরু হবে।")}
+        </p>
+      )}
     </div>
   );
 }

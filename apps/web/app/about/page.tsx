@@ -2,27 +2,27 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "About — AI Sales Inbox",
+  title: "About — YEARBITO",
   description:
-    "About AI Sales Inbox — an AI sales assistant inbox for Bangladeshi Facebook, Instagram, WhatsApp, TikTok and YouTube sellers, operated by Year Media.",
+    "About YEARBITO — an AI sales assistant inbox for Bangladeshi Facebook, Instagram, WhatsApp, TikTok and YouTube sellers, operated by Year Media.",
 };
 
 export default function AboutPage() {
   return (
     <main className="min-h-screen bg-white text-slate-800">
       <div className="max-w-3xl mx-auto px-5 py-10">
-        <p className="text-sm font-semibold tracking-wide text-[#FF5B2E] uppercase">
-          AI Sales Inbox
+        <p className="text-sm font-semibold tracking-wide text-[#0051F6] uppercase">
+          YEARBITO
         </p>
-        <h1 className="text-3xl font-bold mt-2">About AI Sales Inbox</h1>
+        <h1 className="text-3xl font-bold mt-2">About YEARBITO</h1>
         <p className="text-sm text-slate-500 mt-2">
           Made for online sellers in Bangladesh · Operated by Year Media
         </p>
 
-        <div className="mt-6 rounded-2xl border border-orange-200 bg-[#FFF1EA] p-5">
+        <div className="mt-6 rounded-2xl border border-orange-200 bg-[#EBF1FE] p-5">
           <p className="font-semibold text-slate-800">সংক্ষেপে (বাংলায়)</p>
           <p className="mt-1 leading-relaxed text-slate-700">
-            AI Sales Inbox বাংলাদেশি অনলাইন দোকানদারদের জন্য — ফেসবুক,
+            YEARBITO বাংলাদেশি অনলাইন দোকানদারদের জন্য — ফেসবুক,
             ইনস্টাগ্রাম, WhatsApp, TikTok আর YouTube-এর মেসেজ এক জায়গায়
             আসে, AI আপনার প্রোডাক্টের আসল দাম আর স্টক দেখে কাস্টমারকে
             বাংলায় উত্তর দেয়, অর্ডার নেয়, আর Steadfast / Pathao দিয়ে
@@ -35,7 +35,7 @@ export default function AboutPage() {
           <section>
             <h2 className="text-xl font-bold">What it is</h2>
             <p className="mt-2 leading-relaxed">
-              AI Sales Inbox is a sales inbox for Bangladeshi online shops
+              YEARBITO is a sales inbox for Bangladeshi online shops
               that sell on Facebook, Instagram, WhatsApp, TikTok and YouTube.
               Instead of answering the same &ldquo;price?&rdquo; message fifty
               times a day, the shop connects its Pages and channels and lets
@@ -130,22 +130,23 @@ export default function AboutPage() {
             <h2 className="text-xl font-bold">Pricing</h2>
             <ul className="list-disc pl-6 mt-2 space-y-1 leading-relaxed">
               <li>
-                <strong>Small — ৳499/month:</strong> 500 AI replies, 1
-                channel.
+                <strong>Post Schedule subscription:</strong> 1 scheduled
+                post per day is free. More: ৳100/month or ৳1,000/year in
+                Bangladesh; $1/month or $10/year internationally.
               </li>
               <li>
-                <strong>Medium — ৳999/month:</strong> 2,000 AI replies, up to
-                3 channels.
+                <strong>AI credit (pay-as-you-go):</strong> AI replies
+                use your wallet balance.
               </li>
               <li>
-                <strong>Large — ৳1,999/month:</strong> 8,000 AI replies,
-                unlimited channels.
+                <strong>Reply package:</strong> bought upfront
+                (for example ৳110 for 500 replies) and used first.
               </li>
             </ul>
             <p className="mt-2 leading-relaxed">
               Every new account starts with a 14-day free trial and ৳50 free
               credit. No card is needed to start. See the{" "}
-              <Link className="text-[#FF5B2E] underline" href="/terms">
+              <Link className="text-[#0051F6] underline" href="/terms">
                 Terms of Service
               </Link>{" "}
               for the full pricing terms.
@@ -155,26 +156,26 @@ export default function AboutPage() {
           <section>
             <h2 className="text-xl font-bold">Who we are</h2>
             <p className="mt-2 leading-relaxed">
-              AI Sales Inbox is operated by Year Media, a Bangladeshi team
+              YEARBITO is operated by Year Media, a Bangladeshi team
               building tools for online sellers. We run the service, answer
               support questions, and keep improving it from what sellers tell
               us. Email us at{" "}
               <a
-                className="text-[#FF5B2E] underline"
+                className="text-[#0051F6] underline"
                 href="mailto:info.yearmedia@gmail.com"
               >
                 info.yearmedia@gmail.com
               </a>
               . Read the{" "}
-              <Link className="text-[#FF5B2E] underline" href="/terms">
+              <Link className="text-[#0051F6] underline" href="/terms">
                 Terms of Service
               </Link>{" "}
               and{" "}
-              <Link className="text-[#FF5B2E] underline" href="/privacy">
+              <Link className="text-[#0051F6] underline" href="/privacy">
                 Privacy Policy
               </Link>
               , or{" "}
-              <Link className="text-[#FF5B2E] underline" href="/contact">
+              <Link className="text-[#0051F6] underline" href="/contact">
                 contact us
               </Link>
               .
@@ -184,7 +185,7 @@ export default function AboutPage() {
           <section>
             <h2 className="text-xl font-bold">Get started</h2>
             <p className="mt-2 leading-relaxed">
-              <Link className="text-[#FF5B2E] underline" href="/signup">
+              <Link className="text-[#0051F6] underline" href="/signup">
                 Sign up free
               </Link>{" "}
               — 14-day free trial and ৳50 free credit, no card needed.
@@ -193,8 +194,8 @@ export default function AboutPage() {
         </div>
 
         <p className="text-center text-sm text-slate-500 mt-8">
-          <Link className="text-[#FF5B2E] underline" href="/login">
-            Back to AI Sales Inbox
+          <Link className="text-[#0051F6] underline" href="/login">
+            Back to YEARBITO
           </Link>
         </p>
       </div>

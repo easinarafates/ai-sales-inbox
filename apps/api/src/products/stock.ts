@@ -1,3 +1,5 @@
+import { invalidateWorkspacePromptCache } from '../ai-agent/gemini-cache';
+
 /**
  * Stock decrement for orders (Phase 2).
  *
@@ -58,5 +60,9 @@ export async function decrementStockForOrderItems(
       outOfStock.push({ id: rows[0].id, name: rows[0].name, stock: 0 });
     }
   }
+  // Stock is part of the AI's cached prompt prefix — an order changes
+  // the numbers the next reply quotes, so drop the cache (no-op when
+  // no cache exists). Only when stock actually moved.
+  if (items.length > 0) await invalidateWorkspacePromptCache(workspaceId);
   return outOfStock;
 }

@@ -7,17 +7,28 @@
  * under-reported every Gemini reply ~4x (e.g. 13 paisa recorded for a
  * reply that really cost ~57 paisa). These feed provider_cost_paisa in
  * the ledger ONLY: the WALLET charge stays the subscription rule
- * (included replies 0 paisa, overage flat 10 paisa). Override any rate
+ * (included replies 0 paisa, overage flat 22 paisa). Override any rate
  * with AI_RATES_JSON env, e.g.
  * AI_RATES_JSON='{"gpt-5-mini":{"input":0.25,"output":2.00}}'.
  * Groq is 0: the platform uses Groq's FREE tier (30 req/min, 1,000
  * req/day); Groq's paid-tier rates do NOT apply while on the free tier.
+ *
+ * YEARBITO Phase 2: these rates feed provider_cost_paisa in the ledger
+ * ONLY (transparency — what the reply really cost us). The WALLET
+ * charge is the flat billing rule: included/package 0 paisa, old-plan
+ * overage 22 paisa, pay-as-you-go 23 paisa per reply.
  */
 import { config } from '../config';
 
 export interface TokenRate {
   input: number;
   output: number;
+  /**
+   * Cached-input rate (USD per 1M tokens) for prompt-cache hits — only
+   * set for models where context caching is priced (Gemini). Undefined
+   * = no cached rate; cached tokens then cost the full input rate.
+   */
+  cached?: number;
 }
 
 const DEFAULT_RATES_USD_PER_MILLION: Record<string, TokenRate> = {
@@ -50,9 +61,14 @@ const DEFAULT_RATES_USD_PER_MILLION: Record<string, TokenRate> = {
   // $0.30/$2.50. gemini-3-flash-preview (Gemini 3 Flash) $0.50/$3.00,
   // verified 2026-11-07 from Google's pricing page via secondary
   // sources (benchlm, puter, therundown — all agree).
+  // Cached input (2026-11-11, same pricing page, Standard tier):
+  // gemini-3.5-flash-lite cached input $0.03/1M (10x the $0.30 input
+  // rate); cache storage $1.00/1M tokens/hour (charged on the Google
+  // side, NOT in this per-reply cost — see gemini-cache.ts for the
+  // break-even math that gates explicit-cache creation).
   'gemini-2.5-flash': { input: 0.3, output: 2.5 },
   'gemini-3.5-flash': { input: 1.5, output: 9 },
-  'gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
+  'gemini-3.5-flash-lite': { input: 0.3, output: 2.5, cached: 0.03 },
   'gemini-3-flash-preview': { input: 0.5, output: 3 },
   // Groq free tier — 0. (Paid tier would be $0.075/$0.30, not used.)
   'openai/gpt-oss-20b': { input: 0, output: 0 },
@@ -69,6 +85,7 @@ function rates(): Record<string, TokenRate> {
         merged[model] = {
           input: r.input ?? merged[model]?.input ?? 0,
           output: r.output ?? merged[model]?.output ?? 0,
+          cached: r.cached ?? merged[model]?.cached,
         };
       }
     } catch {
@@ -86,15 +103,28 @@ export function tokenRateForModel(model: string): TokenRate {
  * The provider's REAL cost of one reply, in paisa. Groq (free tier) and
  * the local demo mode are always 0. Unknown models cost 0 rather than
  * inventing a rate — the ledger never shows a made-up cost.
+ *
+ * cachedInputTokens (default 0) are the input tokens served from a
+ * prompt cache (usageMetadata.cachedContentTokenCount): they are priced
+ * at the model's cached-input rate ($0.03/1M for gemini-3.5-flash-lite)
+ * instead of the full input rate — the rest of the input tokens pay the
+ * full rate. Cached tokens are always a subset of inputTokens, so the
+ * uncached part is (inputTokens - cachedInputTokens), clamped at 0.
  */
 export function computeAiCostPaisa(
   provider: string,
   model: string,
   inputTokens: number,
   outputTokens: number,
+  cachedInputTokens = 0,
 ): number {
   if (provider === 'groq' || provider === 'demo') return 0;
   const rate = tokenRateForModel(model);
-  const usd = (inputTokens / 1_000_000) * rate.input + (outputTokens / 1_000_000) * rate.output;
+  const cached = Math.max(0, Math.min(cachedInputTokens, inputTokens));
+  const cachedRate = rate.cached ?? rate.input;
+  const usd =
+    ((inputTokens - cached) / 1_000_000) * rate.input +
+    (cached / 1_000_000) * cachedRate +
+    (outputTokens / 1_000_000) * rate.output;
   return Math.round(usd * config.usdToBdtPaisa);
 }

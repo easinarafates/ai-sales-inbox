@@ -43,7 +43,7 @@ export class StubEmbeddingProvider implements EmbeddingProvider {
  *   EMBEDDING_API_KEY + EMBEDDING_MODEL are all set → the real provider.
  * - Anything else (unset, 'stub', or incomplete config) → the stub, which
  *   honestly reports available:false ("ছবি দিয়ে খোঁজা এখনো চালু হয়নি")
- *   and never fakes a match. The ≥0.75 certain-only rule in
+ *   and never fakes a match. The ≥0.85 certain-only rule in
  *   matchProductsByImage() is unchanged.
  */
 export function getEmbeddingProvider(): EmbeddingProvider {
@@ -82,8 +82,14 @@ export interface ImageMatchResult {
   message?: string;
 }
 
-/** A match is shown as "certain" only at this similarity or above (PDF §5). */
-const CERTAIN_THRESHOLD = 0.75;
+/** A match is shown as "certain" only at this similarity or above.
+ * 0.85 — deliberately strict (raised from 0.75, 2026-11-11): cosine
+ * similarity against a small catalog is noisy, and a look-alike shown
+ * as "similar" is the fake-match bug the user reported (a TREE photo
+ * got a "similar products" list). Below this bar NO match is returned
+ * at all — the caller says honestly that nothing matched and asks for
+ * the product name, instead of showing the closest rows. */
+const CERTAIN_THRESHOLD = 0.85;
 
 /**
  * Parse a stored embedding defensively.
@@ -143,9 +149,12 @@ interface ProductImageRow {
 /**
  * Match products by a customer image.
  * - No embedding provider → { available: false, ... } with a Bengali note.
- * - Otherwise the top matches by cosine similarity, best first. When the
- *   best score is below 0.75 the result is marked uncertain and the caller
- *   should show the top 2–3 and ask the customer to confirm (PDF §5).
+ * - Otherwise the top matches by cosine similarity, best first — but
+ *   ONLY when the best score reaches CERTAIN_THRESHOLD (0.85). Below
+ *   it the result carries NO matches (uncertain: true) and an honest
+ *   message: the caller must NOT show the closest rows as "similar"
+ *   products — that is the fake-match bug (2026-11-11). The customer
+ *   is asked for the product name instead.
  */
 export async function matchProductsByImage(
   workspaceId: string,
@@ -200,13 +209,17 @@ export async function matchProductsByImage(
     };
   }
 
-  const uncertain = (matches[0] as ImageMatch).score < CERTAIN_THRESHOLD;
-  return {
-    available: true,
-    matches,
-    uncertain,
-    message: uncertain
-      ? 'এই ছবির সাথে সবচেয়ে কাছের প্রোডাক্টগুলো নিচে দিলাম — কোনটি আপনার দরকার, জানাবেন কি?'
-      : undefined,
-  };
+  // Below the strict bar the best "match" is only a look-alike — it is
+  // NOT returned. Showing it as "similar" would be the fake-match bug:
+  // any photo would get a product list that was never truly matched.
+  if ((matches[0] as ImageMatch).score < CERTAIN_THRESHOLD) {
+    return {
+      available: true,
+      matches: [],
+      uncertain: true,
+      message: 'এই ছবির সাথে নিশ্চিত মিলে এমন প্রোডাক্ট পাওয়া যায়নি। প্রোডাক্টের নাম লিখে জানালে খুঁজে দেব।',
+    };
+  }
+
+  return { available: true, matches, uncertain: false };
 }

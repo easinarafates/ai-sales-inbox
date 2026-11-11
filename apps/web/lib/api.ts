@@ -1,4 +1,4 @@
-// API client for the AI Sales Inbox backend (Phase 1 contract).
+// API client for the YEARBITO backend (Phase 1 contract).
 // Base URL from NEXT_PUBLIC_API_URL, default http://localhost:4000.
 // All prices in the API are in paisa; display helpers convert to Taka (৳).
 
@@ -35,6 +35,14 @@ export function formatDate(value: string | null | undefined): string {
   if (Number.isNaN(d.getTime())) return value;
   // Bangladesh time (UTC+6)
   return d.toLocaleString("bn-BD", { timeZone: "Asia/Dhaka" });
+}
+
+/** Date only (no time) — for tight rows like the Trial line in the profile menu. */
+export function formatDateShort(value: string | null | undefined): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toLocaleDateString("bn-BD", { timeZone: "Asia/Dhaka" });
 }
 
 export class ApiError extends Error {
@@ -104,6 +112,8 @@ export interface User {
   role?: string;
   /** Profile photo URL (users.avatar_url) — null means "no photo yet". */
   avatarUrl?: string | null;
+  /** Profile phone number (users.phone) — editable on /profile; email stays locked. */
+  phone?: string | null;
 }
 
 /** Current plan / trial for the workspace (GET /api/auth/me). */
@@ -148,6 +158,16 @@ export interface Customer {
   totalSpentPaisa?: number | string | null;
   order_count?: number | null;
   orderCount?: number | null;
+  /** List endpoint only (Task 9): rejected orders (cancelled + returned),
+   * gross product value (ALL orders) and the real AI cost (provider cost). */
+  rejected_count?: number | null;
+  rejectedCount?: number | null;
+  cancelled_count?: number | null;
+  returned_count?: number | null;
+  gross_total_paisa?: number | string | null;
+  grossTotalPaisa?: number | string | null;
+  ai_cost_paisa?: number | string | null;
+  aiCostPaisa?: number | string | null;
   facebookId?: string;
   facebook_id?: string;
   [key: string]: unknown;
@@ -216,6 +236,20 @@ export interface ProductImage {
   id: string;
   url: string;
   created_at?: string;
+  /** True for one of the (max 2) MAIN photos — shown in the list, sent to customers by default. */
+  isMain?: boolean;
+  is_main?: boolean;
+}
+
+export interface ProductVariant {
+  value: string;
+  pricePaisa?: number;
+  price_paisa?: number;
+  stock?: number | null;
+}
+
+export function variantPricePaisa(v: ProductVariant): number {
+  return v.pricePaisa ?? v.price_paisa ?? 0;
 }
 
 export interface Product {
@@ -231,9 +265,29 @@ export interface Product {
   image_url?: string;
   /** Photos uploaded for this product (multiple allowed). */
   images?: ProductImage[];
+  /** Variant TYPE the owner picked first (size / kg / weight / …); null/empty = no variants. */
+  variantType?: string | null;
+  variant_type?: string | null;
+  /** Variant values with a price (and optional stock) each; [] = no variants. */
+  variants?: ProductVariant[];
   createdAt?: string;
   created_at?: string;
   [key: string]: unknown;
+}
+
+export function productVariantType(p: Product): string | null {
+  return p.variantType ?? p.variant_type ?? null;
+}
+
+export function productVariants(p: Product): ProductVariant[] {
+  return Array.isArray(p.variants) ? p.variants : [];
+}
+
+/** Main photos first (the API already orders them so); fall back to the first photo. */
+export function productMainImages(p: Product): ProductImage[] {
+  const images = p.images ?? [];
+  const mains = images.filter((img) => img.isMain ?? img.is_main);
+  return mains.length > 0 ? mains : images.slice(0, 1);
 }
 
 export function productPricePaisa(p: Product): number {
@@ -382,6 +436,9 @@ export interface UsageLedgerEntry {
   costPaisa?: number;
   cost_paisa?: number;
   cost?: number;
+  /** Real provider cost of the reply (Gemini) — always recorded, even when the wallet paid 0 (trial / package). */
+  providerCostPaisa?: number;
+  provider_cost_paisa?: number;
   tokens?: number;
   inputTokens?: number;
   input_tokens?: number;
@@ -389,8 +446,23 @@ export interface UsageLedgerEntry {
   output_tokens?: number;
   model?: string;
   provider?: string;
+  /** True when this reply was paid with a reply-package credit (cost 0). */
+  packageCreditUsed?: boolean;
+  package_credit_used?: boolean;
+  includedInPlan?: boolean;
+  included_in_plan?: boolean;
   createdAt?: string;
   created_at?: string;
+  [key: string]: unknown;
+}
+
+export interface TokenRates {
+  model?: string;
+  provider?: string;
+  inputUsdPerMillionTokens?: number;
+  outputUsdPerMillionTokens?: number;
+  inputPaisaPer1000Tokens?: number;
+  outputPaisaPer1000Tokens?: number;
   [key: string]: unknown;
 }
 
@@ -403,6 +475,22 @@ export interface Billing {
   usageLedger?: UsageLedgerEntry[];
   usage_ledger?: UsageLedgerEntry[];
   usage?: UsageLedgerEntry[]; // backend returns `usage`
+  /** All-time totals over the whole ledger (the table shows only the last 100 rows). */
+  totalProviderCostPaisa?: number;
+  total_provider_cost_paisa?: number;
+  totalWalletChargedPaisa?: number;
+  total_wallet_charged_paisa?: number;
+  usageCount?: number;
+  usage_count?: number;
+  /** Reply-package credits still unused (YEARBITO Phase 2). */
+  replyCredits?: number;
+  reply_credits?: number;
+  /** Price of one reply-package reply, in paisa (default 20). */
+  packagePricePaisa?: number;
+  package_price_paisa?: number;
+  /** Per-token cost of the default AI model. */
+  tokenRates?: TokenRates;
+  token_rates?: TokenRates;
   [key: string]: unknown;
 }
 
@@ -416,6 +504,18 @@ export function billingTransactions(b: Billing): WalletTransaction[] {
 
 export function billingUsage(b: Billing): UsageLedgerEntry[] {
   return b.usageLedger ?? b.usage_ledger ?? b.usage ?? [];
+}
+
+export function billingReplyCredits(b: Billing): number {
+  return b.replyCredits ?? b.reply_credits ?? 0;
+}
+
+export function billingPackagePricePaisa(b: Billing): number {
+  return b.packagePricePaisa ?? b.package_price_paisa ?? 20;
+}
+
+export function billingTokenRates(b: Billing): TokenRates | null {
+  return b.tokenRates ?? b.token_rates ?? null;
 }
 
 export interface Channel {
@@ -449,7 +549,15 @@ export const authApi = {
   /** Finish a reset with the token from the emailed link. */
   resetPassword: (body: { token: string; password: string }) =>
     api.post<{ message: string }>("/api/auth/reset-password", body),
-  me: () => api.get<{ user: User; workspace: Workspace; subscription: SubscriptionInfo | null }>("/api/auth/me"),
+  me: () => api.get<{ user: User; workspace: Workspace; subscription: SubscriptionInfo | null; role?: string }>("/api/auth/me"),
+  /** Real server-side logout (Task 3): revokes this token on the server. The caller must still clearToken() afterwards. */
+  logout: () => api.post<{ message: string; revoked: boolean }>("/api/auth/logout", {}),
+  /** Public: what an invite link points to (email, role, shop name). */
+  inviteInfo: (token: string) =>
+    api.get<{ email: string; role: string; workspaceName: string }>(`/api/auth/invite/${encodeURIComponent(token)}`),
+  /** Accept a team invite: creates the account inside the invited shop with the invited role. */
+  acceptInvite: (body: { token: string; name: string; password: string }) =>
+    api.post<AuthResponse & { role?: string }>("/api/auth/accept-invite", body),
 };
 
 /** Header Profile menu — the logged-in user's photo (users.avatar_url). */
@@ -491,13 +599,24 @@ export const profileApi = {
     const data = await api.del<{ user: User }>("/api/profile/photo");
     return data.user;
   },
+  /** Change the logged-in user's display name + phone (Profile page). Email is locked. */
+  updateProfile: async (body: { name: string; phone?: string | null }) => {
+    const data = await api.patch<{ user: User }>("/api/profile", body);
+    return data.user;
+  },
+  /** Rename the workspace / business (owner-only, Profile page). */
+  updateWorkspaceName: async (name: string) => {
+    const data = await api.patch<{ workspace: Workspace }>("/api/profile/workspace", { name });
+    return data.workspace;
+  },
 };
 
 export const inboxApi = {
-  list: (params?: { q?: string; status?: string }) => {
+  list: (params?: { q?: string; status?: string; channel?: string }) => {
     const qs = new URLSearchParams();
     if (params?.q) qs.set("q", params.q);
     if (params?.status) qs.set("status", params.status);
+    if (params?.channel) qs.set("channel", params.channel);
     const s = qs.toString();
     return api.get<Conversation[] | { conversations: Conversation[] }>(
       `/api/inbox${s ? `?${s}` : ""}`
@@ -563,10 +682,10 @@ export const usageApi = {
 
 export const productsApi = {
   list: () => api.get<Product[] | { products: Product[] }>("/api/products"),
-  create: (body: { name: string; pricePaisa: number; size?: string; stock?: number; description?: string }) =>
+  create: (body: { name: string; pricePaisa: number; size?: string; stock?: number; description?: string; variantType?: string | null; variants?: ProductVariant[] }) =>
     api.post<Product>("/api/products", body),
-  /** Update name / price / size / stock / description (only sent fields change). */
-  update: (id: string, body: { name?: string; pricePaisa?: number; size?: string | null; stock?: number; description?: string | null }) =>
+  /** Update name / price / size / stock / description / variants (only sent fields change). */
+  update: (id: string, body: { name?: string; pricePaisa?: number; size?: string | null; stock?: number; description?: string | null; variantType?: string | null; variants?: ProductVariant[] | null }) =>
     api.patch<{ product: Product } | Product>(`/api/products/${id}`, body),
   /** Delete the product and its photos. */
   delete: (id: string) => api.del<{ deleted: boolean }>(`/api/products/${id}`),
@@ -595,6 +714,9 @@ export const productsApi = {
   /** Remove one photo (DB row always; Blob object best-effort). */
   deleteImage: (id: string, imageId: string) =>
     api.del<{ deleted: { id: string } }>(`/api/products/${id}/images/${imageId}`),
+  /** Mark/unmark one photo as a MAIN photo (max 2 main photos per product). */
+  setImageMain: (id: string, imageId: string, isMain: boolean) =>
+    api.patch<{ image: ProductImage }>(`/api/products/${id}/images/${imageId}`, { isMain }),
   /**
    * Upload one photo file for a product. Preferred path: direct
    * browser→Vercel Blob upload (bypasses the API 4.5 MB body cap), then
@@ -796,6 +918,15 @@ export interface PublicInvoice {
 
 export const billingApi = {
   get: () => api.get<Billing>("/api/billing"),
+  buyReplyPackage: (replies: number) =>
+    api.post<{
+      replies?: number;
+      totalPaisa?: number;
+      pricePerReplyPaisa?: number;
+      balancePaisa?: number;
+      replyCredits?: number;
+      message?: string;
+    }>("/api/billing/reply-package", { replies }),
 };
 
 export const channelsApi = {
@@ -926,7 +1057,7 @@ export const salesChannelsApi = {
     api.get<SalesChannel[] | { channels: SalesChannel[] }>("/api/channels"),
   create: (body: { platform: string; externalId: string; displayName?: string; token?: string }) =>
     api.post<{ channel: SalesChannel } | SalesChannel>("/api/channels", body),
-  /** "Login with Facebook" — returns the Meta dialog URL to redirect to.
+  /** "Facebook Connect" — returns the Meta dialog URL to redirect to.
    *  reauthenticate: force Facebook to ask for credentials again so the
    *  user can log in with a DIFFERENT Facebook account. */
   facebookLogin: (opts?: { reauthenticate?: boolean }) =>
@@ -978,9 +1109,29 @@ export interface Coupon {
   value?: number;
   expiresAt?: string;
   expires_at?: string;
+  /** NULL/empty = applies to any product; set = only orders containing this product. */
+  productId?: string | null;
+  product_id?: string | null;
+  productName?: string | null;
+  product_name?: string | null;
+  /** Minimum order subtotal (paisa); 0 = no minimum. */
+  minOrderPaisa?: number;
+  min_order_paisa?: number;
   createdAt?: string;
   created_at?: string;
   [key: string]: unknown;
+}
+
+export function couponProductId(c: Coupon): string | null {
+  return c.productId ?? c.product_id ?? null;
+}
+
+export function couponProductName(c: Coupon): string | null {
+  return c.productName ?? c.product_name ?? null;
+}
+
+export function couponMinOrderPaisa(c: Coupon): number {
+  return c.minOrderPaisa ?? c.min_order_paisa ?? 0;
 }
 
 export interface CouponValidateResult {
@@ -992,6 +1143,10 @@ export interface CouponValidateResult {
   type?: string;
   value?: number;
   message?: string;
+  productId?: string | null;
+  product_id?: string | null;
+  productName?: string | null;
+  product_name?: string | null;
   [key: string]: unknown;
 }
 
@@ -1001,14 +1156,14 @@ export function couponDiscountPaisa(r: CouponValidateResult): number {
 
 export const couponsApi = {
   list: () => api.get<Coupon[] | { coupons: Coupon[] }>("/api/coupons"),
-  create: (body: { code: string; type: CouponType; value: number; expiresAt?: string }) =>
+  create: (body: { code: string; type: CouponType; value: number; expiresAt?: string; productId?: string | null; minOrderPaisa?: number }) =>
     api.post<{ coupon: Coupon } | Coupon>("/api/coupons", body),
-  update: (id: string, body: { type?: CouponType; value?: number; expiresAt?: string }) =>
+  update: (id: string, body: { code?: string; type?: CouponType; value?: number; expiresAt?: string | null; productId?: string | null; minOrderPaisa?: number }) =>
     api.patch<{ coupon: Coupon } | Coupon>(`/api/coupons/${id}`, body),
   remove: (id: string) =>
     api.del<{ deleted: boolean }>(`/api/coupons/${id}`),
-  validate: (code: string, subtotalPaisa: number) =>
-    api.post<CouponValidateResult>("/api/coupons/validate", { code, subtotalPaisa }),
+  validate: (code: string, subtotalPaisa: number, productId?: string) =>
+    api.post<CouponValidateResult>("/api/coupons/validate", { code, subtotalPaisa, productId }),
   applyToOrder: (orderId: string, code: string) =>
     api.post<{ order: Order; coupon?: Coupon }>(`/api/orders/${orderId}/apply-coupon`, { code }),
 };
@@ -1073,8 +1228,27 @@ export const customersApi = {
   /** Correct the customer's display name by hand — stored exactly as typed, never overwritten by the Meta refresh. */
   updateName: (id: string, name: string) =>
     api.patch<{ customer: Customer } | Customer>(`/api/customers/${id}`, { name }),
-  merge: (keepCustomerId: string, mergeCustomerId: string) =>
-    api.post<{ customer: Customer } | Customer>("/api/customers/merge", { keepCustomerId, mergeCustomerId }),
+  merge: (keepCustomerId: string, mergeCustomerId: string) => {
+    return api.post<{ customer: Customer } | Customer>("/api/customers/merge", { keepCustomerId, mergeCustomerId });
+  },
+  /** Download the buyer list as CSV (Task 9) — real data from the API,
+   * UTF-8 with BOM so Excel opens Bengali names correctly. */
+  exportCsv: async () => {
+    const token = getToken();
+    const res = await fetch(`${API_URL}/api/customers/export`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) throw new ApiError(res.status, `CSV ডাউনলোড করা যায়নি (HTTP ${res.status})`);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `customers-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };
 
 export interface CarouselCard {

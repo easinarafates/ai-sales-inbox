@@ -2,33 +2,33 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Terms of Service — AI Sales Inbox",
+  title: "Terms of Service — YEARBITO",
   description:
-    "Terms of Service for AI Sales Inbox — what the service does, plans and prices, trial and wallet top-ups, refunds, acceptable use, and what sellers are responsible for.",
+    "Terms of Service for YEARBITO — what the service does, plans and prices, trial and wallet top-ups, refunds, acceptable use, and what sellers are responsible for.",
 };
 
 export default function TermsPage() {
   return (
     <main className="min-h-screen bg-white text-slate-800">
       <div className="max-w-3xl mx-auto px-5 py-10">
-        <p className="text-sm font-semibold tracking-wide text-[#FF5B2E] uppercase">
-          AI Sales Inbox
+        <p className="text-sm font-semibold tracking-wide text-[#0051F6] uppercase">
+          YEARBITO
         </p>
         <h1 className="text-3xl font-bold mt-2">Terms of Service</h1>
         <p className="text-sm text-slate-500 mt-2">
           Last updated: 9 November 2026 · Operated by Year Media · Website:{" "}
           <a
-            className="text-[#FF5B2E] underline"
+            className="text-[#0051F6] underline"
             href="https://ai-sales-inbox-web.vercel.app"
           >
             ai-sales-inbox-web.vercel.app
           </a>
         </p>
 
-        <div className="mt-6 rounded-2xl border border-orange-200 bg-[#FFF1EA] p-5">
+        <div className="mt-6 rounded-2xl border border-orange-200 bg-[#EBF1FE] p-5">
           <p className="font-semibold text-slate-800">সংক্ষেপে (বাংলায়)</p>
           <p className="mt-1 leading-relaxed text-slate-700">
-            AI Sales Inbox আপনার ফেসবুক পেজ আর চ্যানেলের মেসেজের উত্তর AI দিয়ে
+            YEARBITO আপনার ফেসবুক পেজ আর চ্যানেলের মেসেজের উত্তর AI দিয়ে
             দেয়, অর্ডার আর কুরিয়ার সামলায়। নতুন অ্যাকাউন্টে ১৪ দিনের ফ্রি
             ট্রায়াল আর ৳৫০ ফ্রি ক্রেডিট থাকে। পেমেন্ট হাতে করতে হয় —
             bKash / Rocket / Nagad-এ Send Money করে TrxID জমা দিলে আমরা চেক
@@ -42,7 +42,7 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-bold">1. What the service is</h2>
             <p className="mt-2 leading-relaxed">
-              AI Sales Inbox is a software service (SaaS) for online sellers
+              YEARBITO is a software service (SaaS) for online sellers
               in Bangladesh who sell on Facebook, Instagram, WhatsApp, TikTok
               and YouTube. It brings a seller&rsquo;s messages and comments
               from those channels into one inbox, lets an AI sales assistant
@@ -59,30 +59,37 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-bold">2. Plans and prices</h2>
             <p className="mt-2 leading-relaxed">
-              The service is sold as monthly plans. Each plan includes a set
-              number of AI replies per month. The current plans are:
+              The service is sold in three separate parts — pay only for
+              what you use. Everything is paid from your wallet balance
+              (see section 4). The current prices are:
             </p>
             <ul className="list-disc pl-6 mt-2 space-y-1 leading-relaxed">
               <li>
-                <strong>Small — ৳499 per month:</strong> 500 AI replies per
-                month, 1 connected channel.
+                <strong>Post Schedule subscription:</strong> 1 scheduled
+                post per day is free. To schedule more on the same day:
+                ৳100 per month or ৳1,000 per year in Bangladesh; $1 per
+                month or $10 per year internationally (charged to the
+                wallet in taka at the current dollar rate). There is no
+                lifetime plan.
               </li>
               <li>
-                <strong>Medium — ৳999 per month:</strong> 2,000 AI replies
-                per month, up to 3 connected channels.
+                <strong>AI credit (pay-as-you-go):</strong> AI replies
+                use your wallet balance. The real cost of every reply
+                is still listed on the Billing page for transparency.
               </li>
               <li>
-                <strong>Large — ৳1,999 per month:</strong> 8,000 AI replies
-                per month, unlimited connected channels.
+                <strong>Reply package:</strong> bought upfront
+                (for example ৳110 for 500 replies). Bought replies are
+                used first, before pay-as-you-go charges.
               </li>
             </ul>
             <p className="mt-2 leading-relaxed">
               The price shown on the Plans page at the time you buy is the
-              price you pay. If a plan&rsquo;s price changes, the new price
-              applies only to new purchases and renewals, and we will show it
-              on the Plans page before you pay. You can see how many replies
-              you have used, and the cost of every AI reply, on the Billing
-              page.
+              price you pay. If a price changes, the new price applies
+              only to new purchases and renewals, and we will show it
+              on the Plans page before you pay. Old monthly plans (Small
+              / Medium / Large) are no longer sold; a subscription bought
+              before this change keeps running until its expiry date.
             </p>
           </section>
 
@@ -90,8 +97,10 @@ export default function TermsPage() {
             <h2 className="text-xl font-bold">3. Trial and free credit</h2>
             <p className="mt-2 leading-relaxed">
               New accounts get a 14-day free trial and ৳50 free credit. No
-              card is needed to start the trial. When the trial ends, you
-              need an active plan to keep using AI replies.
+              card is needed to start the trial. When the trial ends, AI
+              replies use your reply package first, then pay-as-you-go
+              from your wallet balance; scheduling more than 1 post a day
+              needs a Post Schedule subscription.
             </p>
           </section>
 
@@ -111,12 +120,12 @@ export default function TermsPage() {
               Because top-ups are checked by hand, a top-up is only added
               after approval. If you sent money by mistake, contact us
               through the{" "}
-              <Link className="text-[#FF5B2E] underline" href="/contact">
+              <Link className="text-[#0051F6] underline" href="/contact">
                 Contact page
               </Link>{" "}
               or at{" "}
               <a
-                className="text-[#FF5B2E] underline"
+                className="text-[#0051F6] underline"
                 href="mailto:info.yearmedia@gmail.com"
               >
                 info.yearmedia@gmail.com
@@ -134,7 +143,7 @@ export default function TermsPage() {
               you sent money by mistake, or you have unused credit and want
               it back, contact us at{" "}
               <a
-                className="text-[#FF5B2E] underline"
+                className="text-[#0051F6] underline"
                 href="mailto:info.yearmedia@gmail.com"
               >
                 info.yearmedia@gmail.com
@@ -217,7 +226,7 @@ export default function TermsPage() {
                 a buyer&rsquo;s name, phone number and address to fulfil
                 their order. Do not share or sell buyer data to anyone else.
                 How we handle that data is explained in the{" "}
-                <Link className="text-[#FF5B2E] underline" href="/privacy">
+                <Link className="text-[#0051F6] underline" href="/privacy">
                   Privacy Policy
                 </Link>
                 .
@@ -235,11 +244,11 @@ export default function TermsPage() {
               or breaks a platform&rsquo;s rules. We will tell you why when we
               can. You can stop using the service at any time; your data is
               deleted as explained in the{" "}
-              <Link className="text-[#FF5B2E] underline" href="/privacy">
+              <Link className="text-[#0051F6] underline" href="/privacy">
                 Privacy Policy
               </Link>{" "}
               and on the{" "}
-              <Link className="text-[#FF5B2E] underline" href="/data-deletion">
+              <Link className="text-[#0051F6] underline" href="/data-deletion">
                 Data Deletion page
               </Link>
               . Unused wallet balance is not refunded when an account is
@@ -290,16 +299,16 @@ export default function TermsPage() {
           <section>
             <h2 className="text-xl font-bold">13. Contact</h2>
             <p className="mt-2 leading-relaxed">
-              AI Sales Inbox is operated by Year Media. Questions about these
+              YEARBITO is operated by Year Media. Questions about these
               terms: email us at{" "}
               <a
-                className="text-[#FF5B2E] underline"
+                className="text-[#0051F6] underline"
                 href="mailto:info.yearmedia@gmail.com"
               >
                 info.yearmedia@gmail.com
               </a>{" "}
               or contact us through the{" "}
-              <Link className="text-[#FF5B2E] underline" href="/contact">
+              <Link className="text-[#0051F6] underline" href="/contact">
                 Contact page
               </Link>
               .
@@ -308,8 +317,8 @@ export default function TermsPage() {
         </div>
 
         <p className="text-center text-sm text-slate-500 mt-8">
-          <Link className="text-[#FF5B2E] underline" href="/login">
-            Back to AI Sales Inbox
+          <Link className="text-[#0051F6] underline" href="/login">
+            Back to YEARBITO
           </Link>
         </p>
       </div>

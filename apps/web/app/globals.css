@@ -16,12 +16,12 @@
   }
 
   ::selection {
-    background: #ffe3d6;
-    color: #7c2510;
+    background: #d6e4fe;
+    color: #0F172A;
   }
 
   /* One consistent look for every text input, select and textarea site-wide:
-     soft border, white surface, and a coral focus ring so the user can always
+     soft border, white surface, and a blue focus ring so the user can always
      see which field is active. Checkboxes/radios are excluded on purpose. */
   input:not([type="checkbox"]):not([type="radio"]),
   select,
@@ -59,11 +59,11 @@
     height: 8px;
   }
   ::-webkit-scrollbar-thumb {
-    background: #ffd9c7;
+    background: #c7d9fd;
     border-radius: 999px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #FFB59F;
+    background: #8AADFC;
   }
   ::-webkit-scrollbar-track {
     background: transparent;
@@ -79,7 +79,7 @@
     @apply transition duration-200 hover:-translate-y-0.5 hover:shadow-md;
   }
 
-  /* Buttons — orange primary, green success, quiet ghost. */
+  /* Buttons — blue primary, green success, quiet ghost. */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 rounded-lg bg-brand px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-brand-dark focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-brand/40 disabled:pointer-events-none disabled:opacity-50;
   }
@@ -108,8 +108,127 @@
     @apply animate-pulse rounded-lg bg-orange-50;
   }
 
-  /* Table header rows: light-orange tint so the header reads as a header. */
+  /* Table header rows: light-blue tint so the header reads as a header. */
   .table-head {
     @apply bg-orange-50;
   }
 }
+
+/* ---- Landing hero animation (page.tsx) — pure CSS, no assets. ---- */
+@keyframes hero-bubble-in {
+  from { opacity: 0; transform: translateY(10px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes hero-flow-dot {
+  0% { opacity: 0; transform: translateY(-6px); }
+  30% { opacity: 1; }
+  100% { opacity: 0; transform: translateY(16px); }
+}
+@keyframes hero-typing {
+  0%, 60%, 100% { transform: translateY(0); opacity: 0.4; }
+  30% { transform: translateY(-3px); opacity: 1; }
+}
+@keyframes hero-progress {
+  from { width: 0%; }
+  to { width: 100%; }
+}
+@keyframes hero-check-pop {
+  0% { transform: scale(0.4); opacity: 0; }
+  70% { transform: scale(1.15); }
+  100% { transform: scale(1); opacity: 1; }
+}
+.hero-bubble-in { animation: hero-bubble-in 0.5s ease both; }
+.hero-flow-dot { animation: hero-flow-dot 1.4s ease-in-out infinite; }
+.hero-typing-dot { animation: hero-typing 1.2s ease-in-out infinite; }
+.hero-progress { animation: hero-progress 1.4s ease forwards; }
+.hero-check-pop { animation: hero-check-pop 0.4s ease both; }
+
+/* Full-app Night mode (2026-11-11, user request: "full side day night
+   mood"). AppShell adds .theme-night to the logged-in app root when
+   Night is on, and these rules restyle the shared surfaces — page
+   background, cards, inputs, neutral text and borders — without
+   touching any of the 22 pages. Brand colors (blue / purple / green /
+   red status) are deliberately left alone. Unlayered on purpose so
+   these win over the Tailwind utilities; !important because the pages
+   set the same utilities inline. Public pages (landing, login, policy)
+   never get .theme-night, so they always stay light. */
+.theme-night { color-scheme: dark; color: #E2E8F0; }
+.theme-night .bg-white { background-color: #1E293B !important; }
+.theme-night .bg-slate-50 { background-color: #16213A !important; }
+.theme-night .bg-slate-100 { background-color: #1E293B !important; }
+.theme-night .bg-orange-50 { background-color: rgba(255, 255, 255, 0.06) !important; }
+.theme-night .bg-\[\#ebf1fe\] { background-color: rgba(0, 81, 246, 0.25) !important; }
+.theme-night .text-slate-900 { color: #F1F5F9 !important; }
+.theme-night .text-slate-800 { color: #E2E8F0 !important; }
+.theme-night .text-slate-700 { color: #CBD5E1 !important; }
+.theme-night .text-slate-600 { color: #94A3B8 !important; }
+.theme-night .text-slate-500 { color: #94A3B8 !important; }
+.theme-night .border-\[\#eeeeee\] { border-color: rgba(255, 255, 255, 0.1) !important; }
+.theme-night .border-slate-200 { border-color: rgba(255, 255, 255, 0.1) !important; }
+.theme-night .border-orange-100 { border-color: rgba(255, 255, 255, 0.1) !important; }
+.theme-night .hover\:bg-orange-50:hover { background-color: rgba(255, 255, 255, 0.08) !important; }
+.theme-night .hover\:bg-orange-100:hover { background-color: rgba(255, 255, 255, 0.08) !important; }
+.theme-night .card { background-color: #1E293B !important; border-color: rgba(255, 255, 255, 0.1) !important; }
+.theme-night .empty-state { background-color: #1E293B !important; border-color: rgba(255, 255, 255, 0.1) !important; }
+.theme-night .skeleton { background-color: #1E293B !important; }
+.theme-night input,
+.theme-night select,
+.theme-night textarea { background-color: #1E293B !important; color: #F1F5F9 !important; border-color: rgba(255, 255, 255, 0.15) !important; }
+.theme-night input::placeholder { color: #64748B !important; }
+/* Dark text that would vanish on the dark surfaces — every colored text
+   the app actually uses (audited 2026-11-11), lifted to a light tint of
+   the same hue so status colors still read as colors. */
+.theme-night .text-brand { color: #93C5FD !important; }
+.theme-night .text-brand-dark { color: #93C5FD !important; }
+.theme-night .text-accent-dark { color: #C4B5FD !important; }
+.theme-night .text-\[\#0051F6\] { color: #93C5FD !important; }
+.theme-night .text-\[\#003EC9\] { color: #93C5FD !important; }
+.theme-night .text-blue-600, .theme-night .text-blue-700, .theme-night .text-blue-800 { color: #93C5FD !important; }
+.theme-night .text-sky-600, .theme-night .text-sky-700, .theme-night .text-sky-800 { color: #7DD3FC !important; }
+.theme-night .text-indigo-700 { color: #A5B4FC !important; }
+.theme-night .text-green-600, .theme-night .text-green-700, .theme-night .text-green-800 { color: #4ADE80 !important; }
+.theme-night .text-emerald-700 { color: #34D399 !important; }
+.theme-night .text-red-600, .theme-night .text-red-700, .theme-night .text-red-800 { color: #F87171 !important; }
+.theme-night .text-rose-700 { color: #FDA4AF !important; }
+.theme-night .text-amber-700, .theme-night .text-amber-800, .theme-night .text-amber-900 { color: #FCD34D !important; }
+.theme-night .text-orange-700, .theme-night .text-orange-800 { color: #93C5FD !important; }
+.theme-night .text-gray-500, .theme-night .text-gray-600, .theme-night .text-gray-700, .theme-night .text-gray-800, .theme-night .text-gray-900 { color: #CBD5E1 !important; }
+.theme-night .text-black { color: #F1F5F9 !important; }
+/* Light tinted panels (notice / success / warning pills) become dark
+   tints of the same hue, so the light text above stays readable. */
+.theme-night .bg-red-50 { background-color: rgba(239, 68, 68, 0.15) !important; }
+.theme-night .bg-red-100 { background-color: rgba(239, 68, 68, 0.22) !important; }
+.theme-night .bg-green-50 { background-color: rgba(34, 197, 94, 0.15) !important; }
+.theme-night .bg-green-100 { background-color: rgba(34, 197, 94, 0.22) !important; }
+.theme-night .bg-amber-50 { background-color: rgba(245, 158, 11, 0.15) !important; }
+.theme-night .bg-amber-100 { background-color: rgba(245, 158, 11, 0.22) !important; }
+.theme-night .bg-sky-100 { background-color: rgba(56, 189, 248, 0.22) !important; }
+.theme-night .bg-slate-200 { background-color: #334155 !important; }
+.theme-night .bg-orange-100 { background-color: rgba(255, 255, 255, 0.08) !important; }
+/* Stat icon tiles and progress tracks (light-blue / light-purple tiles
+   that stayed white in Night mode) become translucent brand tints. */
+.theme-night .bg-\[\#EBF1FE\] { background-color: rgba(0, 81, 246, 0.25) !important; }
+.theme-night .bg-\[\#F3EAFE\] { background-color: rgba(139, 53, 246, 0.25) !important; }
+.theme-night .bg-brand-light { background-color: rgba(0, 81, 246, 0.25) !important; }
+.theme-night .bg-violet-100 { background-color: rgba(139, 92, 246, 0.25) !important; }
+.theme-night .bg-violet-50 { background-color: rgba(139, 92, 246, 0.18) !important; }
+.theme-night .bg-purple-100 { background-color: rgba(168, 85, 247, 0.25) !important; }
+.theme-night .text-violet-600, .theme-night .text-violet-700 { color: #A78BFA !important; }
+.theme-night .text-purple-600 { color: #C084FC !important; }
+/* Hover states (2026-11-11): conversation rows and tabs use light hover
+   backgrounds (brand-light / slate-50) that stayed light in Night mode
+   while the text had turned light — light on light, unreadable on
+   hover. Every light hover background becomes a dark tint, and every
+   dark hover text becomes light, so hovered rows stay readable.
+   Saturated hover colors (green-700 / red-700 / blue-700 / amber-700
+   on white text) are already dark and are left alone. */
+.theme-night .hover\:bg-brand-light:hover { background-color: rgba(0, 81, 246, 0.25) !important; }
+.theme-night .hover\:bg-\[\#EBF1FE\]:hover { background-color: rgba(0, 81, 246, 0.25) !important; }
+.theme-night .hover\:bg-slate-50:hover { background-color: rgba(255, 255, 255, 0.06) !important; }
+.theme-night .hover\:bg-slate-200:hover { background-color: #334155 !important; }
+.theme-night .hover\:bg-green-50:hover { background-color: rgba(34, 197, 94, 0.15) !important; }
+.theme-night .hover\:text-slate-900:hover { color: #F1F5F9 !important; }
+.theme-night .hover\:text-slate-800:hover { color: #E2E8F0 !important; }
+.theme-night .hover\:text-slate-600:hover { color: #94A3B8 !important; }
+.theme-night .hover\:text-slate-500:hover { color: #94A3B8 !important; }
+.theme-night .hover\:text-green-800:hover { color: #4ADE80 !important; }

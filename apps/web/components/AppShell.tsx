@@ -51,6 +51,7 @@ const TITLES: Record<string, { en: string; bn: string }> = {
   "/teach": { en: "Teach AI", bn: "AI শেখানো" },
   "/saved-replies": { en: "Saved Replies", bn: "সেভ করা উত্তর" },
   "/ai-providers": { en: "AI Providers", bn: "AI প্রোভাইডার" },
+  "/ai-manager": { en: "AI Sales Manager", bn: "এআই সেলস ম্যানেজার" },
   "/website-chat": { en: "Website Chat", bn: "ওয়েবসাইট চ্যাট" },
   "/billing": { en: "Billing", bn: "বিলিং" },
   "/plans": { en: "Plans", bn: "প্ল্যান" },
@@ -58,6 +59,7 @@ const TITLES: Record<string, { en: string; bn: string }> = {
   "/team": { en: "Team", bn: "টিম" },
   "/guide": { en: "Guide", bn: "গাইড" },
   "/owner": { en: "Owner Panel", bn: "ওনার প্যানেল" },
+  "/profile": { en: "Profile", bn: "প্রোফাইল" },
 };
 
 export default function AppShell({ children }: { children: React.ReactNode }) {
@@ -65,6 +67,29 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const { t } = useI18n();
   const [menuOpen, setMenuOpen] = useState(false);
+  // Day / Night mode (2026-11-11, user request): "night" turns the WHOLE
+  // logged-in app dark (sidebar navy, header navy, dark content
+  // background and cards — see the .theme-night rules in globals.css),
+  // "day" is the original light look. Remembered in localStorage so the
+  // choice survives reloads. The public pages (landing, login, policy)
+  // always stay light — they render without AppShell.
+  const [theme, setTheme] = useState<"day" | "night">(() => {
+    if (typeof window === "undefined") return "night";
+    try {
+      return (localStorage.getItem("yearbito-sidebar-theme") as "day" | "night" | null) ?? "night";
+    } catch {
+      return "night";
+    }
+  });
+  const toggleTheme = () => {
+    const next = theme === "night" ? "day" : "night";
+    setTheme(next);
+    try {
+      localStorage.setItem("yearbito-sidebar-theme", next);
+    } catch {
+      // Private mode — the choice just won't be remembered.
+    }
+  };
   const [bellOpen, setBellOpen] = useState(false);
   const [notifications, setNotifications] = useState<BellNotification[]>([]);
   const [unreadCount, setUnreadCount] = useState(0);
@@ -176,13 +201,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     return <main className="min-h-screen">{children}</main>;
   }
 
-  const title = TITLES[pathname] ?? TITLES[Object.keys(TITLES).find((k) => pathname.startsWith(k + "/")) ?? ""] ?? { en: "AI Sales Inbox", bn: "AI সেলস ইনবক্স" };
+  const title = TITLES[pathname] ?? TITLES[Object.keys(TITLES).find((k) => pathname.startsWith(k + "/")) ?? ""] ?? { en: "YEARBITO", bn: "YEARBITO" };
 
   return (
-    <div className="flex min-h-screen bg-white">
-      <Sidebar mobileOpen={menuOpen} onClose={() => setMenuOpen(false)} />
+    <div className={theme === "night" ? "theme-night flex min-h-screen bg-[#0B1220]" : "flex min-h-screen bg-white"}>
+      <Sidebar mobileOpen={menuOpen} onClose={() => setMenuOpen(false)} theme={theme} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="sticky top-0 z-10 flex h-[60px] items-center justify-between gap-3 border-b border-[#eeeeee] bg-white px-4 sm:px-6">
+        <header className={theme === "night" ? "sticky top-0 z-10 flex h-[60px] items-center justify-between gap-3 border-b border-white/10 bg-[#0F172A] px-4 sm:px-6" : "sticky top-0 z-10 flex h-[60px] items-center justify-between gap-3 border-b border-[#eeeeee] bg-white px-4 sm:px-6"}>
           <div className="flex min-w-0 items-center gap-2">
             <button
               onClick={() => setMenuOpen(true)}
@@ -203,7 +228,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               >
                 <Icon name="bell" className="h-5 w-5" />
                 {unreadCount > 0 && (
-                  <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#ff5b2e] px-1 text-[10px] font-bold text-white">
+                  <span className="absolute right-1 top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-[#0051f6] px-1 text-[10px] font-bold text-white">
                     {unreadCount > 9 ? "9+" : unreadCount}
                   </span>
                 )}
@@ -227,7 +252,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                         const cancelling = cancellingIds.has(n.id);
                         const cancelled = cancelDoneIds.has(n.id);
                         return (
-                          <li key={n.id} className={`hover:bg-orange-50 ${n.is_read ? "" : "bg-[#fff1ea]"}`}>
+                          <li key={n.id} className={`hover:bg-orange-50 ${n.is_read ? "" : "bg-[#ebf1fe]"}`}>
                             <button
                               onClick={() => openNotification(n)}
                               className="block w-full px-4 pt-3 text-left"
@@ -245,7 +270,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                                 <button
                                   onClick={() => approveCancel(n)}
                                   disabled={cancelling}
-                                  className="rounded-lg bg-[#ff5b2e] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#e04e26] disabled:opacity-50"
+                                  className="rounded-lg bg-[#0051f6] px-3 py-1.5 text-xs font-bold text-white hover:bg-[#003ec9] disabled:opacity-50"
                                 >
                                   {cancelling
                                     ? t("header.cancelling", "Cancelling…", "ক্যান্সেল হচ্ছে…")
@@ -274,6 +299,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             >
               <Icon name="help" className="h-5 w-5" />
             </Link>
+            <button
+              onClick={toggleTheme}
+              aria-label={theme === "night" ? t("header.dayMode", "Day mode", "ডে মুড") : t("header.nightMode", "Night mode", "নাইট মুড")}
+              title={theme === "night" ? t("header.dayMode", "Day mode", "ডে মুড") : t("header.nightMode", "Night mode", "নাইট মুড")}
+              className="rounded-full p-2 text-slate-600 transition-colors hover:bg-orange-50 hover:text-slate-900"
+            >
+              <Icon name={theme === "night" ? "sun" : "moon"} className="h-5 w-5" />
+            </button>
             <LanguageToggle />
             <ProfileMenu />
           </div>

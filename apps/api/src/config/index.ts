@@ -24,8 +24,11 @@ export const config = {
   tokenEncryptionKey: required('TOKEN_ENCRYPTION_KEY'),
   geminiApiKey: process.env.GEMINI_API_KEY ?? '',
   // Gemini default model: gemini-3.5-flash-lite (verified 2026-11-07 with
-  // the current key; ~9 paisa/reply vs ~49 for gemini-3.5-flash, and its
-  // free-tier quota is separate so flash 429s do not block it).
+  // the current key; ~19 paisa/reply at ~4,000 tokens, vs ~49 for
+  // gemini-3.5-flash, and its free-tier quota is separate so flash 429s
+  // do not block it). Gemini final (user decision 2026-11-11): this is
+  // the ONLY model — ai-agent/providers.ts pins it, AI_MODEL no longer
+  // selects a model.
   // gemini-2.5-flash returns 404 "no longer available to new users" for
   // this key, and gemini-2.0-flash no longer exists.
   aiModel: optional('AI_MODEL', 'gemini-3.5-flash-lite'),
@@ -73,18 +76,41 @@ export const config = {
   aiProviderTimeoutMs: Number(process.env.AI_PROVIDER_TIMEOUT_MS ?? 20000),
   freeCreditPaisa: Number(process.env.FREE_CREDIT_PAISA ?? 5000),
   /**
-   * সাবস্ক্রিপশন — প্রস্তাবিত দাম (SUGGESTED ONLY — মালিকের সিদ্ধান্ত নয়)।
-   * নিচের দামগুলো শুধু প্রস্তাব: ছোট ৳৪৯৯, মাঝারি ৳৯৯৯, বড় ৳১৯৯৯/মাস।
-   * মালিক দাম বদলাতে চাইলে জানালেই বদলে দেওয়া হবে — দাম বদলাতে কোডের
-   * আর কোথাও হাত দিতে হয় না: DB-র plans টেবিল (মাইগ্রেশন 04-এ সিড করা)
-   * আর এখানকার suggestedPlans-ই একমাত্র জায়গা। রানটাইমে আসল উৎস
-   * plans টেবিল; এখানকার তালিকাটি ডকুমেন্টেশন/ফলব্যাক হিসেবে আছে।
-   * নতুন ওয়ার্কস্পেস ১৪ দিনের ফ্রি ট্রায়াল পায় (ছোট প্ল্যান)।
-   * প্ল্যানের সীমা শেষ হলে প্রতি অতিরিক্ত AI রিপ্লাইয়ে ১০ পয়সা কাটে।
+   * YEARBITO billing model (Phase 2, 2026-11-11 — REPLACES the old
+   * ছোট/মাঝারি/বড় plans, which are no longer sold; existing
+   * subscriptions stay valid until their period ends — grandfathered).
+   * Three separate components, all paid from the wallet balance
+   * (manual top-up: bKash/Rocket/Nagad Send Money + TrxID, owner
+   * approval — billing/topup.ts). No card/bKash gateway exists yet.
+   *   1. Post Schedule subscription — 1 scheduled post/day FREE; more
+   *      needs a subscription: BD ৳100/month, ৳1000/year; Intl
+   *      $1/month, $10/year (charged to the wallet in paisa at
+   *      USD_TO_BDT_PAISA). No lifetime plan. Prices live in
+   *      subscriptions/schedule.ts (SCHEDULE_PLANS), not here.
+   *   2. Pay-as-you-go AI credit — each AI reply costs a FLAT 23
+   *      paisa (PAYG_REPLY_COST_PAISA), deducted from the wallet.
+   *      The provider's real per-token cost (ai-agent/pricing.ts) is
+   *      still recorded per reply in the ledger for transparency —
+   *      the shop pays the flat price, not the raw token cost.
+   *   3. Reply package — replies bought upfront, consumed BEFORE
+   *      pay-as-you-go. Price per reply below (default 22 paisa —
+   *      user decision 2026-11-11 18:32: 60% profit on AVERAGE across
+   *      package (22 paisa, 59% at ~9 paisa avg cost) and pay-as-you-go
+   *      (23 paisa, 61%) — hosting + ads cost money too, so the margin
+   *      target is 60% average, not 50–60%. The earlier 50–60% band
+   *      (revised 2026-11-11 17:51, prices 20/22 confirmed 18:10) is
+   *      superseded. Override with REPLY_PACKAGE_PRICE_PAISA.
+   *      Pay-as-you-go is 23 paisa/reply (61% margin).
+   * New workspaces still get a 14-day free trial (old ছোট plan,
+   * grandfathered) + ৳50 free credit (FREE_CREDIT_PAISA).
    */
   trialDays: Number(process.env.TRIAL_DAYS ?? 14),
   subscriptionPeriodDays: Number(process.env.SUBSCRIPTION_PERIOD_DAYS ?? 30),
-  overageReplyCostPaisa: Number(process.env.OVERAGE_REPLY_COST_PAISA ?? 10),
+  overageReplyCostPaisa: Number(process.env.OVERAGE_REPLY_COST_PAISA ?? 22),
+  /** Price of ONE reply-package reply, in paisa (default 22). */
+  replyPackagePricePaisa: Number(process.env.REPLY_PACKAGE_PRICE_PAISA ?? 22),
+  /** Flat price of ONE pay-as-you-go AI reply, in paisa (default 23). */
+  paygReplyCostPaisa: Number(process.env.PAYG_REPLY_COST_PAISA ?? 23),
   /**
    * Test hooks (POST /api/subscriptions/test/*) — OFF by default.
    * They can only harm the caller's own workspace, but they must never
@@ -104,6 +130,14 @@ export const config = {
    */
   ownerSetupToken: process.env.OWNER_SETUP_TOKEN ?? '',
   allowOwnerTestHooks: process.env.ALLOW_OWNER_TEST_HOOKS === 'true',
+  /**
+   * Old plans (migration 04) — grandfathered only, NO LONGER SOLD.
+   * Kept as documentation of what existing subscriptions mean; the
+   * Plans page and the subscribe/upgrade/downgrade/renew endpoints
+   * refuse these slugs (see subscriptions/service.ts purchasePlan).
+   * New billing lives in subscriptions/schedule.ts (Post Schedule
+   * subscription) + the reply package (REPLY_PACKAGE_PRICE_PAISA).
+   */
   suggestedPlans: [
     { slug: 'choto', nameBn: 'ছোট', pricePaisa: 49900, includedAiReplies: 500, maxChannels: 1, maxProducts: 100 },
     { slug: 'majhari', nameBn: 'মাঝারি', pricePaisa: 99900, includedAiReplies: 2000, maxChannels: 3, maxProducts: 500 },
@@ -226,6 +260,15 @@ export const config = {
     uploadBaseUrl: optional('GOOGLE_UPLOAD_BASE_URL', 'https://www.googleapis.com/upload'),
   },
   tiktokCommentsApproved: process.env.TIKTOK_COMMENTS_APPROVED === 'true',
+  /**
+   * TikTok comment-webhook shared secret (security fix 2026-11-11).
+   * POST /api/webhooks/tiktok requires header `x-tiktok-webhook-secret`
+   * to match this value; when it is unset the endpoint answers 503
+   * (fail-closed — an unverifiable doorway must not accept messages).
+   * Env only — never in code. TikTok has no standard HMAC scheme for
+   * this custom endpoint, so a shared secret is the check.
+   */
+  tiktokWebhookSecret: process.env.TIKTOK_WEBHOOK_SECRET ?? '',
   tiktokSchedulingAudited: process.env.TIKTOK_SCHEDULING_AUDITED === 'true',
   whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN ?? '',
   /** Embedding provider for image product matching ('' = stub — never fakes a match). */

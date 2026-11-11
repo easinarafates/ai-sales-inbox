@@ -42,10 +42,11 @@ export default function LoginPage() {
       <form onSubmit={submit} className="w-full max-w-md space-y-4 rounded-2xl border border-orange-100 bg-white p-8 shadow-lg">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div className="flex min-w-0 items-start gap-3">
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-brand text-base font-bold text-white shadow-sm">AI</span>
+            <img src="/logo.png" alt="YEARBITO" className="h-11 w-11 shrink-0 rounded-xl object-cover shadow-sm" />
             <div className="min-w-0">
-              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("app.name", "AI Sales Inbox", "AI সেলস ইনবক্স")}</h1>
+              <h1 className="text-2xl font-bold tracking-tight text-slate-900">{t("app.name", "YEARBITO", "YEARBITO")}</h1>
               <p className="text-sm text-slate-500">{t("auth.loginSubtitle", "Log in to your account", "লগইন করুন")}</p>
+              <p className="text-sm font-semibold text-brand">{t("landing.tagline", "Your Ideas, Amplified.", "Your Ideas, Amplified.")}</p>
             </div>
           </div>
           <LanguageToggle />

@@ -31,6 +31,7 @@ import { decryptToken, encryptToken } from '../db/crypto';
 import type { AuthRequest } from '../types';
 import { requireAuth } from '../auth/auth';
 import { requireOwner } from './ownerAuth';
+import { adminRouter } from './admin';
 import { getOwnerWallet, processOwnerWalletDeductions } from './sweep';
 
 export const ownerRouter = Router();
@@ -85,6 +86,10 @@ ownerRouter.get('/me', requireAuth, async (req: AuthRequest, res: Response) => {
 
 // Every route below requires the platform owner.
 ownerRouter.use(requireOwner);
+
+// Feature 5 — user + subscription management (owner/admin.ts).
+// Mounted here so it inherits the requireOwner gate above.
+ownerRouter.use(adminRouter);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -220,7 +225,7 @@ function publicExpense(row: ExpenseRow) {
 
 const DEPOSIT_METHODS = ['card', 'bkash', 'nagad', 'bank'] as const;
 const EXPENSE_CATEGORIES = ['hosting', 'domain', 'ai', 'ads', 'other'] as const;
-const BANK_TYPES = ['bank', 'bkash', 'nagad'] as const;
+const BANK_TYPES = ['bank', 'bkash', 'nagad', 'rocket'] as const;
 
 const BANK_COLUMNS =
   'id, bank_name, account_holder, account_number_last4, branch, type, is_primary, created_at, updated_at';
@@ -233,6 +238,57 @@ const EXPENSE_COLUMNS = 'id, expense_date, category, amount_paisa, note, created
 // ---------------------------------------------------------------------------
 
 /** GET /api/owner/overview?days=7|30 — totals + per-day trend. */
+/**
+ * Recent AI-cost deductions from the OWNER wallet, enriched with the shop
+ * that caused them. Every AI reply cuts the shop's credit AND cuts the
+ * owner's wallet by the reply's provider cost (owner/sweep.ts, at most
+ * ~60s later). This is the per-event link the Owner Panel shows: shop
+ * paid X, your cost Y was cut, profit X − Y — even when the provider's
+ * real bill is ৳0 (free tier), the standard-rate cost is what is cut
+ * from the owner wallet, so the real cost is never hidden.
+ */
+async function recentOwnerDeductions(limit: number): Promise<{
+  id: string;
+  createdAt: string;
+  provider: string | null;
+  shopName: string;
+  shopChargePaisa: number;
+  ownerCostPaisa: number;
+  profitPaisa: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}[]> {
+  const { rows } = await pool.query(
+    `SELECT t.id, t.amount_paisa, t.provider, t.created_at,
+            COALESCE(l.cost_paisa, 0) AS shop_charge_paisa,
+            l.input_tokens, l.output_tokens,
+            w.name AS shop_name
+     FROM owner_wallet_transactions t
+     LEFT JOIN ai_usage_ledger l ON l.id::text = t.reference
+     LEFT JOIN workspaces w ON w.id = l.workspace_id
+     WHERE t.type = 'ai_cost'
+     ORDER BY t.created_at DESC LIMIT $1`,
+    [limit],
+  );
+  return rows.map((r) => {
+    const ownerCost = Math.abs(Number(r.amount_paisa ?? 0));
+    const shopCharge = Number(r.shop_charge_paisa ?? 0);
+    return {
+      id: r.id,
+      createdAt: r.created_at,
+      provider: r.provider,
+      shopName: r.shop_name ?? '—',
+      shopChargePaisa: shopCharge,
+      ownerCostPaisa: ownerCost,
+      profitPaisa: shopCharge - ownerCost,
+      // Token counts come straight from the ledger row; null when there is
+      // no ledger row or the ledger has no token data — never invented.
+      inputTokens: r.input_tokens == null ? null : Number(r.input_tokens),
+      outputTokens: r.output_tokens == null ? null : Number(r.output_tokens),
+    };
+  });
+}
+
 ownerRouter.get('/overview', async (req: AuthRequest, res: Response) => {
   const days = parseDays(req.query.days, 30);
   const since = rangeStart(days);
@@ -306,6 +362,48 @@ ownerRouter.get('/overview', async (req: AuthRequest, res: Response) => {
       lowBalance: wallet.balancePaisa < wallet.lowBalanceThresholdPaisa,
     },
     trend,
+    recentDeductions: await recentOwnerDeductions(8),
+  });
+});
+
+/**
+ * GET /api/owner/payments?status=pending — every workspace's manual
+ * payment requests (checkout purchases + plain wallet top-ups), newest
+ * last (oldest first, so the owner works through the queue). The
+ * checkout page's TrxID submissions land here the moment the shop
+ * submits them; approving delivers the product (see billing/topup.ts).
+ */
+ownerRouter.get('/payments', async (req: AuthRequest, res: Response) => {
+  const status = typeof req.query.status === 'string' ? req.query.status : 'pending';
+  const { rows } = await pool.query(
+    `SELECT t.id, t.workspace_id, t.amount_paisa, t.method, t.transaction_id,
+            t.status, t.reason, t.purpose, t.created_at, t.requested_by,
+            w.name AS shop_name, u.email AS requester_email
+     FROM topup_requests t
+     JOIN workspaces w ON w.id = t.workspace_id
+     LEFT JOIN users u ON u.id = t.requested_by
+     WHERE t.status = $1
+     ORDER BY t.created_at ASC LIMIT 200`,
+    [status],
+  );
+  res.json({
+    payments: rows.map((r) => {
+      let purpose: unknown = null;
+      try { purpose = r.purpose ? JSON.parse(r.purpose) : null; } catch { purpose = null; }
+      return {
+        id: r.id,
+        workspaceId: r.workspace_id,
+        shopName: r.shop_name ?? '—',
+        requesterEmail: r.requester_email ?? null,
+        amountPaisa: Number(r.amount_paisa),
+        method: r.method,
+        transactionId: r.transaction_id,
+        status: r.status,
+        reason: r.reason,
+        purpose,
+        createdAt: r.created_at,
+      };
+    }),
   });
 });
 
@@ -775,19 +873,47 @@ ownerRouter.get('/wallet', async (_req: AuthRequest, res: Response) => {
     `SELECT id, type, amount_paisa, provider, reference, note, created_at
      FROM owner_wallet_transactions ORDER BY created_at DESC LIMIT 50`,
   );
+  // Enrich ai_cost rows with the shop + what the shop paid for that reply.
+  const refs = rows.filter((r) => r.type === 'ai_cost' && r.reference).map((r) => r.reference as string);
+  const enrich = new Map<string, { shopName: string; shopChargePaisa: number; profitPaisa: number }>();
+  if (refs.length > 0) {
+    const led = await pool.query(
+      `SELECT l.id::text AS id, COALESCE(l.cost_paisa, 0) AS shop_charge_paisa,
+              w.name AS shop_name
+       FROM ai_usage_ledger l LEFT JOIN workspaces w ON w.id = l.workspace_id
+       WHERE l.id::text = ANY($1::text[])`,
+      [refs],
+    );
+    for (const r of led.rows) {
+      const charge = Number(r.shop_charge_paisa ?? 0);
+      enrich.set(r.id as string, {
+        shopName: (r.shop_name as string | null) ?? '—',
+        shopChargePaisa: charge,
+        profitPaisa: 0, // filled below from the transaction amount
+      });
+    }
+  }
   res.json({
     balancePaisa: wallet.balancePaisa,
     lowBalanceThresholdPaisa: wallet.lowBalanceThresholdPaisa,
     lowBalance: wallet.balancePaisa < wallet.lowBalanceThresholdPaisa,
-    transactions: rows.map((r) => ({
-      id: r.id,
-      type: r.type,
-      amountPaisa: Number(r.amount_paisa),
-      provider: r.provider,
-      reference: r.reference,
-      note: r.note,
-      createdAt: r.created_at,
-    })),
+    transactions: rows.map((r) => {
+      const base = {
+        id: r.id,
+        type: r.type,
+        amountPaisa: Number(r.amount_paisa),
+        provider: r.provider,
+        reference: r.reference,
+        note: r.note,
+        createdAt: r.created_at,
+      };
+      if (r.type === 'ai_cost' && r.reference && enrich.has(r.reference as string)) {
+        const e = enrich.get(r.reference as string)!;
+        const ownerCost = Math.abs(Number(r.amount_paisa ?? 0));
+        return { ...base, shopName: e.shopName, shopChargePaisa: e.shopChargePaisa, profitPaisa: e.shopChargePaisa - ownerCost };
+      }
+      return base;
+    }),
   });
 });
 
@@ -1128,14 +1254,21 @@ ownerRouter.post('/_test/seed-ledger', async (req: AuthRequest, res: Response) =
     res.status(404).json({ error: 'Not found' });
     return;
   }
-  const { workspaceId, provider, providerCostPaisa, inputTokens, outputTokens, model, customerName } = (req.body ?? {}) as {
+  const { workspaceId, provider, providerCostPaisa, inputTokens, outputTokens, model, customerName, costPaisa, orphanDeduction } = (req.body ?? {}) as {
     workspaceId?: string;
     provider?: string;
     providerCostPaisa?: number;
-    inputTokens?: number;
-    outputTokens?: number;
+    inputTokens?: number | null;
+    outputTokens?: number | null;
     model?: string;
     customerName?: string;
+    // Optional shop charge for the reply (cost_paisa); defaults to 0 as before.
+    costPaisa?: number;
+    // When true, insert an ai_cost owner-wallet transaction with NO matching
+    // ledger row (reference points nowhere) — the only way a deduction can
+    // have no token data, since the ledger's token columns are INT NOT NULL
+    // (schema.sql) and can never store NULL. Tests the UI's "—" dash case.
+    orphanDeduction?: boolean;
   };
   if (!workspaceId || typeof workspaceId !== 'string') {
     res.status(400).json({ error: 'workspaceId is required' });
@@ -1147,6 +1280,24 @@ ownerRouter.post('/_test/seed-ledger', async (req: AuthRequest, res: Response) =
   }
   if (typeof providerCostPaisa !== 'number' || !Number.isInteger(providerCostPaisa) || providerCostPaisa < 0) {
     res.status(400).json({ error: 'providerCostPaisa must be a non-negative integer (paisa)' });
+    return;
+  }
+  // The ledger's token columns are INT NOT NULL (schema.sql) — NULL tokens
+  // can never be stored in a ledger row. Reject explicit nulls with a clear
+  // 400 instead of a confusing 500 from Postgres; the no-token (dash) case
+  // is a deduction with NO ledger row — see orphanDeduction below.
+  if (inputTokens === null || outputTokens === null) {
+    res.status(400).json({ error: 'inputTokens/outputTokens cannot be null — ai_usage_ledger token columns are NOT NULL; use orphanDeduction to test the no-token (dash) case' });
+    return;
+  }
+  if (orphanDeduction === true) {
+    const { rows: orphanRows } = await pool.query(
+      `INSERT INTO owner_wallet_transactions (type, amount_paisa, provider, reference, note)
+       VALUES ('ai_cost', $1, $2, $3, 'Test orphan deduction (no ledger row)')
+       RETURNING id, type, amount_paisa, provider, reference, created_at`,
+      [-providerCostPaisa, provider, `orphan-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`],
+    );
+    res.status(201).json({ orphanDeduction: orphanRows[0] });
     return;
   }
   // Optional customer: create a customer + conversation and link the ledger
@@ -1167,13 +1318,14 @@ ownerRouter.post('/_test/seed-ledger', async (req: AuthRequest, res: Response) =
   }
   const { rows } = await pool.query(
     `INSERT INTO ai_usage_ledger (workspace_id, conversation_id, input_tokens, output_tokens, cost_paisa, provider, model, provider_cost_paisa, owner_deducted)
-     VALUES ($1, $2, $3, $4, 0, $5, $6, $7, FALSE)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, FALSE)
      RETURNING id, workspace_id, conversation_id, provider, model, input_tokens, output_tokens, cost_paisa, provider_cost_paisa, owner_deducted, created_at`,
     [
       workspaceId,
       conversationId,
       typeof inputTokens === 'number' ? inputTokens : 100,
       typeof outputTokens === 'number' ? outputTokens : 50,
+      typeof costPaisa === 'number' ? costPaisa : 0,
       provider,
       typeof model === 'string' ? model : '',
       providerCostPaisa,

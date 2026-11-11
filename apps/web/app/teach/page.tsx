@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
+  API_URL,
   asArrayOf,
   getToken,
   teachApi,
@@ -9,6 +10,19 @@ import {
   type UnansweredQuestion,
 } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+
+/** A product found by Page Read, awaiting owner review. */
+interface PageReadItem {
+  id: string;
+  name: string;
+  price_paisa: number | null;
+  description: string | null;
+  photo_url: string | null;
+  source_post_url: string | null;
+  post_created_at: string | null;
+  status: string;
+  created_at: string;
+}
 
 export default function TeachPage() {
   const router = useRouter();
@@ -37,6 +51,87 @@ export default function TeachPage() {
   const [openVersions, setOpenVersions] = useState<string | null>(null);
   const [versions, setVersions] = useState<Record<string, { id: string; body: string; createdAt?: string; created_at?: string }[]>>({});
 
+  // Page Read ("পেজ পড়ুন") — learn old products from the Facebook Page
+  const [pageReadItems, setPageReadItems] = useState<PageReadItem[]>([]);
+  const [pageReading, setPageReading] = useState(false);
+  const [pageReadResult, setPageReadResult] = useState("");
+  const [pageReadError, setPageReadError] = useState("");
+  const [editName, setEditName] = useState<Record<string, string>>({});
+  const [editPrice, setEditPrice] = useState<Record<string, string>>({});
+  const [editDesc, setEditDesc] = useState<Record<string, string>>({});
+
+  const pageReadFetch = async (path: string, options: RequestInit = {}) => {
+    const res = await fetch(`${API_URL}${path}`, {
+      ...options,
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${getToken()}`,
+        ...(options.headers as Record<string, string> | undefined),
+      },
+    });
+    const data = await res.json().catch(() => null);
+    if (!res.ok) throw new Error(data?.errorBn || data?.error || "পেজ পড়া যায়নি।");
+    return data;
+  };
+
+  const loadPageRead = useCallback(async () => {
+    try {
+      const data = await pageReadFetch("/api/knowledge/page-read?status=pending");
+      setPageReadItems(asArrayOf<PageReadItem>(data, ["items"]));
+    } catch {
+      // Members (non-owners) cannot see the review list — not an error here.
+      setPageReadItems([]);
+    }
+  }, []);
+
+  const doPageRead = async () => {
+    setPageReadError("");
+    setPageReadResult("");
+    setPageReading(true);
+    try {
+      const data = await pageReadFetch("/api/knowledge/page-read", { method: "POST", body: JSON.stringify({}) });
+      setPageReadResult(data.message || `${data.postsScanned}টি পোস্ট পড়া হয়েছে, ${data.inserted}টি নতুন পণ্য পাওয়া গেছে।`);
+      await loadPageRead();
+    } catch (err) {
+      setPageReadError(err instanceof Error ? err.message : "পেজটি পড়া যায়নি।");
+    } finally {
+      setPageReading(false);
+    }
+  };
+
+  const confirmPageRead = async (item: PageReadItem) => {
+    setPageReadError("");
+    try {
+      const priceText = (editPrice[item.id] ?? "").trim();
+      const pricePaisa = priceText === "" ? null : Math.round(parseFloat(priceText.replace(/[০-৯]/g, (d) => String("০১২৩৪৫৬৭৮৯".indexOf(d)))) * 100);
+      await pageReadFetch(`/api/knowledge/page-read/${item.id}/confirm`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: (editName[item.id] ?? item.name).trim(),
+          pricePaisa,
+          description: editDesc[item.id] ?? item.description ?? "",
+          photoUrl: item.photo_url,
+        }),
+      });
+      setPageReadResult(`“${item.name}” AI-কে শেখানো হয়েছে — এটি পুরোনো পণ্য হিসেবে সংরক্ষিত হয়েছে, স্টক নিশ্চিত না হওয়া পর্যন্ত AI এটিকে স্টকে আছে বলবে না।`);
+      await loadPageRead();
+      await load();
+    } catch (err) {
+      setPageReadError(err instanceof Error ? err.message : "নিশ্চিত করা যায়নি।");
+    }
+  };
+
+  const rejectPageRead = async (item: PageReadItem) => {
+    if (!confirm(`“${item.name}” বাতিল করবেন?`)) return;
+    setPageReadError("");
+    try {
+      await pageReadFetch(`/api/knowledge/page-read/${item.id}/reject`, { method: "POST", body: JSON.stringify({}) });
+      await loadPageRead();
+    } catch (err) {
+      setPageReadError(err instanceof Error ? err.message : "বাতিল করা যায়নি।");
+    }
+  };
+
   const load = useCallback(async () => {
     try {
       const [u, k] = await Promise.all([teachApi.unanswered(), teachApi.knowledgeList()]);
@@ -52,7 +147,8 @@ export default function TeachPage() {
   useEffect(() => {
     if (!getToken()) { router.push("/login"); return; }
     load();
-  }, [load, router]);
+    loadPageRead();
+  }, [load, loadPageRead, router]);
 
   const submitTeach = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -206,6 +302,68 @@ export default function TeachPage() {
           ))}
         </div>
       )}
+
+      {/* Page Read — "পেজ পড়ুন": learn old products from the Facebook Page */}
+      <div className="card p-4 mb-6 border-2" style={{ borderColor: "#0051F6" }}>
+        <h2 className="text-xl font-bold mb-2">📖 পেজ পড়ুন — পুরোনো পণ্য শেখান</h2>
+        <p className="text-sm text-slate-600 mb-3">
+          পেজের পুরোনো পোস্টগুলো পড়ে AI আগের বিক্রি হওয়া পণ্যগুলো চিনবে — যেগুলো ওয়েবসাইটের পণ্য তালিকায় নেই। নিচে দেখে প্রতিটি পণ্য নিশ্চিত করুন; নিশ্চিত না করা পর্যন্ত AI এগুলো শিখবে না। নিশ্চিত করা পণ্য “পুরোনো পণ্য — স্টকে আছে কিনা নিশ্চিত নয়” হিসেবে সংরক্ষিত হয়, তাই AI কখনোই পুরোনো পণ্য স্টকে আছে বলে দাবি করবে না।
+        </p>
+        {pageReadError && <p className="bg-red-50 text-red-700 text-sm p-3 rounded-lg mb-3">{pageReadError}</p>}
+        {pageReadResult && <p className="bg-green-50 text-green-800 text-sm p-3 rounded-lg mb-3">{pageReadResult}</p>}
+        <button onClick={doPageRead} disabled={pageReading} className="text-white px-5 py-2.5 rounded-lg text-sm font-bold disabled:opacity-50" style={{ background: "linear-gradient(90deg,#0051F6,#8B35F6)" }}>
+          {pageReading ? "পেজ পড়া হচ্ছে… ⏳" : "📖 পেজ পড়ুন"}
+        </button>
+        {pageReadItems.length === 0 ? (
+          <p className="text-sm text-slate-500 mt-3">পর্যালোচনার অপেক্ষায় কোনো পণ্য নেই। পেজ পড়লে পাওয়া পণ্যগুলো এখানে দেখাবে।</p>
+        ) : (
+          <div className="space-y-3 mt-4">
+            {pageReadItems.map((item) => (
+              <div key={item.id} className="border rounded-lg p-3 bg-white">
+                <div className="flex gap-3">
+                  {item.photo_url && (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={item.photo_url} alt={item.name} className="w-20 h-20 object-cover rounded-lg shrink-0" />
+                  )}
+                  <div className="flex-1 space-y-2">
+                    <input
+                      value={editName[item.id] ?? item.name}
+                      onChange={(e) => setEditName((p) => ({ ...p, [item.id]: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-1.5 font-bold"
+                      placeholder="পণ্যের নাম"
+                    />
+                    <div className="flex gap-2 items-center">
+                      <label className="text-sm text-slate-600 shrink-0">দাম (টাকা)</label>
+                      <input
+                        value={editPrice[item.id] ?? (item.price_paisa != null ? String(item.price_paisa / 100) : "")}
+                        onChange={(e) => setEditPrice((p) => ({ ...p, [item.id]: e.target.value }))}
+                        className="w-32 border rounded-lg px-3 py-1.5"
+                        placeholder="দাম নেই"
+                        inputMode="decimal"
+                      />
+                      {item.price_paisa == null && <span className="text-xs text-amber-700 bg-amber-100 rounded px-2 py-1">পোস্টে দাম ছিল না — দাম বানিয়ে লেখা হয়নি</span>}
+                    </div>
+                    <textarea
+                      value={editDesc[item.id] ?? item.description ?? ""}
+                      onChange={(e) => setEditDesc((p) => ({ ...p, [item.id]: e.target.value }))}
+                      className="w-full border rounded-lg px-3 py-1.5 text-sm"
+                      rows={2}
+                      placeholder="বিবরণ"
+                    />
+                    {item.source_post_url && (
+                      <a href={item.source_post_url} target="_blank" rel="noreferrer" className="text-xs text-blue-700 underline">মূল পোস্ট দেখুন</a>
+                    )}
+                  </div>
+                </div>
+                <div className="flex gap-2 mt-3">
+                  <button onClick={() => confirmPageRead(item)} className="text-white px-4 py-2 rounded-lg text-sm font-bold" style={{ background: "#0051F6" }}>✅ নিশ্চিত করুন — AI শিখবে</button>
+                  <button onClick={() => rejectPageRead(item)} className="bg-red-50 text-red-700 px-4 py-2 rounded-lg text-sm">✖ বাতিল</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
 
       {/* Knowledge book */}
       <h2 className="text-xl font-bold mb-3">{t("teach.bookTitle", "Knowledge Book", "জ্ঞানের বই (Knowledge Book)")}</h2>

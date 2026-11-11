@@ -53,5 +53,7 @@ export async function callClaude(prompt: string, model?: string): Promise<Gemini
     text,
     inputTokens: data.usage?.input_tokens ?? 0,
     outputTokens: data.usage?.output_tokens ?? 0,
+    // Claude prompt caching is not wired here — nothing is ever cached.
+    cachedInputTokens: 0,
   };
 }

@@ -53,5 +53,7 @@ export async function callGroq(prompt: string, model?: string): Promise<GeminiRe
     text,
     inputTokens: data.usage?.prompt_tokens ?? 0,
     outputTokens: data.usage?.completion_tokens ?? 0,
+    // Groq has no prompt caching — nothing is ever served from cache.
+    cachedInputTokens: 0,
   };
 }

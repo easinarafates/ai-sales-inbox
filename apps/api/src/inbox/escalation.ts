@@ -11,6 +11,20 @@
  *  - Anger: a curated, conservative keyword list (Bengali + English,
  *    incl. common Romanized Bengali). A plain 'refund' request or a
  *    normal complaint ("দাম বেশি") is NOT anger and never escalates.
+ *  - Abuse / swearing (2026-11-11): a curated blocklist of Bengali
+ *    gali (Bengali script + Romanized) and English swear words, added
+ *    because the anger list had NO swear words at all — a customer
+ *    swearing in Bengali sailed straight through to the AI. Matching
+ *    is conservative: Bengali-script stems are unambiguous multi-
+ *    character slurs (never the bare word 'বাল' — it hides inside
+ *    'বালক' — and never bare 'হারাম', a normal religious word; only
+ *    'হারামি'/'হারামজাদা'), English/Romanized words are whole-word
+ *    only. Mild words ('damn', 'hell', 'crap') are deliberately NOT
+ *    in the list. One known edge: 'শালা' is also 'brother-in-law'
+ *    ("আমার শালা একটা শার্ট কিনবে" would escalate) — accepted,
+ *    because as an insult it is far more common in angry chats, and
+ *    a false positive only hands the chat to a human, it never loses
+ *    a reply or burns credit.
  *  - Off-topic: a curated phrase list (Bengali + English + Romanized)
  *    for questions clearly outside the shop's scope — personal
  *    questions about the AI ("তুমি ছেলে নাকি মেয়ে?") and unrelated
@@ -60,15 +74,61 @@ const ANGER_WORDS = [
 const ANGER_WORD_RE = new RegExp(`\\b(${ANGER_WORDS.join('|')})\\b`, 'i');
 
 /**
- * Does this customer message read as angry / frustrated? Conservative
- * by design: only the listed words trigger it. A plain refund request,
- * a price complaint, or a normal question never matches.
+ * Bengali abuse / swearing — substring match (stems cover inflections:
+ * 'চোদ' → চোদা/চোদন, 'শালা' → শালার). Every entry is an unambiguous
+ * slur: no bare 'বাল' (hides inside 'বালক', boy) and no bare 'হারাম'
+ * (a normal word — only the insult forms 'হারামি' / 'হারামজাদা').
+ */
+const BENGALI_ABUSE_STEMS = [
+  'বোকাচোদা', // "stupid fucker"
+  'মাদারচোদ', // "motherfucker"
+  'বাইনচোদ', // "sister-fucker"
+  'চোদ', // vulgar verb stem (চোদা / চোদন)
+  'চুদ', // vulgar verb stem, alt. spelling (চুদা)
+  'চুতিয়া', // "idiot / fucker" (Romanized: chutia)
+  'খানকি', // slur for a woman
+  'মাগি', // slur for a woman
+  'হারামজাদা', // "bastard" (lit. born out of wedlock)
+  'হারামি', // "bastard / scoundrel"
+  'শালা', // "bastard" — also 'brother-in-law', see the header note
+  'কুত্তা', // "dog" (as an insult)
+  'শুয়োর', // "pig" (as an insult)
+  'বেজন্মা', // "bastard" (lit. born out of wedlock)
+  'নটির পোলা', // "son of a prostitute"
+];
+
+/**
+ * English + Romanized-Bengali swear words — whole-word match only, so
+ * 'shit' never fires inside another word. Mild words ('damn', 'hell',
+ * 'crap') are deliberately NOT here.
+ */
+const ABUSE_WORDS = [
+  // English swearing.
+  'fuck', 'fucked', 'fucking', 'shit', 'bitch', 'bastard', 'asshole',
+  'motherfucker', 'dick', 'slut', 'whore',
+  // Romanized Bengali gali, as customers actually type it (incl.
+  // common spelling variants: bokachuda, madarchud, chutiya, khankir).
+  'bokachoda', 'bokachuda', 'madarchod', 'madarchud', 'bainchod', 'bainchud',
+  'chod', 'choda', 'chud', 'chutia', 'chutiya', 'khanki', 'khankir',
+  'magi', 'harami', 'haramzada', 'haramzadi', 'sala', 'kutta', 'shuor',
+  'bejanma', 'boka',
+];
+
+const ABUSE_WORD_RE = new RegExp(`\\b(${ABUSE_WORDS.join('|')})\\b`, 'i');
+
+/**
+ * Does this customer message read as angry / frustrated, or is it
+ * abusive / swearing? Conservative by design: only the listed words
+ * trigger it. A plain refund request, a price complaint, or a normal
+ * question never matches.
  */
 export function detectAnger(text: string | null | undefined): boolean {
   if (!text) return false;
   const lower = text.toLowerCase();
   if (BENGALI_ANGER_STEMS.some((stem) => lower.includes(stem))) return true;
-  return ANGER_WORD_RE.test(text);
+  if (BENGALI_ABUSE_STEMS.some((stem) => lower.includes(stem))) return true;
+  if (ANGER_WORD_RE.test(text)) return true;
+  return ABUSE_WORD_RE.test(text);
 }
 
 /** The canonical can't-answer phrases the prompt itself tells the AI to use. */
@@ -106,8 +166,12 @@ const SHOP_SCOPE_SIGNALS = [
   // Bengali: products, price, orders, delivery, payment, shop.
   'দাম', 'টাকা', 'ডেলিভারি', 'অর্ডার', 'ক্যাশ', 'বিকাশ', 'নগদ', 'রকেট',
   'ঠিকানা', 'স্টক', 'ছাড়', 'কুরিয়ার', 'টি-শার্ট', 'টিশার্ট', 'শার্ট',
-  'প্যান্ট', 'জিন্স', 'দোকান', 'প্রোডাক্ট', 'পণ্য', 'সাইজ', 'কালার',
+  'প্যান্ট', 'জিন্স', 'জামা', 'দোকান', 'প্রোডাক্ট', 'পণ্য', 'সাইজ', 'কালার',
   'রঙ', 'পেমেন্ট', 'পার্সেল', 'ট্র্যাকিং',
+  // Buying verbs — a purchase / complaint about a purchase is shop scope
+  // even with no product word ("একটা কিনেছিলাম, সেলাই খুলে গেছে").
+  // Word forms, never the bare stem 'কিন' — it hides inside 'কিন্তু'.
+  'কিনতে', 'কিনেছি', 'কিনবো', 'কিনলাম', 'কিনে', 'কেনা', 'কিনুন',
   // English / Romanized.
   'price', 'delivery', 'order', 'cash', 'bkash', 'stock', 'discount',
   'courier', 't-shirt', 'tshirt', 'shirt', 'pant', 'jeans', 'shop',
@@ -174,6 +238,54 @@ const ENGLISH_OFF_TOPIC_WORDS = [
 const OFF_TOPIC_WORD_RE = new RegExp(`\\b(${ENGLISH_OFF_TOPIC_WORDS.join('|')})\\b`, 'i');
 
 /**
+ * Famous Bengali song / poem opening lines (2026-11-11) — the owner
+ * pasted the national anthem ("আমার সোনার বাংলা...") and the AI
+ * claimed to understand while understanding nothing: the lyrics
+ * contain no trigger phrase, so the lists above never fired. A message
+ * that IS (or contains) one of these lines is lyrics / poetry, never
+ * a shop question. Substring match — the anthem is usually pasted
+ * with its first line intact.
+ */
+const FAMOUS_BENGALI_OPENINGS = [
+  'আমার সোনার বাংলা', // Bangladesh national anthem
+  'আমার ভাইয়ের রক্তে রাঙানো', // Ekushey song
+  'ধনধান্যে পুষ্পে ভরা', // Dwijendralal Ray
+  'আমি বাংলায় গান গাই', // Pratul Mukhopadhyay
+  'ও আমার দেশের মাটি', // Tagore
+  'মোরা একটি ফুলকে বাঁচাবো বলে', // Gobinda Haldar
+  'যদি তোর ডাক শুনে কেউ না আসে', // Tagore — একলা চলো রে
+  'জনগণমন', // Indian national anthem (Bengali script)
+  'চল চল চল', // Nazrul
+];
+
+/**
+ * "Long non-shop Bengali text" layer (2026-11-11) — catches song
+ * lyrics, poems and long random Bengali text that carry no trigger
+ * phrase at all. Runs AFTER the shop-scope guard, so a long order /
+ * complaint that mentions any product, price, order, delivery or
+ * payment word can never match. Three shapes, all conservative:
+ *  - a repeated line (refrain / chorus) in >= 60 Bengali chars;
+ *  - 3+ lines with >= 120 Bengali chars (verse structure);
+ *  - one block of >= 200 Bengali chars with no shop signal at all.
+ * Greetings and short messages are far below every threshold.
+ */
+function isLongNonShopBengaliText(text: string): boolean {
+  const t = text.trim();
+  const bengaliChars = (t.match(/[\u0980-\u09FF]/g) || []).length;
+  if (bengaliChars < 60) return false;
+  const lines = t.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+  const seen = new Set<string>();
+  for (const line of lines) {
+    if (line.length < 8) continue;
+    if (seen.has(line)) return true; // repeated line = refrain / chorus
+    seen.add(line);
+  }
+  if (lines.length >= 3 && bengaliChars >= 120) return true;
+  if (bengaliChars >= 200) return true;
+  return false;
+}
+
+/**
  * Is this customer message clearly outside the shop's scope? The
  * shop-scope guard runs first, then the curated phrase lists. Greetings
  * and every shop question (products, price, stock, orders, delivery,
@@ -183,10 +295,89 @@ export function detectOffTopic(text: string | null | undefined): boolean {
   if (!text) return false;
   const lower = text.toLowerCase();
   if (SHOP_SCOPE_SIGNALS.some((signal) => lower.includes(signal))) return false;
+  if (FAMOUS_BENGALI_OPENINGS.some((line) => lower.includes(line))) return true;
   if (BENGALI_OFF_TOPIC_PHRASES.some((phrase) => lower.includes(phrase))) return true;
   if (ROMANIZED_OFF_TOPIC_PHRASES.some((phrase) => lower.includes(phrase))) return true;
   if (ENGLISH_OFF_TOPIC_PHRASES.some((phrase) => lower.includes(phrase))) return true;
-  return OFF_TOPIC_WORD_RE.test(text);
+  if (OFF_TOPIC_WORD_RE.test(text)) return true;
+  return isLongNonShopBengaliText(text);
+}
+
+// ---------------------------------------------------------------------------
+// Repeated-nonsense guard (2026-11-11) — deterministic, pre-AI.
+//
+// The owner asked: a customer who "talks nonsense" over and over must
+// not burn AI credit on every message. Short one-off Bengali nonsense
+// has NO safe deterministic rule — Bengali has no allowlist that can
+// tell a real word from a made-up one without false-positiving on
+// real shop words — so this guard does NOT try to judge one message.
+// What IS safely detectable is REPETITION: the same long, non-shop,
+// non-greeting message arriving again and again. A real shop message
+// is never the same long non-shop text three times running:
+//  - shop questions carry a shop-scope signal ('দাম', 'অর্ডার', ...)
+//    and are excluded by the same guard detectOffTopic uses;
+//  - greetings, thanks and short acks ("হ্যাঁ", "ok") are excluded
+//    by exact match / by the 8-character minimum;
+//  - digits-only / emoji-only messages (a phone number, a 👍) are
+//    excluded — they carry no letters at all.
+// `previousBodies` is the most recent messages in the conversation —
+// in production the current message is already saved when the agent
+// runs, so the caller passes the three newest rows (the current
+// message + the two previous repeats); for a batch it passes the rest
+// of the batch. The caller also requires all of them to be inbound,
+// so an AI reply between two repeats breaks the streak — a customer
+// who repeats a question the AI already answered is not "talking
+// nonsense", they are waiting.
+// ---------------------------------------------------------------------------
+
+/** Whole messages that are never nonsense, however often repeated. */
+const REPEAT_EXCLUDED_EXACT = new Set([
+  'আসসালামু আলাইকুম', 'আসসালামু', 'আসসালাম', 'সালাম', 'আদাব', 'নমস্কার',
+  'ধন্যবাদ', 'কেমন আছো', 'কেমন আছেন', 'ভালো আছো', 'ভালো আছেন',
+  'hello', 'hi', 'hey', 'salam', 'assalamualaikum', 'alaikum',
+  'thanks', 'thank you', 'ok', 'okay', 'yes', 'no', 'হ্যাঁ', 'না', 'আচ্ছা',
+]);
+
+function normalizeRepeatText(text: string): string {
+  return text.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+/**
+ * Is this message the Nth repeat of the same non-shop message? True
+ * only when the text is long enough to be a real sentence (≥ 8 chars),
+ * has letters, is not a greeting / small-talk, carries no shop-scope
+ * signal, and the two previous messages are both byte-identical to it
+ * after normalisation. Everything else returns false.
+ */
+export function isRepeatedNonShopMessage(
+  text: string | null | undefined,
+  previousBodies: (string | null | undefined)[],
+): boolean {
+  if (!text) return false;
+  const norm = normalizeRepeatText(text);
+  if (norm.length < 8) return false;
+  if (!/[A-Za-z\u0980-\u09FF]/.test(norm)) return false;
+  if (REPEAT_EXCLUDED_EXACT.has(norm)) return false;
+  if (SHOP_SCOPE_SIGNALS.some((signal) => norm.includes(signal))) return false;
+  const prev = previousBodies.filter(Boolean).map((b) => normalizeRepeatText(b as string));
+  if (prev.length < 2) return false;
+  return prev.every((p) => p === norm);
+}
+
+/**
+ * The ONE graceful reply for a clear off-topic message (2026-11-11).
+ * Deterministic — no AI call, no credit burned. Gender-aware, like
+ * every other reply: male → "স্যার", female → "ম্যাডাম", unknown →
+ * neutral "আপনি" (never guessed). It NEVER claims to understand —
+ * the exact fake-understanding line the owner caught on the anthem
+ * lyrics is never in it — it honestly says "বুঝতে পারিনি" and redirects to the shop.
+ * Note: "বুঝতে পারিনি" deliberately does NOT match CANT_ANSWER_RE
+ * ("বুঝতে পারছি না") — this is a sent reply, not an AI can't-answer.
+ */
+export function offTopicReply(gender: 'male' | 'female' | 'unknown'): string {
+  const salutation = gender === 'male' ? 'স্যার' : gender === 'female' ? 'ম্যাডাম' : '';
+  const open = salutation ? `দুঃখিত ${salutation}, এটা বুঝতে পারিনি` : 'দুঃখিত, এটা বুঝতে পারিনি';
+  return `${open} — মনে হচ্ছে ভুল করে মেসেজটি পাঠিয়েছেন। আপনি কি আমাদের প্রোডাক্ট বা অর্ডার সম্পর্কে জানতে চাচ্ছেন?`;
 }
 
 /**
@@ -214,10 +405,13 @@ export async function escalateConversation(
   if (rows.length > 0) {
     console.log(`[escalation] conversation ${conversationId} → waiting (${reason})`);
     if (reason === 'angry_customer' || reason === 'off_topic') {
-      // OWNER NOTIFICATION (2026-11-08): the header bell shows this —
-      // "কাস্টমার রেগে গিয়েছে, আপনি একে সামলান" — with the customer
-      // name and the conversation. Created only when the escalation
-      // actually happened (rows.length > 0), so it can never duplicate.
+      // OWNER NOTIFICATION (2026-11-08, title updated 2026-11-11): the
+      // header bell shows this — "[Customer name] রেগে গিয়েছে" for
+      // anger (the name is in the title itself), "[Customer name]
+      // বিষয়ের বাইরে প্রশ্ন করছে" for off-topic / repeated nonsense —
+      // with the conversation id, so tapping it opens that chat.
+      // Created only when the escalation actually happened
+      // (rows.length > 0), so it can never duplicate.
       // ai_unsure / cant_answer get no bell row (they already make a ticket).
       const owner = await query<{ customer_id: string | null; customer_name: string | null }>(
         workspaceId,
@@ -228,17 +422,22 @@ export async function escalateConversation(
       ).catch(() => ({ rows: [] as { customer_id: string | null; customer_name: string | null }[] }));
       const name = owner.rows[0]?.customer_name ?? 'একজন কাস্টমার';
       if (reason === 'angry_customer') {
+        // The bell reads "[Customer name] রেগে গিয়েছে" — the name is
+        // IN the title itself (2026-11-11, owner request), not only
+        // in the body, so the owner sees who it is without opening it.
         await createNotification(workspaceId, {
           type: 'angry_customer',
-          title: 'কাস্টমার রেগে গিয়েছে',
+          title: `${name} রেগে গিয়েছে`,
           body: `${name} রেগে গিয়েছে — আপনি একে সামলান। চ্যাটটি Waiting-এ আছে।`,
           conversationId,
           customerId: owner.rows[0]?.customer_id ?? null,
         });
       } else {
+        // Off-topic / repeated-nonsense: the name is in the title too,
+        // so the bell row identifies the customer at a glance.
         await createNotification(workspaceId, {
           type: 'off_topic',
-          title: 'কাস্টমার বিষয়ের বাইরে প্রশ্ন করছে',
+          title: `${name} বিষয়ের বাইরে প্রশ্ন করছে`,
           body: `${name} দোকানের বাইরের বিষয়ে প্রশ্ন করছে — চ্যাটটি Waiting-এ আছে, আপনি দেখে নিন।`,
           conversationId,
           customerId: owner.rows[0]?.customer_id ?? null,

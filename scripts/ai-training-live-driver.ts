@@ -149,7 +149,7 @@ async function main(): Promise<void> {
     const text = bodies.map((b) => b.body ?? '').join('\n');
     out.photoNotFound = {
       conversationId, result, state, outBodies: bodies,
-      saysNotOurs: text.includes('আমাদের কাছে এই প্রোডাক্টটি নেই'),
+      saysNotOurs: text.includes('আমাদের কাছে নেই'),
       listsSimilar: text.includes('Jeans') || text.includes('T-shirt') || text.includes('Shirt'),
     };
   }

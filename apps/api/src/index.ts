@@ -2,6 +2,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import cors from 'cors';
 import express from 'express';
+// express-async-errors (security fix M1, 2026-11-11): Express 4 drops
+// errors thrown in async route handlers — the request hangs until the
+// client times out (~60s) instead of getting a 500. This one import
+// patches Express so async errors reach the error middleware below.
+import 'express-async-errors';
 import { config } from './config';
 import { isPgliteMode } from './db/pglite';
 import { authRouter, profileRouter, workspacesRouter } from './auth/routes';
@@ -44,22 +49,52 @@ import { handoverRouter } from './handover/routes';
 import { voiceOrdersRouter } from './voice-orders/routes';
 import { savedRepliesRouter } from './saved-replies/routes';
 import { teamRouter } from './team/routes';
+import { ticketsRouter } from './tickets/routes';
 import { websiteChatRouter } from './website-chat/routes';
 import { setupRouter } from './setup/routes';
 import { aiProvidersRouter } from './ai-providers/routes';
 import { ownerRouter } from './owner/routes';
+import { ownerAiChatRouter } from './owner/ai-chat';
 import { notificationsRouter } from './notifications/routes';
 import { deliveryChargesRouter } from './delivery-charges/routes';
 import { processOwnerWalletDeductions } from './owner/sweep';
 import { processDueHandovers } from './handover/engine';
 import { cronRouter } from './cron/routes';
+import { ensureAiPromptCacheSchema, ensureOwnerAiChatSchema, ensureOwnerPanelManageSchema, ensurePageReadSchema, ensurePhase2BillingSchema, ensureProductVariantsSchema, ensureTasks314151617Schema, ensureTasks789Schema, ensureTopupPurposeSchema, ensureUserPhoneSchema } from './db/migrate-prod';
 
 const app = express();
+// Behind Vercel the real client IP arrives in X-Forwarded-For — trust
+// the first proxy hop so req.ip (used by the login rate limiter) is the
+// visitor, not Vercel's edge.
+app.set('trust proxy', 1);
+// M4: never advertise the framework.
+app.disable('x-powered-by');
 app.use(cors());
+// M4: browser safety headers on every API response (the API only ever
+// returns JSON/JS, so a strict policy is safe here).
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'");
+  next();
+});
 // JSON limit raised for Worker C's base64 media uploads: a 25 MB file is
 // ~34 MB as base64 text, so '1mb' rejected everything over ~1 MB before
 // it reached the upload handler (HTTP 413). 40 MB covers the 25 MB cap.
-app.use(express.json({ limit: '40mb' }));
+// The verify hook stashes the RAW body on webhook requests only —
+// Meta/WhatsApp sign the raw bytes (X-Hub-Signature-256), so the
+// signature check needs them; other routes never pay the memory cost.
+app.use(
+  express.json({
+    limit: '40mb',
+    verify: (req, _res, buf) => {
+      if (typeof req.url === 'string' && req.url.startsWith('/api/webhooks/')) {
+        (req as unknown as { rawBody?: Buffer }).rawBody = buf;
+      }
+    },
+  }),
+);
 
 // Worker C — public media uploads (LOCAL / cPanel ONLY): files are
 // stored under <api-working-dir>/uploads and served as GET /uploads/<file>
@@ -85,6 +120,37 @@ app.get('/api/health', (_req, res) => {
   res.json({ status: 'ok', service: 'ai-sales-inbox-api', phase: '1+2+3' });
 });
 
+// YEARBITO Phase 2: production (Neon) needs migration 35 applied, and
+// the only path that works in this environment is the API applying it
+// itself on boot (see db/migrate-prod.ts — `vercel env pull` redacts
+// the production DATABASE_URL, so psql cannot be run from here).
+// Start it eagerly at boot; the middleware below also awaits it, so the
+// first request waits for the schema instead of hitting a missing
+// column. PGlite mode is a no-op (the adapter applies the .sql files).
+void ensurePhase2BillingSchema();
+void ensureProductVariantsSchema();
+void ensureTasks789Schema();
+void ensureTasks314151617Schema();
+void ensureAiPromptCacheSchema();
+void ensureUserPhoneSchema();
+void ensureTopupPurposeSchema();
+void ensurePageReadSchema();
+void ensureOwnerAiChatSchema();
+void ensureOwnerPanelManageSchema();
+app.use(async (_req, _res, next) => {
+  await ensurePhase2BillingSchema();
+  await ensureProductVariantsSchema();
+  await ensureTasks789Schema();
+  await ensureTasks314151617Schema();
+  await ensureAiPromptCacheSchema();
+  await ensureUserPhoneSchema();
+  await ensureTopupPurposeSchema();
+  await ensurePageReadSchema();
+  await ensureOwnerAiChatSchema();
+  await ensureOwnerPanelManageSchema();
+  next();
+});
+
 // Vercel cron endpoint — mounted BEFORE the auth routers below (same
 // prefix-claim problem as website-chat / owner): it has its own
 // CRON_SECRET check and must never 401 behind requireAuth.
@@ -107,6 +173,14 @@ app.use('/api', websiteChatRouter); // /api/website-chat/* (widget.js + message 
 // the specific /api/owner prefix (not bare /api) matters: the router's own
 // requireOwner middleware must only run for /api/owner/* requests, never
 // for the rest of the API.
+// Owner AI chat ("AI Sales Manager") mounts BEFORE the Owner Panel
+// below, at its own more-specific prefix: the owner router's
+// requireOwner platform-owner gate would otherwise 403 every workspace
+// owner here (this chat is workspace-owner gated — requireAuth +
+// requireWorkspaceOwner, the Task 14 AI Providers pattern — not
+// platform-owner gated). Mounting at the specific /api/owner/ai-chat
+// prefix (not bare /api) matters for the same reason.
+app.use('/api/owner/ai-chat', ownerAiChatRouter); // /api/owner/ai-chat/* (AI Sales Manager — workspace owner only)
 app.use('/api/owner', ownerRouter); // /api/owner/* (Owner Panel — platform owner only)
 
 app.use('/api/auth', authRouter);
@@ -153,10 +227,18 @@ app.use('/api', handoverRouter); // /api/inbox/:id/handover, /return-to-ai, /inb
 app.use('/api', voiceOrdersRouter); // POST /api/inbox/:id/voice-note, GET /api/inbox/:id/voice-notes
 app.use('/api', savedRepliesRouter); // /api/saved-replies
 app.use('/api', teamRouter); // /api/team/invites
+app.use('/api', ticketsRouter); // /api/tickets (list)
 app.use('/api', setupRouter); // /api/setup/*
-app.use('/api', aiProvidersRouter); // /api/ai-providers (get + select)
+// MOUNT ORDER (angry-customer fix, 2026-11-11): notifications and
+// delivery-charges MUST sit above aiProvidersRouter. That router runs
+// router-level requireOwner on a bare /api mount, so anything mounted
+// after it is shadowed — a shop owner's GET /api/notifications hit
+// requireOwner first and 403'd ("Owner access only"), leaving every
+// non-platform-owner shop with an empty bell. These two mounts use
+// their own auth and must be reached before the platform-owner gate.
 app.use('/api/notifications', notificationsRouter); // /api/notifications (header bell — owner escalation alerts)
 app.use('/api/delivery-charges', deliveryChargesRouter); // /api/delivery-charges (owner-set delivery charges per zone)
+app.use('/api', aiProvidersRouter); // /api/ai-providers (get + select) — platform-owner only; keep LAST among /api mounts
 
 app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 

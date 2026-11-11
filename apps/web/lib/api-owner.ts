@@ -3,6 +3,18 @@
 // All money is in paisa; display via fmtTaka from @/lib/i18n.
 import { api } from "./api";
 
+export interface OwnerDeduction {
+  id: string;
+  createdAt: string;
+  provider: string | null;
+  shopName: string;
+  shopChargePaisa: number;
+  ownerCostPaisa: number;
+  profitPaisa: number;
+  inputTokens: number | null;
+  outputTokens: number | null;
+}
+
 export interface OwnerOverview {
   shops: { total: number; active: number };
   activeSubscriptions: number;
@@ -17,6 +29,7 @@ export interface OwnerOverview {
     lowBalance: boolean;
   };
   trend: { date: string; revenuePaisa: number; apiCostPaisa: number }[];
+  recentDeductions?: OwnerDeduction[];
 }
 
 export interface OwnerShop {
@@ -113,6 +126,9 @@ export interface OwnerWalletTx {
   reference: string | null;
   note: string | null;
   createdAt: string;
+  shopName?: string;
+  shopChargePaisa?: number;
+  profitPaisa?: number;
 }
 
 export interface OwnerWallet {
@@ -146,8 +162,24 @@ export interface OwnerDeposit {
   createdAt: string;
 }
 
+export interface OwnerPayment {
+  id: string;
+  workspaceId: string;
+  shopName: string;
+  requesterEmail: string | null;
+  amountPaisa: number;
+  method: string;
+  transactionId: string;
+  status: string;
+  reason: string | null;
+  purpose: { kind: string; slug?: string; replies?: number } | null;
+  createdAt: string;
+}
+
 export const ownerApi = {
   me: () => api.get<{ isOwner: boolean }>("/api/owner/me"),
+  payments: (status: string = "pending") =>
+    api.get<{ payments: OwnerPayment[] }>(`/api/owner/payments?status=${encodeURIComponent(status)}`),
   setup: (email: string, setupToken?: string) =>
     api.post<{ owner: { id: string; email: string; name: string | null }; message: string }>("/api/owner/setup", {
       email,

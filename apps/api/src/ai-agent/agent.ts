@@ -32,27 +32,29 @@
  *   chosen provider. Providers with no key are never selectable as live.
  * Demo replies are built ONLY from product/knowledge rows (via tools),
  * clearly labelled "[ডেমো AI — আসল Gemini নয়]", charged at the flat
- * 10 paisa in ai_usage_ledger like any other reply when over the plan's
+ * 22 paisa in ai_usage_ledger like any other reply when over the plan's
  * included limit — and 0 paisa when inside it (see the subscription gate
  * in processBatch). Prices/stock are never invented.
  */
 import { pool, query, queryOne } from '../db/pool';
 import { checkAiReplyAllowance, UPGRADE_NOTICE, type AiReplyAllowance } from '../subscriptions/service';
-import { buildUserPrompt, SYSTEM_PROMPT, type AgentContext } from './prompts';
+import { buildStableContext, buildVariablePrompt, SYSTEM_PROMPT, type AgentContext } from './prompts';
+import { getOrCreateWorkspaceCache, hashStableContext } from './gemini-cache';
 import { getCustomerOrderSummary, isOrderStatusQuestion, type CustomerOrderSummary } from '../orders/customer-memory';
-import { deliveryChargeSummaryText, getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
+import { deliveryChargeSummaryText, getBusinessDistrict, getDeliveryChargeRules, resolveDeliveryCharge } from '../delivery-charges/service';
 import { addressingLine, genderSalutation, normalizeCustomerGender, type CustomerGender } from '../customers/gender';
 import { runTool, type ToolDb } from './tools';
 import {
-  callAiForWorkspace,
+  callAiForWorkspaceSplit,
   callProvider,
   resolveWorkspaceAi,
   type AiCallOutcome,
   type WorkspaceAiChoice,
 } from './providers';
 import { computeAiCostPaisa } from './pricing';
+import { config } from '../config';
 import { deliverOutgoingMessage, deliverOutgoingImageMessage, type DeliveryResult } from '../channels/meta-send';
-import { detectAnger, detectGibberish, detectOffTopic, escalateConversation, isCantAnswerReply } from '../inbox/escalation';
+import { detectAnger, detectGibberish, detectOffTopic, escalateConversation, isCantAnswerReply, isRepeatedNonShopMessage, offTopicReply } from '../inbox/escalation';
 import {
   BENGALI_PRODUCT_ALIASES,
   detectAcknowledgment,
@@ -68,7 +70,7 @@ import {
   ROMANIZED_PRODUCT_ALIASES,
 } from './detect-intent';
 import { extractOrderNumber, requestOrderCancellation } from '../orders/cancel';
-import { analyseCustomerImage, transcribeCustomerAudio, uploadMediaToBlob } from './media';
+import { analyseCustomerImage, transcribeCustomerAudio, uploadMediaToBlob, VISION_MATCH_CONFIDENCE_THRESHOLD } from './media';
 import { renderInvoiceImageForOrder } from '../orders/invoice-image';
 
 /** Flat MVP estimate per AI reply (paisa). Real per-token pricing plugs in here later. Must stay under the 20-paisa gate. */
@@ -492,8 +494,8 @@ async function sendOrderConfirmationExtras(
 
 /** Deduct the reply cost; returns false if the balance ran out mid-flight.
  * Groq replies cost 0 paisa when inside the plan (free tier + included);
- * over the plan's included replies they cost the flat 10 paisa overage
- * (any provider). Gemini/demo replies cost the flat 10 paisa when over
+ * over the plan's included replies they cost the flat 22 paisa overage
+ * (any provider). Gemini/demo replies cost the flat 22 paisa when over
  * the limit, 0 when included. The provider AND the included_in_plan flag
  * are recorded in ai_usage_ledger with each entry, along with the model,
  * the provider's REAL token cost (providerCostPaisa — Groq always 0,
@@ -509,8 +511,39 @@ async function chargeForReply(
   costPaisa: number = AI_REPLY_COST_PAISA,
   provider: string = 'gemini',
   includedInPlan = false,
-  opts: { model?: string; providerCostPaisa?: number; fallbackFrom?: string | null } = {},
+  opts: { model?: string; providerCostPaisa?: number; fallbackFrom?: string | null; allowanceMode?: AiReplyAllowance['mode']; cachedInputTokens?: number } = {},
 ): Promise<boolean> {
+  // YEARBITO Phase 2 — package mode: the reply is paid with a
+  // reply-package credit, not wallet money. One credit is consumed
+  // (only if one is left — otherwise the caller must not have allowed
+  // the reply), the ledger records cost 0 + package_credit_used, and
+  // NO wallet transaction is written (the money was already taken
+  // when the package was bought).
+  if (opts.allowanceMode === 'package') {
+    const used = await query(
+      workspaceId,
+      'UPDATE workspaces SET reply_credits = reply_credits - 1, updated_at = now() WHERE id = $1 AND reply_credits > 0',
+      [workspaceId],
+    );
+    if (used.rowCount === 0) return false;
+    await query(
+      workspaceId,
+      `INSERT INTO ai_usage_ledger (workspace_id, conversation_id, input_tokens, output_tokens, cost_paisa, provider, included_in_plan, model, provider_cost_paisa, fallback_from, package_credit_used, cached_input_tokens)
+       VALUES ($1, $2, $3, $4, 0, $5, FALSE, $6, $7, $8, TRUE, $9)`,
+      [
+        workspaceId,
+        conversationId,
+        inputTokens,
+        outputTokens,
+        provider,
+        opts.model ?? '',
+        opts.providerCostPaisa ?? 0,
+        opts.fallbackFrom ?? null,
+        opts.cachedInputTokens ?? 0,
+      ],
+    );
+    return true;
+  }
   const deducted = await query(
     workspaceId,
     'UPDATE workspaces SET balance_paisa = balance_paisa - $1, updated_at = now() WHERE id = $2 AND balance_paisa >= $1',
@@ -519,8 +552,8 @@ async function chargeForReply(
   if (deducted.rowCount === 0) return false;
   await query(
     workspaceId,
-    `INSERT INTO ai_usage_ledger (workspace_id, conversation_id, input_tokens, output_tokens, cost_paisa, provider, included_in_plan, model, provider_cost_paisa, fallback_from)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+    `INSERT INTO ai_usage_ledger (workspace_id, conversation_id, input_tokens, output_tokens, cost_paisa, provider, included_in_plan, model, provider_cost_paisa, fallback_from, cached_input_tokens)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
     [
       workspaceId,
       conversationId,
@@ -532,6 +565,7 @@ async function chargeForReply(
       opts.model ?? '',
       opts.providerCostPaisa ?? 0,
       opts.fallbackFrom ?? null,
+      opts.cachedInputTokens ?? 0,
     ],
   );
   await query(
@@ -541,6 +575,16 @@ async function chargeForReply(
   );
   return true;
 }
+
+/**
+ * Wallet charge for one reply under the current allowance (YEARBITO
+ * Phase 2 — user decision 2026-11-11: FLAT prices). package → 0 (a
+ * package credit is consumed instead); included → 0; overage → flat
+ * 22 paisa (grandfathered); payg → flat 23 paisa. The provider's
+ * real per-token cost is recorded in the ledger for transparency,
+ * but the wallet is always charged the flat allowance price.
+ * Deterministic/demo replies cost the same flat price as any reply.
+ */
 
 function isTestCustomer(channelIdentities: unknown): boolean {
   if (!Array.isArray(channelIdentities)) return false;
@@ -558,13 +602,27 @@ function isTestCustomer(channelIdentities: unknown): boolean {
 // HTTP 403 because billing is not enabled on the Google Cloud project).
 // Every word of the reply comes from product/knowledge rows in the DB;
 // prices and stock are read from the tools, never invented. Every demo
-// reply is labelled and charged at the flat 10 paisa like a real reply.
+// reply is labelled and charged at the flat 22 paisa like a real reply.
 // ---------------------------------------------------------------------------
 
 const DEMO_LABEL = '[ডেমো AI — আসল Gemini নয়] ';
 
 function taka(paisa: number): string {
   return `৳${(paisa / 100).toLocaleString('en-IN')}`;
+}
+
+/**
+ * Variant prices for a deterministic reply: "M ৳৪০০, L ৳৪৫০" — the
+ * variant's own price, never the base price. Empty string when the
+ * product has no variants (the caller then shows the base price).
+ */
+function variantPriceText(p: {
+  variant_type: string | null;
+  variants: { value: string; price_paisa: number; stock?: number | null }[] | null;
+}): string {
+  const variants = Array.isArray(p.variants) ? p.variants : [];
+  if (variants.length === 0) return '';
+  return variants.map((v) => `${v.value} ${taka(Number(v.price_paisa))}`).join(', ');
 }
 
 const DEMO_STOPWORDS = new Set([
@@ -642,6 +700,7 @@ async function runDemoReply(
     await sendChannelMessage(workspaceId, conversationId, channelPlatform, orderReply, { liveSend: false });
     const charged = await chargeForReply(
       workspaceId, conversationId, 0, 0, allowance.costPaisa, 'demo', allowance.mode === 'included',
+      { allowanceMode: allowance.mode },
     );
     return { replied: true, reason: 'demo_mode', confidence: 0.9, costPaisa: charged ? allowance.costPaisa : 0 };
   }
@@ -791,9 +850,11 @@ async function runDemoReply(
       [demoCreatedOrder.productId], products, gender, { liveSend: false },
     );
   }
-  // Included in the plan → 0 paisa; over the limit → flat 10 paisa overage.
+  // Included / package → 0 paisa; over the limit → flat 22 paisa overage;
+  // pay-as-you-go → flat 23 paisa (same as any reply).
   const charged = await chargeForReply(
     workspaceId, conversationId, 0, 0, allowance.costPaisa, 'demo', allowance.mode === 'included',
+    { allowanceMode: allowance.mode },
   );
   return {
     replied: true,
@@ -851,7 +912,7 @@ export async function processBatch(
   });
   // NOTE: no early balance check here — the subscription gate below decides.
   // Replies included in the plan are free (0 paisa) even with a 0 wallet
-  // balance; only over-limit replies need wallet money (10 paisa).
+  // balance; only over-limit replies need wallet money (22 paisa).
   if (!conversation) return { replied: false, reason: 'conversation_not_found' };
   if (conversation.mode !== 'ai') return { replied: false, reason: 'human_mode' };
 
@@ -862,6 +923,15 @@ export async function processBatch(
   // subscription gate below (which owns sending + charging); the body
   // stays "[ভয়েস মেসেজ]" so the checks below cannot misfire on it.
   // Voice REPLY (the AI speaking back) is not built — the reply is text.
+  // COST NOTE (2026-11-11): an angry voice note DOES cost one Gemini
+  // transcription call before the anger check can see it — the words
+  // are unknowable until transcribed, so there is no way to detect
+  // anger in audio without that call. The transcription writes NO
+  // ledger row and charges NO wallet credit (ledger rows are only
+  // written by chargeForReply, which the anger path never reaches),
+  // and the reply-generation cost is still zero: the chat escalates
+  // to Waiting with no AI reply. Only the transcription itself is
+  // unavoidable.
   let voiceFailed = false;
   let voiceNote = false;
   const audioMsg = [...batchedMessages].reverse().find((m) => m.mediaType === 'audio' && m.mediaUrl);
@@ -898,16 +968,102 @@ export async function processBatch(
   // the subscription gate — so the AI never answers (and never burns
   // credit on) questions outside the shop's scope: personal questions
   // about the AI ("তুমি ছেলে নাকি মেয়ে?"), weather, sports, politics,
-  // jokes, songs, movies, news, trivia. The chat moves to the Inbox
-  // "Waiting" tab (status='waiting', mode='human') with the reason
-  // stored, plus an unanswered record so the owner can see the question
-  // in Teach AI. Greetings and every shop question (products, price,
-  // orders, delivery, location, payment) never match the off-topic list
-  // (see inbox/escalation.ts) and flow through normally.
+  // jokes, songs, movies, news, trivia. NEW (2026-11-11): ONE graceful
+  // deterministic reply goes out FIRST — the owner caught the AI
+  // answering the national anthem with "আমি বুঝতে পারছি" while
+  // understanding nothing. The reply is a fixed template (offTopicReply,
+  // inbox/escalation.ts): no AI call, no credit burned, and it honestly
+  // says "বুঝতে পারিনি" instead of faking understanding. The chat then
+  // moves to the Inbox "Waiting" tab (status='waiting', mode='human')
+  // with the reason stored, plus an unanswered record so the owner can
+  // see the question in Teach AI — so it does not keep chatting.
+  // The customer row is fetched here (gender + test flag) because this
+  // block runs before the normal customer fetch below.
   if (detectOffTopic(batchedText)) {
+    const [offTopicCustomer, offTopicChannel] = await Promise.all([
+      conversation.customer_id
+        ? queryOne<{ gender: string | null; channel_identities: unknown }>(
+            workspaceId,
+            'SELECT gender, channel_identities FROM customers WHERE workspace_id = $1 AND id = $2',
+            [workspaceId, conversation.customer_id],
+          )
+        : Promise.resolve(null),
+      conversation.channel_id
+        ? queryOne<{ platform: string }>(
+            workspaceId,
+            'SELECT platform FROM channels WHERE workspace_id = $1 AND id = $2',
+            [workspaceId, conversation.channel_id],
+          )
+        : Promise.resolve(null),
+    ]);
+    let replied = false;
+    // Practice mode answers only the owner's test messages — same rule
+    // as the normal path below.
+    if (!workspace.practice_mode || isTestCustomer(offTopicCustomer?.channel_identities)) {
+      await sendChannelMessage(
+        workspaceId,
+        conversationId,
+        offTopicChannel?.platform ?? null,
+        offTopicReply(normalizeCustomerGender(offTopicCustomer?.gender)),
+      ).catch((err) => console.error('[agent] off-topic reply failed:', (err as Error).message));
+      replied = true;
+    }
     await escalateConversation(workspaceId, conversationId, 'off_topic');
     await recordUnanswered(workspaceId, batchedText);
-    return { replied: false, reason: 'escalated_off_topic' };
+    return { replied, reason: 'escalated_off_topic' };
+  }
+
+  // Repeated nonsense? The SAME long, non-shop, non-greeting message
+  // three times running — either batched into this one run (rapid
+  // repeats) or spaced across runs (identical to the two most recent
+  // messages in the conversation, which must both be inbound, so an
+  // AI reply between two repeats breaks the streak). Deterministic
+  // and pre-AI, like anger / off-topic: NO reply, NO AI call, NO
+  // credit burned — the chat moves to Waiting as off_topic, so the
+  // owner gets the bell notification and takes over. The guard itself
+  // (isRepeatedNonShopMessage, inbox/escalation.ts) is what keeps
+  // this safe: shop questions, greetings, short acks and digits-only
+  // messages can never match. This is the one defensible rule for
+  // "talks nonsense": a single short Bengali nonsense message has no
+  // safe deterministic test (no allowlist can tell a real Bengali
+  // word from a made-up one), so single messages still go to the AI —
+  // only the repetition escalates.
+  const latestBody = batchedMessages.length > 0 ? (batchedMessages[batchedMessages.length - 1]?.body ?? '') : '';
+  let repeatedNonsense = false;
+  if (latestBody) {
+    // (a) Rapid repeats batched into this run: 3+ identical bodies.
+    const batchBodies = batchedMessages.map((m) => m.body);
+    if (isRepeatedNonShopMessage(latestBody, batchBodies.slice(0, -1))) {
+      repeatedNonsense = true;
+    } else {
+      // (b) Spaced repeats: the three most recent messages overall
+      // must all be inbound and identical to this one. The current
+      // message is already saved by the webhook before the queue runs,
+      // so in production those three rows are the current message +
+      // the two previous repeats — i.e. this is the THIRD identical
+      // message, not the second. An AI reply (an 'out' row) between
+      // repeats breaks the streak, so a customer who repeats a
+      // question the AI already answered never triggers this.
+      const { rows: prevRows } = await query<{ body: string | null; direction: string }>(
+        workspaceId,
+        `SELECT body, direction FROM messages
+         WHERE workspace_id = $1 AND conversation_id = $2
+         ORDER BY created_at DESC LIMIT 3`,
+        [workspaceId, conversationId],
+      );
+      if (
+        prevRows.length === 3 &&
+        prevRows.every((r) => r.direction === 'in') &&
+        isRepeatedNonShopMessage(latestBody, prevRows.map((r) => r.body))
+      ) {
+        repeatedNonsense = true;
+      }
+    }
+  }
+  if (repeatedNonsense) {
+    await escalateConversation(workspaceId, conversationId, 'off_topic');
+    await recordUnanswered(workspaceId, batchedText);
+    return { replied: false, reason: 'escalated_repeated_nonsense' };
   }
 
   const [customer, channel, allowance] = await Promise.all([
@@ -935,19 +1091,20 @@ export async function processBatch(
     return { replied: false, reason: 'practice_mode_non_test' };
   }
 
-  // --- Subscription gate (before any AI work) ---
-  // Active plan + under the included limit → reply free (0 paisa).
-  // Active + over the limit → 10 paisa overage while the wallet lasts.
-  // Expired plan, or over-limit with an empty wallet → NO AI reply.
-  // Instead the customer gets a Bengali upgrade notice (saved as the
-  // outgoing message, so the inbox shows it) and the team gets a ticket.
-  // Never silently fail, never silently reply.
+  // --- Billing gate (before any AI work) — YEARBITO Phase 2 ---
+  // Package credits first (0 paisa wallet), then an active old plan's
+  // included replies (0 paisa, grandfathered), then its 22 paisa
+  // overage while the wallet lasts, then pay-as-you-go (FLAT 23 paisa
+  // per reply from the wallet). Wallet below 23 paisa → NO AI reply.
+  // Instead the customer gets an honest Bengali notice (saved as the
+  // outgoing message, so the inbox shows it) and the team gets a
+  // ticket. Never silently fail, never silently reply.
   if (!allowance.allowed) {
-    await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, UPGRADE_NOTICE);
+    await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, allowance.blockedNoticeBn || UPGRADE_NOTICE);
     await runTool(toolDb, workspaceId, 'create_ticket', {
       conversationId,
       customerId: customer?.id ?? '',
-      reason: `সাবস্ক্রিপশন বন্ধ — AI উত্তর দেয়নি: ${allowance.reasonBn} (প্ল্যান নবায়ন করতে হবে।)`,
+      reason: `AI উত্তর দেয়নি: ${allowance.reasonBn}`,
     });
     return { replied: false, reason: 'subscription_blocked', confidence: 0 };
   }
@@ -960,8 +1117,12 @@ export async function processBatch(
   // other reply; the saving is the AI provider cost, which is 0 here.
   const replyGender: CustomerGender = normalizeCustomerGender(customer?.gender);
   const chargeDeterministic = async (): Promise<number> => {
+    // A sent reply costs the flat allowance price (0 package/included,
+    // 10 overage, 50 pay-as-you-go) — even without an AI call, same as
+    // the old flat-overage rule for deterministic replies.
     const charged = await chargeForReply(
       workspaceId, conversationId, 0, 0, allowance.costPaisa, 'deterministic', allowance.mode === 'included',
+      { allowanceMode: allowance.mode },
     );
     return charged ? allowance.costPaisa : 0;
   };
@@ -1118,27 +1279,79 @@ export async function processBatch(
 
   // Photo → product match (the CORE behaviour): the customer sent a photo
   // saying they want that product. Gemini vision matches it against the
-  // REAL catalog (customer photo + product photos, see ai-agent/media.ts);
-  // the reply is then built deterministically from the DB — a matched
-  // product's name/price/stock, an out-of-stock note, or "not ours" with
-  // similar products. No price or stock is ever invented (the hallucination
-  // guard below also covers this reply). Vision unavailable → an honest
-  // fallback, never a guessed match.
+  // REAL catalog (customer photo + product photos, see ai-agent/media.ts)
+  // AND the confirmed Page-Read old products (page_read_products) — the
+  // reply is then built deterministically from the DB: a matched
+  // product's name/price/stock, an out-of-stock note, an old-product
+  // note (never a stock claim), or an honest "not ours". NO-FAKE RULE
+  // (2026-11-11, user report — a TREE photo got "সিমিলার প্রোডাক্ট
+  // দেখাচ্ছি"): a "similar products" list is NEVER shown. The old code
+  // fell back to "the first few catalog products" whenever vision
+  // returned no similarIds — any photo got a product list that was
+  // never matched to it. That fallback is REMOVED: a match counts only
+  // when vision names a catalog id with confidence ≥ 0.85, a photo
+  // with no product in it gets "এই ছবিতে কোনো প্রোডাক্ট দেখা যাচ্ছে
+  // না", and an unmatched product photo gets "আমাদের কাছে নেই" with
+  // NO product names, NO prices, NO "সিমিলার". Vision unavailable →
+  // an honest fallback, never a guessed match. One image = one Gemini
+  // call; its real token cost is recorded in the ledger (chargeImage).
   const newestMedia = batchedMessages.length > 0 ? batchedMessages[batchedMessages.length - 1] : undefined;
   if (newestMedia?.mediaType === 'image' && newestMedia.mediaUrl) {
     const { rows: matchProducts } = await query<{
       id: string; name: string; price_paisa: number; stock: number; description: string | null; image_url: string | null;
+      variant_type: string | null; variants: { value: string; price_paisa: number; stock?: number | null }[] | null;
     }>(
       workspaceId,
-      `SELECT p.id, p.name, p.price_paisa, p.stock, p.description,
-              (SELECT pi.url FROM product_images pi WHERE pi.workspace_id = $1 AND pi.product_id = p.id ORDER BY pi.created_at ASC LIMIT 1) AS image_url
+      `SELECT p.id, p.name, p.price_paisa, p.stock, p.description, p.variant_type, p.variants,
+              (SELECT pi.url FROM product_images pi WHERE pi.workspace_id = $1 AND pi.product_id = p.id ORDER BY pi.is_main DESC, pi.created_at ASC LIMIT 1) AS image_url
        FROM products p WHERE p.workspace_id = $1 ORDER BY p.created_at ASC`,
       [workspaceId],
     );
-    const outcome = await analyseCustomerImage(newestMedia.mediaUrl, matchProducts.map((p) => ({
-      id: p.id, name: p.name, pricePaisa: Number(p.price_paisa), stock: Number(p.stock),
-      description: p.description, imageUrl: p.image_url,
-    })));
+    // Confirmed Page-Read old products: sold on the Page long ago, NOT in
+    // the product list. They are match candidates too (id prefixed so they
+    // can never collide with a live product id) — but NEVER with a stock
+    // claim: the reply says the old price (if known) and that stock is
+    // unconfirmed, and a ticket goes to the owner.
+    const { rows: oldProducts } = await query<{
+      id: string; name: string; price_paisa: number | null; photo_url: string | null;
+    }>(
+      workspaceId,
+      `SELECT id, name, price_paisa, photo_url FROM page_read_products
+        WHERE workspace_id = $1 AND status = 'confirmed' ORDER BY created_at ASC`,
+      [workspaceId],
+    );
+    const candidates = [
+      ...matchProducts.map((p) => ({
+        id: p.id, name: p.name, pricePaisa: Number(p.price_paisa), stock: Number(p.stock),
+        description: p.description, imageUrl: p.image_url, isOldProduct: false,
+      })),
+      ...oldProducts.map((p) => ({
+        id: `page-read:${p.id}`, name: p.name,
+        pricePaisa: p.price_paisa === null ? null : Number(p.price_paisa),
+        stock: 0, description: null, imageUrl: p.photo_url, isOldProduct: true,
+      })),
+    ];
+    const outcome = await analyseCustomerImage(newestMedia.mediaUrl, candidates);
+    // Exactly ONE ledger row per image reply, carrying the vision call's
+    // REAL tokens + provider cost (0 tokens when the exact-URL shortcut
+    // matched without a call, or when vision was unavailable — honest
+    // either way). The wallet charge is the same flat allowance price
+    // as any other reply; pricing is unchanged.
+    const chargeImage = async (): Promise<number> => {
+      const usage = outcome?.usage ?? null;
+      const inputTokens = usage?.inputTokens ?? 0;
+      const outputTokens = usage?.outputTokens ?? 0;
+      const charged = await chargeForReply(
+        workspaceId, conversationId, inputTokens, outputTokens, allowance.costPaisa, 'gemini',
+        allowance.mode === 'included',
+        {
+          model: config.aiModel,
+          providerCostPaisa: computeAiCostPaisa('gemini', config.aiModel, inputTokens, outputTokens),
+          allowanceMode: allowance.mode,
+        },
+      );
+      return charged ? allowance.costPaisa : 0;
+    };
     const sal = genderSalutation(replyGender);
     if (!outcome) {
       const reply = sal
@@ -1146,24 +1359,61 @@ export async function processBatch(
         : 'আপনার ছবিটি দেখতে পারিনি। কষ্ট করে প্রোডাক্টের নাম লিখে জানাবেন?';
       const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
       if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.7 };
-      const cost = await chargeDeterministic();
+      const cost = await chargeImage();
       return { replied: true, reason: 'photo_unseen', confidence: 0.9, costPaisa: cost };
     }
-    const matched = outcome.matchedId ? matchProducts.find((p) => p.id === outcome.matchedId) : undefined;
+    // Not a product at all (tree, scenery, person alone, text screenshot,
+    // animal) — say so honestly. NEVER a product claim, NEVER "সিমিলার".
+    if (!outcome.isProduct) {
+      const reply = sal
+        ? `${sal}, এই ছবিতে কোনো প্রোডাক্ট দেখা যাচ্ছে না। আপনি কোন প্রোডাক্টটি চান — নাম লিখে জানালে খুঁজে দেবো।`
+        : 'এই ছবিতে কোনো প্রোডাক্ট দেখা যাচ্ছে না। আপনি কোন প্রোডাক্টটি চান — নাম লিখে জানালে খুঁজে দেবো।';
+      const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+      if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.9 };
+      const cost = await chargeImage();
+      return { replied: true, reason: 'photo_not_a_product', confidence: 0.9, costPaisa: cost };
+    }
+    // A match counts ONLY with vision confidence ≥ 0.85 — the model's
+    // confidence is self-reported, not calibrated, so a low-confidence
+    // "match" is treated as no match (honest "নেই", never a look-alike).
+    const matched = outcome.matchedId && outcome.confidence >= VISION_MATCH_CONFIDENCE_THRESHOLD
+      ? candidates.find((p) => p.id === outcome.matchedId)
+      : undefined;
     if (matched) {
+      // Old (Page-Read) product — name + old price if known, NEVER a
+      // stock claim, and the owner is asked (ticket) to confirm stock
+      // and today's price.
+      if (matched.isOldProduct) {
+        const priceLine = matched.pricePaisa !== null
+          ? `পুরোনো পোস্টে এর দাম ছিল ${taka(matched.pricePaisa)} — এখন দাম একই নাও হতে পারে।`
+          : 'পুরোনো পোস্টে এর দাম লেখা ছিল না।';
+        const reply = sal
+          ? `${sal}, ${matched.name} — এটি আমাদের আগের (পুরোনো) প্রোডাক্ট। ${priceLine} এখন স্টকে আছে কিনা নিশ্চিত নয় — মালিককে জিজ্ঞেস করে জানিয়ে দেবো।`
+          : `${matched.name} — এটি আমাদের আগের (পুরোনো) প্রোডাক্ট। ${priceLine} এখন স্টকে আছে কিনা নিশ্চিত নয় — মালিককে জিজ্ঞেস করে জানিয়ে দেবো।`;
+        const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
+        if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.95 };
+        await runTool(toolDb, workspaceId, 'create_ticket', {
+          conversationId,
+          customerId: customer?.id ?? '',
+          reason: `পুরোনো প্রোডাক্টের খোঁজ: ${matched.name} — স্টক ও আজকের দাম জানাতে হবে।`,
+        }).catch((err) => console.error('[agent] old-product ticket failed:', (err as Error).message));
+        const cost = await chargeImage();
+        return { replied: true, reason: 'photo_matched_old_product', confidence: 0.95, costPaisa: cost };
+      }
       if (Number(matched.stock) > 0) {
         // In stock: the product's photo + name, price, details.
-        if (matched.image_url) {
-          await deliverOutgoingImageMessage(workspaceId, conversationId, matched.image_url);
+        if (matched.imageUrl) {
+          await deliverOutgoingImageMessage(workspaceId, conversationId, matched.imageUrl);
         }
+        const live = matchProducts.find((p) => p.id === matched.id);
         const details =
-          `${matched.name}\nদাম: ${taka(Number(matched.price_paisa))}\nস্টক: ${Number(matched.stock)}টি আছে ✅` +
+          `${matched.name}\nদাম: ${live ? variantPriceText(live) || taka(Number(live.price_paisa)) : taka(Number(matched.pricePaisa ?? 0))}\nস্টক: ${Number(matched.stock)}টি আছে ✅` +
           (matched.description ? `\n${matched.description}` : '') +
           '\nঅর্ডার করতে চাইলে নাম, ফোন নম্বর ও ঠিকানা জানান।';
         const body = sal ? `${sal}, এই প্রোডাক্টটি আমাদের কাছে আছে — ${details}\nধন্যবাদ, ${sal}।` : `এই প্রোডাক্টটি আমাদের কাছে আছে — ${details}\nধন্যবাদ।`;
         const dsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, body);
         if (!dsent.sent) return { replied: false, reason: 'send_failed', confidence: 0.95 };
-        const cost = await chargeDeterministic();
+        const cost = await chargeImage();
         return { replied: true, reason: 'photo_matched_in_stock', confidence: 0.95, costPaisa: cost };
       }
       // Matched but out of stock — say so nicely, never invent a date.
@@ -1172,23 +1422,19 @@ export async function processBatch(
         : `${matched.name} এখন স্টক আউট হয়ে গেছে। খুব শীঘ্রই আসবে — আসলেই জানিয়ে দেবো। ততক্ষণে অন্য কোনো প্রোডাক্ট দেখতে চাইলে জানাবেন।`;
       const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
       if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.95 };
-      const cost = await chargeDeterministic();
+      const cost = await chargeImage();
       return { replied: true, reason: 'photo_matched_out_of_stock', confidence: 0.95, costPaisa: cost };
     }
-    // Not our product — say so, and offer the similar ones (the vision
-    // match's similarIds, else the first few catalog products).
-    const similar = (outcome.similarIds.length > 0
-      ? outcome.similarIds.map((id) => matchProducts.find((p) => p.id === id)).filter((p): p is NonNullable<typeof p> => !!p)
-      : matchProducts.slice(0, 3));
-    const similarList = similar.length > 0
-      ? similar.map((p) => `• ${p.name} — ${taka(Number(p.price_paisa))}`).join('\n')
-      : '';
+    // A product photo, but it matches NOTHING in the shop — say so
+    // honestly and ask for the name. NO "সিমিলার প্রোডাক্ট" list, NO
+    // product names, NO prices: any list here would be unmatched
+    // catalog products presented as if they were matched (the fake).
     const reply = sal
-      ? `${sal}, আমাদের কাছে এই প্রোডাক্টটি নেই, তবে এই সিমিলার প্রোডাক্টগুলো দেখতে পারেন:\n${similarList}\nকোনটি সম্পর্কে জানতে চান?`
-      : `আমাদের কাছে এই প্রোডাক্টটি নেই, তবে এই সিমিলার প্রোডাক্টগুলো দেখতে পারেন:\n${similarList}\nকোনটি সম্পর্কে জানতে চান?`;
+      ? `${sal}, এই ছবির প্রোডাক্টটা আমাদের কাছে নেই। এটা কী প্রোডাক্ট, নাম লিখে জানাবেন? মালিককে জিজ্ঞেস করে জানিয়ে দেবো।`
+      : 'এই ছবির প্রোডাক্টটা আমাদের কাছে নেই। এটা কী প্রোডাক্ট, নাম লিখে জানাবেন? মালিককে জিজ্ঞেস করে জানিয়ে দেবো।';
     const sent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, reply);
     if (!sent.sent) return { replied: false, reason: 'send_failed', confidence: 0.9 };
-    const cost = await chargeDeterministic();
+    const cost = await chargeImage();
     return { replied: true, reason: 'photo_not_our_product', confidence: 0.9, costPaisa: cost };
   }
 
@@ -1240,10 +1486,11 @@ export async function processBatch(
   if (detectProductListRequest(batchedText) || looksLikeShowRequest(batchedText)) {
     const { rows: photoProducts } = await query<{
       id: string; name: string; price_paisa: number; stock: number; description: string | null; image_url: string | null;
+      variant_type: string | null; variants: { value: string; price_paisa: number; stock?: number | null }[] | null;
     }>(
       workspaceId,
-      `SELECT p.id, p.name, p.price_paisa, p.stock, p.description,
-              (SELECT pi.url FROM product_images pi WHERE pi.workspace_id = $1 AND pi.product_id = p.id ORDER BY pi.created_at ASC LIMIT 1) AS image_url
+      `SELECT p.id, p.name, p.price_paisa, p.stock, p.description, p.variant_type, p.variants,
+              (SELECT pi.url FROM product_images pi WHERE pi.workspace_id = $1 AND pi.product_id = p.id ORDER BY pi.is_main DESC, pi.created_at ASC LIMIT 1) AS image_url
        FROM products p WHERE p.workspace_id = $1 ORDER BY p.created_at ASC`,
       [workspaceId],
     );
@@ -1257,7 +1504,7 @@ export async function processBatch(
         if (img.sent) {
           const sal = genderSalutation(replyGender);
           const details =
-            `${p.name}\nদাম: ${taka(Number(p.price_paisa))}\nস্টক: ${Number(p.stock) > 0 ? `${Number(p.stock)}টি আছে ✅` : 'শেষ হয়ে গেছে ❌'}` +
+            `${p.name}\nদাম: ${variantPriceText(p) || taka(Number(p.price_paisa))}\nস্টক: ${Number(p.stock) > 0 ? `${Number(p.stock)}টি আছে ✅` : 'শেষ হয়ে গেছে ❌'}` +
             (p.description ? `\n${p.description}` : '') +
             '\nঅর্ডার করতে চাইলে নাম, ফোন নম্বর ও ঠিকানা জানান।';
           const body = sal ? `${sal}, ${details}\nধন্যবাদ, ${sal}।` : `${details}\nধন্যবাদ।`;
@@ -1297,7 +1544,7 @@ export async function processBatch(
       const listJustSent = lastBody.includes('আমাদের প্রোডাক্টগুলো:') || lastBody.includes('আপনি কোন প্রোডাক্টে আগ্রহী?');
       if (!listJustSent) {
         const list = photoProducts
-          .map((p) => `• ${p.name} — ${taka(Number(p.price_paisa))}${Number(p.stock) > 0 ? '' : ' (স্টক শেষ)'}`)
+          .map((p) => `• ${p.name} — ${variantPriceText(p) || taka(Number(p.price_paisa))}${Number(p.stock) > 0 ? '' : ' (স্টক শেষ)'}`)
           .join('\n');
         // Just the list — nothing more (prompt rule 0/10). No trailing
         // question, no extra line: the customer asked for the list.
@@ -1330,7 +1577,7 @@ export async function processBatch(
     }
   }
 
-  const [{ rows: historyRows }, { rows: openOrders }, { rows: knowledge }, { rows: products }, deliveryRules, orderSummary] = await Promise.all([
+  const [{ rows: historyRows }, { rows: openOrders }, { rows: knowledge }, { rows: products }, deliveryRules, businessDistrict, orderSummary] = await Promise.all([
     query<{ direction: string; body: string | null }>(
       workspaceId,
       `SELECT direction, body FROM messages WHERE workspace_id = $1 AND conversation_id = $2
@@ -1348,15 +1595,21 @@ export async function processBatch(
       'SELECT title, body FROM knowledge_items WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 10',
       [workspaceId],
     ),
-    query<{ id: string; name: string; price_paisa: number; stock: number }>(
+    query<{ id: string; name: string; price_paisa: number; stock: number; variant_type: string | null; variants: { value: string; price_paisa: number; stock?: number | null }[] | null }>(
       workspaceId,
-      'SELECT id, name, price_paisa, stock FROM products WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 20',
+      'SELECT id, name, price_paisa, stock, variant_type, variants FROM products WHERE workspace_id = $1 ORDER BY created_at DESC LIMIT 20',
       [workspaceId],
     ),
     // Requirement C: the owner's configured delivery charges (seeded with
     // the ৳100/৳130 defaults on first use). The AI quotes these, never a
     // hardcoded number.
     getDeliveryChargeRules(
+      { query: (text: string, params?: unknown[]) => query(workspaceId, text, params ?? []) },
+      workspaceId,
+    ),
+    // Task 8: the business's own district — the AI quotes the
+    // inside/outside-district charges against it.
+    getBusinessDistrict(
       { query: (text: string, params?: unknown[]) => query(workspaceId, text, params ?? []) },
       workspaceId,
     ),
@@ -1385,9 +1638,9 @@ export async function processBatch(
     openOrders: openOrders.map((o) => ({ id: o.id, status: o.status, totalPaisa: Number(o.total_paisa) })),
     orderSummary,
     knowledge,
-    products: products.map((p) => ({ id: p.id, name: p.name, pricePaisa: Number(p.price_paisa), stock: Number(p.stock) })),
+    products: products.map((p) => ({ id: p.id, name: p.name, pricePaisa: Number(p.price_paisa), stock: Number(p.stock), variantType: p.variant_type, variants: p.variants ?? [] })),
     messages: batchedMessages.map((m) => m.body),
-    deliveryCharges: deliveryChargeSummaryText(deliveryRules),
+    deliveryCharges: deliveryChargeSummaryText(deliveryRules, businessDistrict),
   };
 
   // PRODUCT-PUSH LIMIT (2026-11-08): don't dump products at the customer
@@ -1411,14 +1664,43 @@ export async function processBatch(
     ? 'নতুন মেসেজটি কাস্টমারের ভয়েস মেসেজ থেকে লেখায় রূপান্তর করা হয়েছে — উত্তর টেক্সটে (বাংলায়) দাও, ভয়েসে নয়।'
     : '';
 
-  const prompt = `${SYSTEM_PROMPT}\n\n${buildUserPrompt(ctx)}${productPushNote ? `\n\n${productPushNote}` : ''}${voicePromptNote ? `\n\n${voicePromptNote}` : ''}`;
+  // SPLIT PROMPT + PROMPT CACHE (2026-11-11, see ai-agent/gemini-cache.ts):
+  // the prompt is ALWAYS sent in the split shape — systemInstruction +
+  // a stable shop-context turn + a variable per-message turn — whether
+  // or not an explicit cache is attached, so behaviour is identical
+  // with and without a cache. The stable turn (knowledge + delivery
+  // charges + products) is byte-identical to the same sections of the
+  // old flat prompt; the variable turn carries the customer, history,
+  // new messages and closing instruction, plus the per-turn notes.
+  const stableText = buildStableContext(ctx);
+  const variableText = buildVariablePrompt(ctx, [productPushNote, voicePromptNote]);
+
+  // Load or create the workspace's explicit cache (volume-gated; on
+  // ANY failure — free-tier 429, throttle, missing table — this returns
+  // null and the reply below goes out uncached, never failing the
+  // customer reply because of caching).
+  const promptCache = await getOrCreateWorkspaceCache(
+    workspaceId,
+    SYSTEM_PROMPT,
+    stableText,
+    hashStableContext(stableText),
+  );
 
   let ai: AiCallResult | null = null;
   let aiError: string | null = null;
   try {
     // Unified dispatcher: the workspace's chosen provider, falling back to
     // Groq on any failure (the outcome names the provider that answered).
-    ai = await callAiForWorkspace(workspaceId, prompt, aiChoice);
+    ai = await callAiForWorkspaceSplit(
+      workspaceId,
+      {
+        systemInstruction: SYSTEM_PROMPT,
+        stableText,
+        variableText,
+        cacheName: promptCache?.cacheName ?? null,
+      },
+      aiChoice,
+    );
   } catch (err) {
     aiError = (err as Error).message;
     console.error(`[agent] ${aiChoice.provider} call failed — using labelled local demo mode:`, aiError);
@@ -1454,12 +1736,34 @@ export async function processBatch(
   }
 
   const provider = ai.provider;
-  // Included in the plan → 0 paisa; over the limit → flat 10 paisa overage
-  // (the gate above already checked the wallet can cover it).
-  const replyCost = allowance.mode === 'included' ? 0 : AI_REPLY_COST_PAISA;
+  // Wallet charge per reply — YEARBITO Phase 2 (flat prices):
+  // included / package → 0 paisa (a package credit is consumed
+  // instead); over the limit → flat 22 paisa overage; pay-as-you-go →
+  // flat 23 paisa. The amount lives on the allowance (costPaisa) —
+  // the gate above already checked the wallet can cover it.
   let parsed = parseGeminiReply(ai.text);
   let inputTokens = ai.inputTokens;
   let outputTokens = ai.outputTokens;
+  // Tokens served from a prompt cache (explicit or implicit) — priced
+  // at the cached-input rate in the ledger (pricing.ts). Tracked from
+  // the first call and accumulated across the second call below, so
+  // every chargeForReply after an AI call records the discounted cost.
+  let cachedInputTokens = ai.cachedInputTokens ?? 0;
+  // One log line per Gemini reply (no prompt text, no keys): hit = an
+  // explicit cache was attached and served tokens; miss = attached but
+  // served 0; unavailable = no cache attached (volume gate, throttle,
+  // free-tier 429, or the provider was not Gemini at all).
+  if (provider === 'gemini') {
+    const cacheStatus = promptCache
+      ? cachedInputTokens > 0
+        ? 'hit'
+        : 'miss'
+      : 'unavailable';
+    const firstCallCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens, cachedInputTokens);
+    console.log(
+      `[ai-cache] ws=${workspaceId} input=${inputTokens} cached=${cachedInputTokens} output=${outputTokens} providerCostPaisa=${firstCallCostPaisa} cache=${cacheStatus}`,
+    );
+  }
 
   // Execute any tool calls, then ask the SAME provider once more with the
   // tool results (the provider that answered first answers again).
@@ -1486,13 +1790,14 @@ export async function processBatch(
           ? `${gsal}, অর্ডারটি কনফার্ম করতে "অর্ডার কনফার্ম করো" লিখে জানান।`
           : 'অর্ডারটি কনফার্ম করতে "অর্ডার কনফার্ম করো" লিখে জানান।';
         const gsent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, guardReply);
+        const guardProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens, cachedInputTokens);
         const gcharged = gsent.sent
           ? await chargeForReply(
-              workspaceId, conversationId, inputTokens, outputTokens, replyCost, provider, allowance.mode === 'included',
-              { model: ai.model, providerCostPaisa: computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens), fallbackFrom: ai.fallbackFrom ?? null },
+              workspaceId, conversationId, inputTokens, outputTokens, allowance.costPaisa, provider, allowance.mode === 'included',
+              { model: ai.model, providerCostPaisa: guardProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null, allowanceMode: allowance.mode, cachedInputTokens },
             )
           : false;
-        return { replied: gsent.sent, reason: 'order_confirmation_blocked', confidence: 0.95, costPaisa: gcharged ? replyCost : 0 };
+        return { replied: gsent.sent, reason: 'order_confirmation_blocked', confidence: 0.95, costPaisa: gcharged ? allowance.costPaisa : 0 };
       }
       const args = { ...call.args, customerId: customer?.id ?? call.args.customerId, conversationId };
       const result = await runTool(toolDb, workspaceId, call.tool, args);
@@ -1516,10 +1821,10 @@ export async function processBatch(
       const confirmationText = String((createdOrder.result as Record<string, unknown>).confirmationText);
       const confirmSent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, confirmationText);
       if (confirmSent.sent) {
-        const confirmProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens);
+        const confirmProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens, cachedInputTokens);
         const charged = await chargeForReply(
-          workspaceId, conversationId, inputTokens, outputTokens, replyCost, provider, allowance.mode === 'included',
-          { model: ai.model, providerCostPaisa: confirmProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null },
+          workspaceId, conversationId, inputTokens, outputTokens, allowance.costPaisa, provider, allowance.mode === 'included',
+          { model: ai.model, providerCostPaisa: confirmProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null, allowanceMode: allowance.mode, cachedInputTokens },
         );
         // Extras AFTER the confirmation (best-effort, never blocks it):
         // the invoice IMAGE, then ONE short product suggestion.
@@ -1533,7 +1838,7 @@ export async function processBatch(
         await sendOrderConfirmationExtras(
           workspaceId, conversationId, channel?.platform ?? null, orderId, orderedIds, ctx.products, customerGender,
         );
-        return { replied: true, reason: 'order_confirmed', confidence: 0.95, costPaisa: charged ? replyCost : 0 };
+        return { replied: true, reason: 'order_confirmed', confidence: 0.95, costPaisa: charged ? allowance.costPaisa : 0 };
       }
       // Confirmation send failed — fall through to the second LLM call.
     }
@@ -1550,12 +1855,12 @@ export async function processBatch(
       const replyText = String((cancelCall.result as Record<string, unknown>).replyText);
       const cancelSent = await sendChannelMessage(workspaceId, conversationId, channel?.platform ?? null, replyText);
       if (cancelSent.sent) {
-        const cancelProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens);
+        const cancelProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens, cachedInputTokens);
         const charged = await chargeForReply(
-          workspaceId, conversationId, inputTokens, outputTokens, replyCost, provider, allowance.mode === 'included',
-          { model: ai.model, providerCostPaisa: cancelProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null },
+          workspaceId, conversationId, inputTokens, outputTokens, allowance.costPaisa, provider, allowance.mode === 'included',
+          { model: ai.model, providerCostPaisa: cancelProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null, allowanceMode: allowance.mode, cachedInputTokens },
         );
-        return { replied: true, reason: 'cancel_request_created', confidence: 0.95, costPaisa: charged ? replyCost : 0 };
+        return { replied: true, reason: 'cancel_request_created', confidence: 0.95, costPaisa: charged ? allowance.costPaisa : 0 };
       }
       // Cancel reply send failed — fall through to the second LLM call.
     }
@@ -1580,6 +1885,7 @@ export async function processBatch(
           parsed = secondParsed;
           inputTokens += second.inputTokens;
           outputTokens += second.outputTokens;
+          cachedInputTokens += second.cachedInputTokens ?? 0;
           secondOk = true;
         }
       }
@@ -1667,18 +1973,18 @@ export async function processBatch(
 
   // Charge for the reply; stop AI if the balance ran out.
   // Included replies are logged at 0 paisa with included_in_plan=true;
-  // overage replies at 10 paisa with included_in_plan=false. The ledger
+  // overage replies at 22 paisa with included_in_plan=false. The ledger
   // also records the model, the provider's real token cost
   // (providerCostPaisa — recomputed here from the FINAL token counts,
   // Groq always 0) and fallbackFrom when Groq answered instead of the
   // workspace's chosen provider.
-  const finalProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens);
+  const finalProviderCostPaisa = computeAiCostPaisa(provider, ai.model, inputTokens, outputTokens, cachedInputTokens);
   const charged = await chargeForReply(
-    workspaceId, conversationId, inputTokens, outputTokens, replyCost, provider, allowance.mode === 'included',
-    { model: ai.model, providerCostPaisa: finalProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null },
+    workspaceId, conversationId, inputTokens, outputTokens, allowance.costPaisa, provider, allowance.mode === 'included',
+    { model: ai.model, providerCostPaisa: finalProviderCostPaisa, fallbackFrom: ai.fallbackFrom ?? null, allowanceMode: allowance.mode, cachedInputTokens },
   );
   if (!charged) {
     return { replied: true, reason: 'replied_but_balance_exhausted_after_send', confidence: parsed.confidence, costPaisa: 0 };
   }
-  return { replied: true, reason: 'ok', confidence: parsed.confidence, costPaisa: replyCost };
+  return { replied: true, reason: 'ok', confidence: parsed.confidence, costPaisa: allowance.costPaisa };
 }

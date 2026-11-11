@@ -6,7 +6,10 @@
  * SAME in every shop/workspace (shared pipeline + prompt):
  *  1. Photo → product match (Gemini vision vs the REAL catalog):
  *     in stock → name + price + details; out of stock → "স্টক আউট";
- *     not ours → "আমাদের কাছে নেই" + similar products. Never invent.
+ *     not ours → "আমাদের কাছে নেই" — NO similar-products list without
+ *     a real visual match (Feature 3, 2026-11-11: the old "similar
+ *     products" fallback was fake — it showed the first catalog items
+ *     for ANY photo, even a tree). Never invent.
  *  2. Product list as a clean TEXT list (one product per line: name + price).
  *  3. "ছবি দেন" without a product → ask "কোন প্রোডাক্টটি দেখতে চাচ্ছেন?"
  *     first, then send ONLY that product's photo.
@@ -209,7 +212,11 @@ async function main() {
 
   const escSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/inbox/escalation.ts'), 'utf8');
   check('escalation exports detectGibberish', escSrc.includes('export function detectGibberish'));
-  check('escalation creates a bell notification on anger/off-topic', escSrc.includes('createNotification(workspaceId') && escSrc.includes("title: 'কাস্টমার রেগে গিয়েছে'"));
+  // Angry worker (2026-11-11): titles now carry the real customer name —
+  // "[Name] রেগে গিয়েছে" for anger, "[Name] বিষয়ের বাইরে প্রশ্ন করছে"
+  // for off-topic / repeated nonsense (calling a diverting customer
+  // "রেগে গিয়েছে" would be wrong).
+  check('escalation creates a bell notification on anger/off-topic', escSrc.includes('createNotification(workspaceId') && escSrc.includes('`${name} রেগে গিয়েছে`') && escSrc.includes('`${name} বিষয়ের বাইরে প্রশ্ন করছে`'));
   check('escalation notification carries the customer name', escSrc.includes('customer_name'));
 
   const intentSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/detect-intent.ts'), 'utf8');
@@ -219,7 +226,7 @@ async function main() {
   const agentSrc = fs.readFileSync(path.join(ROOT, 'apps/api/src/ai-agent/agent.ts'), 'utf8');
   check('agent: voice transcription runs BEFORE the anger check', agentSrc.indexOf('transcribeCustomerAudio') > 0 && agentSrc.indexOf('transcribeCustomerAudio') < agentSrc.indexOf('detectAnger(batchedText)'));
   check('agent: gibberish block replies once then ignores (gibberish_ignored)', agentSrc.includes("reason: 'gibberish_ignored'") && agentSrc.includes("reason: 'gibberish_once'"));
-  check('agent: photo-match block (vision) before the LLM', agentSrc.includes('analyseCustomerImage') && agentSrc.indexOf('analyseCustomerImage') < agentSrc.indexOf('ai = await callAiForWorkspace('));
+  check('agent: photo-match block (vision) before the LLM', agentSrc.includes('analyseCustomerImage') && agentSrc.indexOf('analyseCustomerImage') < agentSrc.indexOf('callAiForWorkspaceSplit('));
   check('agent: photo-match has in-stock / out-of-stock / not-found replies', agentSrc.includes("reason: 'photo_matched_in_stock'") && agentSrc.includes("reason: 'photo_matched_out_of_stock'") && agentSrc.includes("reason: 'photo_not_our_product'"));
   check('agent: repeat-greeting block (contextual, not a fresh welcome)', agentSrc.includes("reason: 'repeat_greeting'") && agentSrc.includes('প্রোডাক্টটা নেবেন'));
   check('agent: ask-which for a bare photo request', agentSrc.includes("reason: 'ask_which_product_photo'") && agentSrc.includes('কোন প্রোডাক্টটি দেখতে চাচ্ছেন'));
@@ -377,14 +384,14 @@ async function main() {
     const angryNote = (notesAfterAngry.data?.notifications ?? []).find((n) => n.type === 'angry_customer' && n.conversation_id === angConv);
     check('boot 1: angry → bell notification exists (customer + conversation)', !!angryNote && (angryNote.body ?? '').includes('রেগে গিয়েছে'), JSON.stringify(angryNote ?? null).slice(0, 150));
 
-    // 7) Off-topic → Waiting + notification, no AI reply.
+    // 7) Off-topic → Waiting + notification, one graceful reply (Feature 1).
     const mOff = await sendWebchat(api, 'site-aitrain', 'wc-off-1', 'OffTopic Customer', 'তুমি ছেলে নাকি মেয়ে?');
     const offConv = mOff.data?.conversationId ?? '';
     const offFound = await pollFor(async () => {
       const { conv } = await threadOut(api, offConv);
       return conv.status === 'waiting' ? conv : null;
     });
-    check('boot 1: off-topic → waiting/off_topic, no reply', !!offFound && offFound.mode === 'human' && offFound.escalation_reason === 'off_topic', `status=${offFound?.status ?? '?'}`);
+    check('boot 1: off-topic → waiting/off_topic, one graceful reply', !!offFound && offFound.mode === 'human' && offFound.escalation_reason === 'off_topic', `status=${offFound?.status ?? '?'}`);
     const notesAfterOff = await api('/api/notifications?limit=20');
     const offNote = (notesAfterOff.data?.notifications ?? []).find((n) => n.type === 'off_topic' && n.conversation_id === offConv);
     check('boot 1: off-topic → bell notification exists', !!offNote, JSON.stringify(offNote ?? null).slice(0, 150));
@@ -440,7 +447,7 @@ async function main() {
     const ag = driverResult.angry ?? {};
     check('driver 1: angry → waiting + notification row, no reply', ag.result?.replied === false && ag.state?.status === 'waiting' && ag.state?.escalation_reason === 'angry_customer' && ag.outMessages === 0 && !!ag.notification && ag.notification.type === 'angry_customer', JSON.stringify({ r: ag.result, s: ag.state, n: ag.notification }));
     const of = driverResult.offTopic ?? {};
-    check('driver 1: off-topic → waiting + notification row, no reply', of.result?.replied === false && of.state?.status === 'waiting' && of.state?.escalation_reason === 'off_topic' && of.outMessages === 0 && !!of.notification && of.notification.type === 'off_topic', JSON.stringify({ r: of.result, s: of.state, n: of.notification }));
+    check('driver 1: off-topic → waiting + notification row, ONE graceful reply', of.result?.replied === true && of.state?.status === 'waiting' && of.state?.escalation_reason === 'off_topic' && of.outMessages === 1 && (of.outBodies ?? []).some((b) => b.includes('বুঝতে পারিনি') && !b.includes('আমি বুঝতে পারছি')) && !!of.notification && of.notification.type === 'off_topic', JSON.stringify({ r: of.result, s: of.state, n: of.notification }));
     check('driver 1: normal flows all stay open + get a reply', driverResult.normalFlowsAllOk === true, JSON.stringify((driverResult.normalFlows ?? []).filter((c) => !c.ok)));
     // --- Order flow (requirements A + B + C) ---
     check('driver 1: phone unit — 11-digit 01 valid, 10/8 digits + non-01 invalid', driverResult.phoneUnitAllOk === true, JSON.stringify((driverResult.phoneUnit ?? []).filter((c) => !c.ok)));
@@ -489,7 +496,7 @@ async function main() {
     const po = liveResult.photoOutOfStock ?? {};
     check('driver 2: photo out-of-stock → "স্টক আউট" reply', po.result?.replied === true && po.result?.reason === 'photo_matched_out_of_stock' && po.saysOutOfStock === true, JSON.stringify({ r: po.result, s: po.saysOutOfStock }));
     const pn = liveResult.photoNotFound ?? {};
-    check('driver 2: photo not-found → "আমাদের কাছে নেই" + similar products', pn.result?.replied === true && pn.result?.reason === 'photo_not_our_product' && pn.saysNotOurs === true && pn.listsSimilar === true, JSON.stringify({ r: pn.result, s: pn.saysNotOurs, l: pn.listsSimilar }));
+    check('driver 2: photo not-found → "আমাদের কাছে নেই", NO similar list', pn.result?.replied === true && pn.result?.reason === 'photo_not_our_product' && pn.saysNotOurs === true && pn.listsSimilar === false, JSON.stringify({ r: pn.result, s: pn.saysNotOurs, l: pn.listsSimilar }));
     const vf = liveResult.voiceFlow ?? {};
     // NOTE: the sample transcript is "খোলা" — a single meaningless word,
     // so the LLM honestly cannot answer it and the chat escalates to
